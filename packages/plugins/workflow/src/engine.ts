@@ -15,11 +15,12 @@ import { acceptPlain } from './acceptance.ts'
 import { checksFor, landingTargets } from './checks.ts'
 import { type Draft, draftOf, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
 import { awaitCall, settleCalls, waitsOnCall } from './continuations.ts'
+import { authorDraft, commitFixed, commitReviewed, continued, waitForAuthor } from './fix-sessions.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
 import { admissionInfrastructure, executionInfrastructure, sourceGone } from './infrastructure.ts'
 import { admissionKind, assignmentOf, choiceHoldEnded, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForChoice, waitForLimit } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
-import { missingSubject, remediate, reviewSubject, subjectGate, wordingOf } from './review.ts'
+import { cycleOf, missingSubject, remediate, reviewSubject, subjectGate, wordingOf } from './review.ts'
 import { leaveSession, type Moved, sessionGaps } from './session-moves.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
 import { appended, compose, DEFAULT_TEMPLATES, type Instructions, literal, type NodeTemplate, recordExecutor, type ResolvedNode, type ResolvedSpec, resolve, schemaBlock, UnfilledPlaceholders, variantProblem, variantsOf } from './spec.ts'
@@ -548,7 +549,8 @@ export class Engine {
     const composed: ResolvedNode = !!spec.literal === wording.literal ? spec : { ...worded, ...(wording.literal ? { literal: true } : {}) }
     if (spec.resultSchema) parts = appended(parts, `\n\n${schemaBlock(spec.resultSchema, this.schemas.schemaOf(spec.resultSchema))}`)
     // A review of an agent's change binds to the workspace's exact subject now (REQ-TEAM-5, REQ-WF-5).
-    const found = spec.capabilities.includes('review') ? reviewSubject(this, results, run.input) : undefined
+    // A re-review reads the change since the subject the last review read, and the whole change (review cycles).
+    const found = spec.capabilities.includes('review') ? reviewSubject(this, results, run.input, (workspace, now) => cycleOf(this, run.run_id, spec, nodes, workspace, now)) : undefined
     if (found && 'missing' in found) {
       const decision = missingSubject(this, run, node, found.missing)
       const error: WorkflowError = { kind: 'stale_subject', disposition: 'NONE', message: `exact-subject gate: the agent's working tree ${found.missing} can no longer be captured` }
@@ -647,6 +649,8 @@ export class Engine {
         draft = draftOf(this, run, node, spec, record.requirement)
         // On its session after an earlier step ran off it: handed what that step's turn added (session-moves.ts).
         draft = sessionGaps(this, run, spec, draft)
+        // A review's fix continues its author's session; a lost one is handed off, recorded (./fix-sessions.ts).
+        draft = authorDraft(this, run, node, spec, draft)
       } catch (error) {
         return failAttempt(this, run, { ...node, attempt }, errorOf(error), { sent: false, decisions: [] }, lease)
       }
@@ -657,6 +661,9 @@ export class Engine {
       if (budget === 'stop' || signal.aborted) return
       // Its brief states what the task may still draw at this step, not when the run was admitted.
       if (this.tasks.bound(run.run_id)) draft = { ...draft, budget: { remaining: await this.tasks.budgetAt(run.run_id) } }
+      // A review's fix is a commit of its own: the tree its review read is committed first (./fix-sessions.ts).
+      await commitReviewed(this, run, node, spec)
+      if (signal.aborted) return
       // Members of one team route one at a time, so each sees which accounts the others hold.
       const release = await this.routingTurn(run.run_id)
       const exclude = differs ? await this.families(run, spec) : undefined
@@ -757,9 +764,19 @@ export class Engine {
           // Its session's Workers cannot take it for a reason no wait changes: it runs off the
           // session on another Worker, handed what the conversation held, or fails with both refusals.
           const own = spec.session.sessionId && restricted.restrict ? this.ctx.workers.affinity(spec.session.sessionId) : undefined
-          const off = error instanceof AdmissionFailure && own?.length
-            ? await leaveSession(this, run, node, spec, draft, record.requirement, own, error, { ...(exclude ? { exclude } : {}), ...pinned }, failed)
+          const keep = { ...(exclude ? { exclude } : {}), ...pinned }
+          let off = error instanceof AdmissionFailure && own?.length
+            ? await leaveSession(this, run, node, spec, draft, record.requirement, own, error, keep, failed)
             : undefined
+          // A review's fix whose author's Worker cannot take it now waits for it, bounded, then is handed off (./fix-sessions.ts).
+          if (!off && spec.author && error instanceof AdmissionFailure && own?.length) {
+            const waiting = waitForAuthor(this, run, node, spec, error, lease)
+            if ('waited' in waiting) {
+              done()
+              return
+            }
+            off = await leaveSession(this, run, node, spec, draft, record.requirement, own, error, keep, failed, waiting.handoff)
+          }
           if (off && 'admitted' in off) {
             admitted = off.admitted
             moved = off
@@ -797,6 +814,8 @@ export class Engine {
         done()
         throw new Error(`Worker source ${admitted.source} is gone`)
       }
+      // A review's fix on its author's session, resuming it: which path it took is recorded (./fix-sessions.ts).
+      if (!moved) continued(this, run, node, spec, admitted, draft)
       const routed = {
         worker: admitted.worker.worker, source: admitted.source, served_tier: admitted.worker.tier, quota_class: admitted.worker.quotaClass,
         // The account it runs on, so a failure of it is recovered by its group's mode (ADR-0052).
@@ -875,6 +894,8 @@ export class Engine {
       return failAttempt(this, run, node, { kind: 'internal', disposition: 'CODE_FIX', message: `${node.source} reported execution ${current.id} completed without a result` }, { sent: true, execution: current }, lease)
     }
     await this.complete(run, node, spec, current, lease)
+    // A review's fix that completed keeps its result as its own commit, before the re-review reads it (./fix-sessions.ts).
+    if (spec.fixOf && !signal.aborted && this.nodeRow(run.run_id, node.node_id)?.state === 'COMPLETED') await commitFixed(this, run, node, spec, current.result)
   }
 
   /**

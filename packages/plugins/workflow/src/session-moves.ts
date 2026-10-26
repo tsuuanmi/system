@@ -30,7 +30,7 @@ export const SESSION_MOVE = { type: 'rule', id: 'workflow.session-move', version
 const LASTING: ReadonlySet<AdmissionCheck> = new Set(['input', 'capability', 'tier', 'locality'])
 
 /** One earlier turn of a session: its result, and what it was. */
-interface Turn { ref: ContentId; runId: string; nodeId: string; note: string }
+export interface Turn { ref: ContentId; runId: string; nodeId: string; note: string }
 
 /**
  * Why none of the Workers a session stays on (`own`) can ever take the step, from the refusal, or
@@ -50,7 +50,7 @@ export function lastingRefusal(refused: AdmissionFailure, own: readonly string[]
  * on it, then this run's, each with its stored result (one retention removed is left out: no brief
  * can point at it).
  */
-function turnsOf(e: Engine, sessionId: string, runId: string, nodeId: string): Turn[] {
+export function turnsOf(e: Engine, sessionId: string, runId: string, nodeId: string): Turn[] {
   const rows = e.ctx.store.db.prepare(`SELECT n.run_id, n.node_id, n.record FROM workflow_nodes n JOIN workflow_runs r ON r.run_id = n.run_id
     WHERE json_extract(n.spec, '$.session.sessionId') = ? AND n.state = 'COMPLETED' ORDER BY r.created_at, r.run_id, n.ordinal`).all(sessionId) as Array<{ run_id: string; node_id: string; record: string }>
   const turns: Turn[] = []
@@ -74,7 +74,7 @@ function ranOff(e: Engine, runId: string, nodeId: string): boolean {
     .some((a) => (a.body as { decider?: { id?: string } }).decider?.id === SESSION_MOVE.id))
 }
 
-const pointer = (turn: Turn): BriefPointer => ({ ref: turn.ref, role: 'prior', note: turn.note })
+export const pointer = (turn: Turn): BriefPointer => ({ ref: turn.ref, role: 'prior', note: turn.note })
 
 /**
  * A step on its session's Worker, after an earlier step of its run ran off the session: its brief
@@ -98,14 +98,18 @@ export interface Moved { admitted: AdmittedWorker; draft: Draft; requirement: Wo
  * reason no wait can change. Undefined when one of them might take it after a wait (the refusal
  * stands as before); `why` (to append to the refusal) when it cannot leave or no other Worker takes
  * it either. `options` are the route options the step keeps off the session (provider diversity, an
- * assigned account); `failed` the Workers an earlier unsent attempt failed on.
+ * assigned account); `failed` the Workers an earlier unsent attempt failed on. `waited`, for a review's
+ * fix whose bounded wait for its author's Worker ended (./fix-sessions.ts), is why it leaves though a
+ * further wait might change the refusal: it is handed off all the same.
  */
 export async function leaveSession(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, draft: Draft, requirement: WorkRequirement, own: readonly string[],
-  refused: AdmissionFailure, options: Pick<RouteOptions, 'exclude' | 'assignment'>, failed: readonly string[]): Promise<Moved | { why: string } | undefined> {
+  refused: AdmissionFailure, options: Pick<RouteOptions, 'exclude' | 'assignment'>, failed: readonly string[], waited?: string): Promise<Moved | { why: string } | undefined> {
   const sessionId = spec.session.sessionId
   if (!sessionId || spec.team?.member) return undefined
-  const lasting = lastingRefusal(refused, own)
+  const refusal = lastingRefusal(refused, own)
+  const lasting = refusal ?? waited
   if (!lasting) return undefined
+  const noWait = refusal ? 'no wait changes that' : 'its bounded wait for them ended'
   const pointed = new Set<string>(draft.artifacts.map((p) => p.ref))
   const carried = turnsOf(e, sessionId, run.run_id, node.node_id).filter((t) => !pointed.has(t.ref))
   if (draft.artifacts.length + carried.length > BRIEF_LIMITS.pointers) {
@@ -137,7 +141,8 @@ export async function leaveSession(e: Engine, run: RunRow, node: NodeRow, spec: 
     question: `Where does node ${node.node_id} of run ${run.run_id} run, when the Workers its session ${sessionId} stays on cannot take it?`,
     inputs: [...new Set([refused.decision, admitted.decisions.route, ...carried.map((t) => t.ref as ArtifactRef)])],
     candidates: [
-      { option: 'stay', selected: false, reasons: [clampText(`not stay: ${stays}; no wait changes that`, 300)] },
+      // The refusal is cut, never why it is not waited on.
+      { option: 'stay', selected: false, reasons: [clampText(`not stay: ${clampText(stays, 300 - `not stay: ; ${noWait}`.length)}; ${noWait}`, 300)] },
       { option, selected: true, reasons: [clampText(taken, 300), 'the session stays on its Worker; a later step of it on that Worker is handed this step\'s result'] },
       { option: option === 'handoff' ? 'sessionless' : 'handoff', selected: false, reasons: [option === 'handoff' ? 'not sessionless: the step\'s brief does not quote every earlier turn of the session' : 'not handoff: the step\'s brief already quotes every earlier turn of the session'] },
       { option: 'fail', selected: false, reasons: [clampText(`not fail: ${admitted.worker.worker} takes it, and a step does not fail only because its session's Worker cannot take it`, 300)] },

@@ -18,6 +18,11 @@
  * branch, only while both are still where the approval saw them. A conflict is aborted, so the
  * repository is as it was; nothing is ever forced, reset, or pushed.
  *
+ * Review history (board T232): on the engine's ask, the tree a review read and each fix's result are
+ * kept as commits on the run's own ref `refs/system/reviews/<runId>`, built in an index of their own:
+ * the worktree's HEAD, branch, index, and files never move, so the commit a board task writes stays
+ * the HEAD its result binds to.
+ *
  * Carrying (ADR-0061): a board task's next attempt may start from the work its previous attempt left,
  * when that attempt failed only after its writing step. On the engine's ask, the earlier worktree is
  * committed on its branch, only while it is still exactly the tree its writing step left, and the new
@@ -34,8 +39,9 @@
  */
 import { execFile, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, writeSync } from 'node:fs'
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, writeSync } from 'node:fs'
 import { type FileHandle, open } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { promisify } from 'node:util'
@@ -44,7 +50,7 @@ import type {} from '@tsuuanmi/system-artifacts'
 import { BRIEF_FILE_PATH, captureGitSubject, ensurePrivateDir, subjectId } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
 import {
-  type Carried, type CarryRefusal, type CarryStep, CHANGE_BOUNDS, type ChangedFile, type Landed, type LandRefusal, type LandStep, REBASE_FILES_MAX, REBASE_MOVED_MAX, type Regenerated, type WorkChange,
+  type Carried, type CarryRefusal, type CarryStep, CHANGE_BOUNDS, type ChangedFile, type Landed, type LandRefusal, type LandStep, REBASE_FILES_MAX, REBASE_MOVED_MAX, type Regenerated, reviewRef, type WorkChange,
 } from '@tsuuanmi/system-workers-core'
 import type { Regeneration } from './regenerate.ts'
 
@@ -198,9 +204,9 @@ function controlFile(path: string): string {
 const failed = (dir: string, args: string[], why: string): WorktreeError => new WorktreeError(`git ${args.find((a) => !a.startsWith('-') && !a.includes('=')) ?? ''} in ${dir}: ${why.slice(0, 300)}`)
 
 /** `git -C dir …`, bounded; rejects with what git said. */
-async function git(dir: string, args: string[]): Promise<string> {
+async function git(dir: string, args: string[], env: Record<string, string> = {}): Promise<string> {
   try {
-    return (await execFileAsync('git', ['-C', dir, ...SAFE, ...args], { env: ENV, timeout: GIT_MS, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024 })).stdout
+    return (await execFileAsync('git', ['-C', dir, ...SAFE, ...args], { env: { ...ENV, ...env }, timeout: GIT_MS, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024 })).stdout
   } catch (error) {
     const e = error as NodeJS.ErrnoException & { stderr?: string; killed?: boolean }
     throw failed(dir, args, e.code === 'ENOENT' ? 'git is not installed' : e.killed ? `it took longer than ${GIT_MS / 1000} s` : said(e.stderr ?? '', e.message))
@@ -889,7 +895,57 @@ export class Worktrees {
   async land(step: LandStep): Promise<Landed | undefined> {
     const row = this.ctx.store.db.prepare('SELECT * FROM agent_worktrees WHERE workflow_run_id = ? AND path = ?').get(step.runId, step.workspace) as WorktreeRow | undefined
     if (!row) return undefined
-    return this.exclusive(row.repository, () => (step.step === 'commit' ? this.commitAccepted(row, step) : step.step === 'merge' ? this.merge(row, step) : this.rebase(row, step)))
+    return this.exclusive(row.repository, () => (step.step === 'commit' ? this.commitAccepted(row, step) : step.step === 'record' ? this.record(row, step)
+      : step.step === 'merge' ? this.merge(row, step) : this.rebase(row, step)))
+  }
+
+  /**
+   * Keep the worktree's tree, while it is exactly `step.subject`, as a commit on the run's review
+   * history ref (board T232, {@link reviewRef}): on top of the last commit there, else the worktree's
+   * HEAD. Built in an index of its own, so the worktree's HEAD, branch, index, and files stay as they
+   * are, and a board task bound to the HEAD still binds the run's result. The tree is read again after
+   * the commit is made: a tree that moved meanwhile moves no ref. The system's `.system/` files are
+   * left out, as a landing's commit leaves them. No commit when the last one recorded, or the HEAD
+   * with nothing on top, already holds the tree (INV-4).
+   */
+  private async record(row: WorktreeRow, step: Extract<LandStep, { step: 'record' }>): Promise<Landed> {
+    const wanted = subjectId({ type: 'git-head', ...step.subject })
+    if (row.removed_at !== null || !existsSync(row.path)) return { outcome: 'refused', cause: 'gone', reason: `the worktree ${row.path} was removed, so the tree ${wanted} can no longer be recorded` }
+    try {
+      await this.verify(row)
+    } catch (error) {
+      return { outcome: 'refused', cause: 'failed', reason: (error as Error).message }
+    }
+    const still = (): boolean => {
+      const now = captureGitSubject(row.path)?.subject
+      return now?.ref === step.subject.ref && now.version === step.subject.version
+    }
+    if (!still()) return { outcome: 'refused', cause: 'moved', reason: `the worktree ${row.path} is no longer ${wanted}, so it is not recorded` }
+    const ref = reviewRef(step.runId)
+    const scratch = mkdtempSync(join(tmpdir(), 'system-record-'))
+    try {
+      const inside = (args: string[], env: Record<string, string> = {}): Promise<string> => git(row.path, [`--git-dir=${row.gitdir}`, `--work-tree=${row.path}`, ...args], env)
+      const index = { GIT_INDEX_FILE: join(scratch, 'index') }
+      const tip = (await inside(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).catch(() => '')).trim()
+      const head = (await inside(['rev-parse', 'HEAD'])).trim()
+      await inside(['read-tree', 'HEAD'], index)
+      const own = !(await inside(['ls-files', '-z', '--', '.system'], index)).length
+      await inside(['add', '--all', '--', '.', ...(own ? [':(exclude).system'] : [])], index)
+      const tree = (await inside(['write-tree'], index)).trim()
+      const parent = tip || head
+      if ((await inside(['rev-parse', `${parent}^{tree}`])).trim() === tree) {
+        return { outcome: 'recorded', repository: row.repository, ref, commit: parent, parent, recorded: false }
+      }
+      const commit = (await inside(['commit-tree', tree, '-p', parent, '-m', `${step.message.trimEnd()}\n\n${SUBJECT_TRAILER}: ${wanted}`])).trim()
+      if (!still()) return { outcome: 'refused', cause: 'moved', reason: `the worktree ${row.path} changed while ${wanted} was recorded, so no ref moved` }
+      // Only from the tip read above: a ref another step moved meanwhile is not overwritten.
+      await inside(['update-ref', '-m', `system: record ${wanted}`, ref, commit, ...(tip ? [tip] : [])])
+      return { outcome: 'recorded', repository: row.repository, ref, commit, parent, recorded: true }
+    } catch (error) {
+      return { outcome: 'refused', cause: 'failed', reason: (error as Error).message }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true })
+    }
   }
 
   /**

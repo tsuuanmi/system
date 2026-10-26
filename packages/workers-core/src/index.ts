@@ -326,11 +326,20 @@ export interface LivenessQuery {
  *   resolution once no conflict marker is left; `abandon` puts the branch and the worktree back at
  *   `head`. Only while the worktree is intact and no agent run of the workflow run can still write it
  *   (INV-15). The pre-rebase head is kept under a ref of the repository's own; never a push.
+ * - `record` (board T232): keep the worktree's tree, while it is still exactly `subject`, as a commit
+ *   with `message` on the run's own history ref ({@link reviewRef}), on top of the last one recorded
+ *   there (else the worktree's HEAD): what each review read, and each fix's result, one commit each.
+ *   The worktree's HEAD, branch, index, and files are never touched, so a board task bound to its HEAD
+ *   still binds the run's result.
  */
 export type LandStep =
   | { step: 'commit'; runId: string; workspace: string; subject: { ref: string; version: string }; message: string }
+  | { step: 'record'; runId: string; workspace: string; subject: { ref: string; version: string }; message: string }
   | { step: 'merge'; runId: string; workspace: string; head: string; base: { branch: string; sha: string }; message: string }
   | { step: 'rebase'; runId: string; workspace: string; phase: RebasePhase; head: string; base: { branch: string; sha: string }; message: string }
+
+/** The ref that keeps a workflow run's review history (a {@link LandStep} `record`): never its branch, never checked out. */
+export const reviewRef = (runId: string): string => `refs/system/reviews/${runId}`
 
 /** Where a {@link LandStep} `rebase` is (ADR-0068). */
 export type RebasePhase = 'start' | 'resolved' | 'abandon'
@@ -372,6 +381,10 @@ export type LandRefusal = 'moved' | 'gone' | 'busy' | 'base-moved' | 'head-moved
  *   `moved`, the base's commits since the fork, one line each (at most {@link REBASE_MOVED_MAX});
  * - `abandoned`: the branch and the worktree are back at `head`; `left`, untracked files the
  *   resolution made, kept where they are.
+ *
+ * A `record` step answers `recorded`: `commit` holds the tree on `ref`, on top of `parent`;
+ * `recorded` false when nothing new was made (the ref's last commit, or the worktree's HEAD, already
+ * held that tree; then `commit` is that one).
  */
 export type Landed =
   | { outcome: 'committed'; repository: string; branch: string; head: string; committed: boolean; base: { branch: string; sha: string }; contained: boolean; stat: string; fork?: string }
@@ -379,6 +392,7 @@ export type Landed =
   | { outcome: 'rebased'; repository: string; branch: string; head: string; from: string; base: { branch: string; sha: string }; subject: { ref: string; version: string }; stat: string; already: boolean; regenerated?: Regenerated }
   | { outcome: 'conflicted'; repository: string; branch: string; from: string; base: { branch: string; sha: string }; fork: string; files: string[]; more: number; moved: string[] }
   | { outcome: 'abandoned'; repository: string; branch: string; head: string; left: string[] }
+  | { outcome: 'recorded'; repository: string; ref: string; commit: string; parent: string; recorded: boolean }
   | { outcome: 'refused'; cause: LandRefusal; reason: string }
 
 /** Conflicted files a `conflicted` rebase names at most (INV-9). */

@@ -505,6 +505,12 @@ export interface Config {
   autoApprovePlans?: boolean
   /** Reviews of one change, the first included, before remediation stops (default 3). */
   maxReviewCycles?: number
+  /**
+   * Minutes a review's fix that continues its author's session waits for that session's Worker while
+   * it cannot take the fix now (default 60; INV-9), from the fix's first wait; past it, the session is
+   * handed off, recorded (docs/design/sessions-and-messaging.md#a-review-fix-continues-its-authors-session).
+   */
+  fixSessionWaitMinutes?: number
   /** Hours a tied team waits for a deciding `vote`, then completes `inconclusive` by rule (default 24; INV-9). */
   tieTimeoutHours?: number
   /** Hours a plan's gate waits for the operator's verdict, then closes and fails the run by rule (default 24; INV-9). */

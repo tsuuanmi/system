@@ -360,6 +360,41 @@ comes from two sources, and both are recorded as `graph-growth` decision artifac
 
 A profile contributes templates only; it declares no growth rules of its own.
 
+### Review cycles
+
+One task, one author session (board T232): a review's findings go to the author, as messages to
+its session, and an independent reviewer judges each result. Code:
+`packages/plugins/workflow/src/fix-sessions.ts`.
+
+- **The fix continues the author's session.** When the step that wrote the change ran in a
+  session (`conversation: persistent` or `caller`; a fix's author is its own author's), the fix
+  takes that session (`author`, `session.sessionId`): it routes only to the session's Worker, and
+  its brief resumes the session's native conversation, so the fix is that session's next message
+  (the findings as data, the subject the reviewer read, and what to change) and the author fixes
+  its own work, its earlier turns in view. A team member's session is never taken. When the
+  session's Worker cannot take the fix, the fix waits or is handed off
+  ([sessions](sessions-and-messaging.md#a-review-fix-continues-its-authors-session)), never
+  started fresh in silence. Which path it took is a `route` decision by `workflow.fix-session`
+  (`continue`, `wait`, `handoff`).
+- **The reviewer stays independent.** Every review and re-review runs in a session of its own,
+  never the author's, and resumes nothing; its prompt says it sees none of the producer's
+  conversation. A template that wants it on another provider family says so (`differentFrom`).
+- **Each fix is its own commit.** Before a fix is first sent, the tree its review read (the
+  author's change, or the previous fix's) is kept as a commit of the run's review history, the
+  ref `refs/system/reviews/<runId>` of its repository; after the fix completes, its result is,
+  on top. The source that holds the worktree makes each (its `land` `record` step), only while
+  the tree is still exactly that subject, in an index of its own: the worktree's HEAD, branch,
+  index, and files never move. That matters: a board task binds its result and the run's required
+  checks to the commit it writes (`writes.ref`, the worktree's HEAD), so a commit on the run's
+  branch mid-run would leave the run no result it could bind. Each commit, or why none was made,
+  is a `gate` decision by `workflow.fix-commit`. With no source that holds the tree (`land`),
+  nothing is recorded and the cycle goes on.
+- **A re-review reads both.** Its exact-subject block names the subject the last review read and
+  shows the change since then (between the history's commits of that tree and the fix's result,
+  while the tree it reads is still that result; else against the HEAD when that tree was the HEAD
+  unchanged), then the whole change (against the commit the first review's tree started from).
+  When no commit holds the last subject, it says so and shows the whole change.
+
 ## Plan approval gate
 
 A subgraph that holds write authority over a subject

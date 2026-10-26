@@ -73,6 +73,7 @@ class Lander {
   answer: (step: LandStep) => Landed | undefined = (step) => step.step === 'commit'
     ? { outcome: 'committed', repository: '/repo', branch: `system/run/${step.runId}`, head: HEAD, committed: true, base: BASE, contained: false, stat: ' a.c | 2 +-', ...(this.fork ? { fork: this.fork } : {}) }
     : step.step === 'rebase' ? this.rebaseAnswer(step)
+      : step.step === 'record' ? undefined
       : { outcome: 'merged', repository: '/repo', branch: `system/run/${step.runId}`, head: step.head, base: step.base, commit: 'd'.repeat(40), already: false }
 
   /** Each check passes, unless the script says otherwise. */

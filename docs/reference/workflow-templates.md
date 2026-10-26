@@ -196,6 +196,18 @@ Worker, in the run's own git worktree when the Workers (or their role) set `work
   the fixed subject, as for any template
   ([remediation](../design/workflow-engine.md#remediation-on-the-approval-queue)); `validate:1`
   waits for them.
+- **One task, one author session** ([review cycles](../design/workflow-engine.md#review-cycles)).
+  The fix continues `develop:1`'s session on its Worker: the review's findings, the subject the
+  reviewer read, and what to change are that session's next message, so the developer fixes its
+  own work with its earlier turns in view. When that Worker cannot take the fix, it waits up to
+  `fixSessionWaitMinutes`, or the session is handed off with its earlier turns, recorded as a
+  `workflow.fix-session` or `workflow.session-move` decision
+  ([sessions](../design/sessions-and-messaging.md#a-review-fix-continues-its-authors-session)).
+  The re-review stays independent, in a session of its own. The run's review history (the ref
+  `refs/system/reviews/<runId>` of the repository) keeps the change the review read and each fix
+  as commits of their own; the worktree's HEAD stays the commit the task writes, so the task's
+  result and checks bind to it as before. A re-review reads the change since the last reviewed
+  subject as well as the whole change.
 - `validate:1` runs the tests and benchmarks the task's acceptance criteria name, changing no
   file, and reports each command, its exit code, and the output lines that hold the result. It
   reads the criteria, each with what checks it, from its brief, never the caller's input (below);

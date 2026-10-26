@@ -705,6 +705,22 @@ second execution path (INV-1).
     it. A `route` decision by `workflow.session-move` and the event
     `workflow.node.session-moved` record it; with no Worker off the session
     either, the step fails naming both refusals.
+  - **A review's fix continues its author's session (T232,
+    [design](../../../docs/design/sessions-and-messaging.md#a-review-fix-continues-its-authors-session)).**
+    A remediation fix takes the session of the step that wrote the change
+    (`fix-sessions.ts`): routed to that session's Worker, the findings its next
+    message, resuming its native conversation (`continue`). A Worker that cannot
+    take it now is waited on, nothing sent and no attempt spent, for at most
+    `fixSessionWaitMinutes` (`wait`); past it the fix moves off the session as
+    above. A lost session (no Worker keeps it, or no native session to resume)
+    is `handoff`: a new conversation of it, its brief carrying its earlier
+    turns. Each path is a `route` decision by `workflow.fix-session`. The tree
+    the review read and each fix's result are kept as commits of the run's
+    review history, the ref `refs/system/reviews/<runId>`, through the source's
+    `land` `record` step (`workflow.fix-commit`); the worktree's HEAD never
+    moves, so a board task still binds its result and checks to the commit it
+    writes. A re-review is shown the change since the last reviewed subject and
+    the whole change.
   - **Failover (ADR-0034).** An unsent `quota_exhausted`, `challenge`,
     `reauth_required`, or `overloaded` instead routes the node again with the
     failed Worker left out (`excluded` on the node row, the router's `excluded`

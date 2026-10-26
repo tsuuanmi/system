@@ -5,11 +5,12 @@
  * worded as the review it re-runs (`wordingOf`).
  */
 import type { Lease } from '@tsuuanmi/system-leases'
-import { captureGitSubject, type GitSubject, subjectId } from '@tsuuanmi/system-libs'
+import { captureGitSubject, changeBetween, changeSince, CLEAN_VERSION, type GitSubject, subjectId } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
+import { fixCommits } from './fix-sessions.ts'
 import { append } from './growth.ts'
-import { type Assessment, growthPrefix, parseAssessment, remediationPrompt, type ResolvedNode, subjectBlock } from './spec.ts'
+import { type Assessment, growthPrefix, parseAssessment, remediationPrompt, type ResolvedNode, type ReviewCycle, subjectBlock } from './spec.ts'
 import type { NodeRecord, NodeRow, RunRow } from './types.ts'
 
 export type SubjectGate = { passed: true; decision: ArtifactRef; assessment: Assessment; subject: string } | { passed: false; decision: ArtifactRef; reason: string }
@@ -76,9 +77,10 @@ export function wordingOf(spec: ResolvedNode, nodes: readonly NodeRow[]): Wordin
 /**
  * The working tree a dependency's agent worked in, captured as it is now, with its verbatim change;
  * `missing` when an agent worked in a tree that can no longer be captured (its worktree was
- * cleaned up, say): the review is then never run unbound (INV-2, INV-5).
+ * cleaned up, say): the review is then never run unbound (INV-2, INV-5). A re-review (`cycle`) is
+ * shown the change since the subject the last review read as well as the whole change.
  */
-export function reviewSubject(e: Engine, results: ArtifactRef[], request: string): { workspace: string; subject: GitSubject; block: string } | { missing: string } | undefined {
+export function reviewSubject(e: Engine, results: ArtifactRef[], request: string, cycle?: (workspace: string, subject: GitSubject) => ReviewCycle | undefined): { workspace: string; subject: GitSubject; block: string } | { missing: string } | undefined {
   const workspace = results
     .map((r) => e.ctx.artifacts.get(r)?.body as { schema?: string; workspace?: string; subject?: unknown } | undefined)
     .filter((b) => b?.schema?.startsWith('agent-result@') && b.workspace && b.subject)
@@ -87,7 +89,42 @@ export function reviewSubject(e: Engine, results: ArtifactRef[], request: string
   const captured = captureGitSubject(workspace)
   if (!captured) return { missing: workspace }
   const id = subjectId(captured.subject)
-  return { workspace, subject: captured.subject, block: subjectBlock(id, workspace, captured.subject.ref, captured.diff, request) }
+  return { workspace, subject: captured.subject, block: subjectBlock(id, workspace, captured.subject.ref, captured.diff, request, cycle?.(workspace, captured.subject)) }
+}
+
+/**
+ * What a re-review reads of its cycle (docs/design/workflow-engine.md#review-cycles): the subject the
+ * review that grew it read, the change since then, and the whole change against the commit the first
+ * review's tree started from. The change since is the one between the commits of the run's review
+ * history that hold the tree that review read and its fix's result (`workflow.fix-commit`), while the
+ * tree the re-review reads (`now`) is still that result; else, against the HEAD, when that tree was
+ * the HEAD with nothing on top. Undefined for a first review, or when the reviews it builds on were
+ * bound to no tree.
+ */
+export function cycleOf(e: Engine, runId: string, spec: ResolvedNode, nodes: readonly NodeRow[], workspace: string, now: GitSubject): ReviewCycle | undefined {
+  if (spec.reviewOf === undefined) return undefined
+  const subjectOf = (id: string): GitSubject | undefined => {
+    const row = nodes.find((n) => n.node_id === id)
+    return row?.subject ? (JSON.parse(row.subject) as { subject: GitSubject }).subject : undefined
+  }
+  const previous = spec.grownBy?.node ?? spec.reviewOf
+  const first = subjectOf(spec.reviewOf)
+  const last = subjectOf(previous)
+  if (!first || !last) return undefined
+  const fix = spec.dependsOn.find((id) => {
+    const row = nodes.find((n) => n.node_id === id)
+    return row && writes(JSON.parse(row.spec) as ResolvedNode)
+  })
+  const kept = fix ? fixCommits(e, runId, fix) : undefined
+  const recorded = kept && kept.subject === subjectId(now) ? kept : undefined
+  const holds = recorded?.reviewed ?? (last.version === CLEAN_VERSION ? last.ref : undefined)
+  const whole = changeSince(workspace, first.ref)
+  if (!whole) return undefined
+  const since = recorded ? changeBetween(workspace, recorded.reviewed, recorded.fixed) : holds ? changeSince(workspace, holds) : undefined
+  return {
+    cycle: spec.cycle ?? 2, previous: { review: previous, subject: subjectId(last) },
+    ...(holds && since ? { since: { commit: holds, diff: since.diff } } : {}), whole: { commit: first.ref, diff: whole.diff },
+  }
 }
 
 /** The `gate` decision that fails a review whose agent's working tree can no longer be captured. */
@@ -153,6 +190,10 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
   if (assessment.verdict !== 'changes-requested' || !blocking.length) return
   const nodes = e.nodeRows(run.run_id)
   const producer = spec.dependsOn.map((id) => JSON.parse(nodes.find((n) => n.node_id === id)!.spec) as ResolvedNode).find((s) => s.capabilities.includes('develop'))
+  // One task, one author session (./fix-sessions.ts): the fix continues the session the change was
+  // written in (a fix's, the session its own author's was), never a team member's (Model A).
+  const authorSession = producer?.session.sessionId !== undefined && !producer.team?.member ? producer.session.sessionId : undefined
+  const author = authorSession !== undefined ? { node: producer!.author?.node ?? producer!.nodeId, sessionId: authorSession } : undefined
   const cycle = spec.cycle ?? 1
   const max = e.config.maxReviewCycles ?? 3
   const why = !producer ? 'no writing step produced the reviewed change'
@@ -184,7 +225,8 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
   const fixId = `${prefix}:fix:${cycle}`
   const recheckId = `${prefix}:review:${cycle + 1}`
   const grownBy = { node: node.node_id, generation }
-  const prompt = remediationPrompt(run.input, subject, blocking)
+  // The review's findings as the author session's next message: the findings, the subject the reviewer read, what to change.
+  const prompt = remediationPrompt(run.input, subject, blocking, node.node_id, !!author)
   // The fix writes, so it waits for a person's approval of exactly this plan (ADR-0028, INV-15), never
   // for a policy's: the gate puts it to the approval queue as a `remediation` action, which always
   // asks (./queue.ts), or, with no queue loaded, waits for the operator's `approve`.
@@ -203,8 +245,11 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
     { ...step, literal: true, nodeId: gateId, objective: `Approve the fix of review cycle ${cycle}`, executor: 'gate' as const, plan, prompt: '', capabilities: ['review'],
       tier: 'economy' as const, tierSource: 'profile' as const, acceptance: 'acceptance.answer', dependsOn: [node.node_id], operatorApproval: true as const, remediation: { subject } },
     // The fix is the same kind of work as the change it fixes, and the re-review as the review (ADR-0057).
+    // It continues its author's session, on that session's Worker; the re-review keeps a session of
+    // its own (`step`'s), never the author's: the reviewer stays independent.
     { ...step, literal: true, nodeId: fixId, objective: `Fix the blocking findings of review cycle ${cycle}`, prompt,
-      capabilities: producer!.capabilities, tier: producer!.tier, ...(producer!.kind !== undefined ? { kind: producer!.kind } : {}), acceptance: 'acceptance.answer', dependsOn: [gateId] },
+      capabilities: producer!.capabilities, tier: producer!.tier, ...(producer!.kind !== undefined ? { kind: producer!.kind } : {}), acceptance: 'acceptance.answer', dependsOn: [gateId],
+      fixOf: node.node_id, ...(author ? { session: { sessionId: author.sessionId }, author } : {}) },
     { ...step, ...(reviewed.literal ? { literal: true } : {}), nodeId: recheckId, objective: `Review cycle ${cycle + 1}: review the fixed change`, prompt: reviewed.prompt,
       ...(reviewed.resultSchema ? { resultSchema: reviewed.resultSchema } : {}), ...(spec.kind !== undefined ? { kind: spec.kind } : {}),
       capabilities: spec.capabilities, tier: spec.tier, acceptance: spec.acceptance, dependsOn: [fixId], cycle: cycle + 1, reviewOf: base },
