@@ -50,10 +50,89 @@ interface Ledger {
 type Quotas = ReadonlyMap<string, { quota: AccountQuota; keys: HeadroomKeys; settings: QuotaSettings }>
 /** One key of routing's order, by name, so a decision says which one a Worker lost on. */
 type OrderKey = { name: 'prefers' | 'tier' | 'quota' | keyof HeadroomKeys | 'load' | 'priority'; key: (w: CapabilityDescriptor) => number }
+/** The characters of the candidates' refusals a failure's message carries (T282); its `admission` decision lists every one. */
+const SUMMARY_CHARS = 700
+
+/**
+ * The candidates' refusals as a failure's message carries them (T282): the Workers that prove the
+ * work's capabilities first (their refusal is the reason that matters), those refused for the fewest
+ * checks (the nearest to taking it) before the others, then the rest, each in id order; at most {@link SUMMARY_CHARS} characters, a line longer than that clipped, and the Workers
+ * left out counted. The message is what a step's stored failure keeps, so the proving candidates are
+ * never the ones cut.
+ */
+function refusalSummary(rejections: readonly Rejection[], proving: ReadonlySet<string>): string {
+  // A stable sort: within as many failed checks, id order stays.
+  const ordered = [...rejections.filter((r) => proving.has(r.worker)).sort((a, b) => a.failed.length - b.failed.length), ...rejections.filter((r) => !proving.has(r.worker))]
+  const kept: string[] = []
+  let size = 0
+  for (const r of ordered) {
+    const full = `${r.worker}: ${r.failed.map((f) => f.reason).join(', ')}`
+    const line = full.length > SUMMARY_CHARS ? `${full.slice(0, SUMMARY_CHARS - 1)}…` : full
+    if (kept.length && size + 2 + line.length > SUMMARY_CHARS) break
+    kept.push(line)
+    size += (kept.length > 1 ? 2 : 0) + line.length
+  }
+  const left = ordered.length - kept.length
+  return `${kept.join('; ')}${left ? `; and ${left} more refused Worker(s), listed in the decision` : ''}`
+}
+
+/** How soon a caller looks again at a Worker out of quota or at a limit whose reset no one knows (T282). */
+const RETRY_LOOK_MS = 5 * 60_000
+/**
+ * The checks a Worker fails only for a while that passes by itself: its state (as below) or a limit.
+ * Never `assignment`: the work stays on its group's assigned account, whose own refusal says whether
+ * it passes (a limit, read here as that Worker's) or someone must act (a challenge).
+ */
+const PASSING: ReadonlySet<AdmissionCheck> = new Set(['state', 'cooldown'])
+
+/**
+ * When the work is worth routing again (`AdmissionFailure.retryAt`, T282): the earliest time one of
+ * the Workers that prove it is back, among those refused only for a while that passes by itself.
+ * Out of quota: its account's `limitUntil`; unavailable: its source's `expectedBack` (a late probe),
+ * and never one unavailable without it (signed out, a failed probe: someone must act); at a limit:
+ * the latest of its limits on what the work needs (its tiers' models': the first back). A time no one
+ * knows is a look {@link RETRY_LOOK_MS} on. Undefined when no Worker that proves it is such a one.
+ */
+function retryOf(proving: readonly CapabilityDescriptor[], failures: ReadonlyMap<string, Failed>, requirement: WorkRequirement, now: number): string | undefined {
+  let best: number | undefined
+  for (const w of proving) {
+    const failed = failures.get(w.worker)!
+    if (!failed.length || !failed.every((f) => PASSING.has(f.check))) continue
+    const times: number[] = []
+    let unknown = false
+    if (failed.some((f) => f.check === 'state')) {
+      if (w.state === 'quota-exhausted') {
+        const back = Date.parse(w.account?.limitUntil ?? '')
+        if (back > now) times.push(back)
+        else unknown = true
+      } else if (w.state === 'unavailable' && w.expectedBack !== undefined && Date.parse(w.expectedBack) > now) times.push(Date.parse(w.expectedBack))
+      else continue
+    }
+    if (failed.some((f) => f.check === 'cooldown')) {
+      times.push(...(w.cooldowns ?? []).filter((c) => requirement.capabilities.includes(c.capability) && Date.parse(c.until) > now).map((c) => Date.parse(c.until)))
+      const within = tiersWithin(w, requirement.tier)
+      if (within.length && within.every((o) => o.closed)) {
+        const backs = within.map((o) => Date.parse(o.until ?? ''))
+        if (backs.some((b) => !(b > now))) unknown = true
+        else times.push(Math.min(...backs))
+      }
+    }
+    const back = unknown || !times.length ? now + RETRY_LOOK_MS : Math.max(...times)
+    best = best === undefined ? back : Math.min(best, back)
+  }
+  return best === undefined ? undefined : new Date(best).toISOString()
+}
+
 /** How long one source may take to describe its Workers inside the routing lock (ADR-0033). */
 const DESCRIBE_MS = 5000
 /** Why a source counted as describing none: it did not answer within `DESCRIBE_MS`. */
 const SILENT = `did not describe its Workers within ${DESCRIBE_MS / 1000} s`
+/**
+ * How soon a caller looks again at work no Worker took while a source has not yet described its
+ * Workers once since it registered (T282: a host just started, its agent runtimes' first probes
+ * still running): its Workers are not known yet, never known to prove nothing.
+ */
+const DESCRIBING_LOOK_MS = 30_000
 
 const textOf = (body: unknown): string => {
   const text = (body as { text?: unknown } | undefined)?.text
@@ -268,8 +347,9 @@ export class WorkerRouter extends Workers {
    * source whose `describe` throws fails the read with its error, as before. How each source
    * answered is kept as its last read.
    */
-  private async described(): Promise<{ all: Array<{ worker: CapabilityDescriptor; source: string }>; silent: string[] }> {
+  private async described(): Promise<{ all: Array<{ worker: CapabilityDescriptor; source: string }>; silent: string[]; describing: string[] }> {
     const silent: string[] = []
+    const describing: string[] = []
     const at = new Date().toISOString()
     const described = await Promise.all([...this.registry.values()].map(async (source) => {
       const done = new AbortController()
@@ -288,6 +368,7 @@ export class WorkerRouter extends Workers {
         done.abort()
       }
       if (!workers) silent.push(source.name)
+      if (!workers && !this.landed.has(source)) describing.push(source.name)
       this.remember(source, workers ? { source: source.name, state: 'described', at, workers: workers.length }
         : { source: source.name, state: 'silent', at, workers: 0, detail: SILENT, ...(this.landed.has(source) ? {} : { describing: true as const }) })
       return { source: source.name, workers: workers ?? [] }
@@ -303,7 +384,7 @@ export class WorkerRouter extends Workers {
         all.push({ worker, source })
       }
     }
-    return { all: all.sort((a, b) => compare(a.worker.worker, b.worker.worker)), silent: silent.sort() }
+    return { all: all.sort((a, b) => compare(a.worker.worker, b.worker.worker)), silent: silent.sort(), describing: describing.sort() }
   }
 
   /** Keep a read as the source's last, unless the source is gone or a read that started later is kept already. */
@@ -348,9 +429,9 @@ export class WorkerRouter extends Workers {
    * Admission for one requirement: every Worker described now, the stored requirement, and each
    * Worker's failed checks, in the design's order, the assigned-account hold applied (ADR-0052).
    */
-  private async judge(requirement: WorkRequirement, options: RouteOptions): Promise<{ described: Array<{ worker: CapabilityDescriptor; source: string }>; silent: string[]; requirementRef: ArtifactRef; failures: Map<string, Failed>; limited: Limited[] }> {
+  private async judge(requirement: WorkRequirement, options: RouteOptions): Promise<{ described: Array<{ worker: CapabilityDescriptor; source: string }>; silent: string[]; describing: string[]; requirementRef: ArtifactRef; failures: Map<string, Failed>; limited: Limited[] }> {
     this.schemas.assertRecord(requirement)
-    const { all: described, silent } = await this.described()
+    const { all: described, silent, describing } = await this.described()
     const workers = described.map((d) => d.worker)
     const producer = { type: 'system' as const, ref: options.producer ?? 'workers' }
     const stored = this.ctx.artifacts.put({
@@ -360,11 +441,11 @@ export class WorkerRouter extends Workers {
     // Under assigned accounts, a limit keeps the work off the group's other accounts (ADR-0052).
     const limited = limitedOnly(workers, failures, requirement)
     assign(workers, failures, limited)
-    return { described, silent, requirementRef: stored.id as ArtifactRef, failures, limited }
+    return { described, silent, describing, requirementRef: stored.id as ArtifactRef, failures, limited }
   }
 
   private async routeNow(requirement: WorkRequirement, options: RouteOptions): Promise<AdmittedWorker> {
-    const { described, silent, requirementRef, failures, limited } = await this.judge(requirement, options)
+    const { described, silent, describing, requirementRef, failures, limited } = await this.judge(requirement, options)
     const workers = described.map((d) => d.worker)
     // A source that did not answer in time is named in the decision, as a candidate it could not offer.
     const unheard = silent.map((name) => ({ option: `source ${name}`, selected: false, reasons: [SILENT] }))
@@ -382,10 +463,13 @@ export class WorkerRouter extends Workers {
       const proving = workers.filter((w) => requirement.capabilities.every((c) => w.capabilities.some((p) => p.capability === c && provesFor(p, requirement))))
       const untaken = !unproven.length && proving.length > 0 && !proving.some((w) => takesKind(w, requirement))
       const limitUntil = waitUntil(limited)
-      const why = unproven.length ? `no Worker proves ${unproven.join(', ')}`
+      // A source that has not described its Workers once since it registered may hold the Worker
+      // that proves it (T282: right after a host starts): not known yet, so said, and looked at again.
+      const pending = describing.length ? `; ${describing.join(', ')} ${describing.length === 1 ? 'has' : 'have'} not described ${describing.length === 1 ? 'its' : 'their'} Workers yet since ${describing.length === 1 ? 'it' : 'they'} started` : ''
+      const why = `${unproven.length ? `no Worker proves ${unproven.join(', ')}`
         : untaken ? `no Worker that proves ${requirement.capabilities.join(', ')} takes ${requirement.kind === undefined ? 'work that names no kind' : `${requirement.kind} work`}`
         : limitUntil ? `no Worker passes admission; the assigned accounts that could take it are at their limit, the first back at ${limitUntil}`
-        : workers.length ? 'no Worker passes admission' : 'no Worker is registered'
+        : workers.length ? 'no Worker passes admission' : 'no Worker is registered'}${pending}`
       const decision = this.ctx.artifacts.recordDecision({
         decisionType: 'admission',
         question: `Which Worker may take ${requirement.kind === undefined ? '' : `${requirement.kind} `}work needing ${requirement.capabilities.join(', ')} at tier ${requirement.tier.min} or above?`,
@@ -399,8 +483,13 @@ export class WorkerRouter extends Workers {
         outcome: { option: 'none' },
         deterministic: true,
       }, { producer, classification: requirement.data.classification })
-      const summary = rejections.map((r) => `${r.worker}: ${r.failed.map((f) => f.reason).join(', ')}`).join('; ')
-      throw new AdmissionFailure(rejections, decision.id as ArtifactRef, `no Worker can take this work: ${why} (${summary ? `${summary}; ` : ''}decision ${decision.id})`, limitUntil)
+      const summary = refusalSummary(rejections, new Set(proving.map((w) => w.worker)))
+      // A Worker that proves it is refused only for a while that passes by itself, or a source whose
+      // Workers are not known yet: when to look again (T282).
+      const now = Date.now()
+      const backs = [retryOf(proving, failures, requirement, now), ...(describing.length ? [new Date(now + DESCRIBING_LOOK_MS).toISOString()] : [])].filter((t) => t !== undefined)
+      const retryAt = limitUntil ? undefined : backs.sort()[0]
+      throw new AdmissionFailure(rejections, decision.id as ArtifactRef, `no Worker can take this work: ${why} (${summary ? `${summary}; ` : ''}decision ${decision.id})`, limitUntil, retryAt)
     }
     const served = tierOf(chosen, requirement)
     const tier = this.ctx.artifacts.recordDecision({

@@ -31,6 +31,8 @@ import { type AgentRuntimeProvider, type RuntimeEvidence, probeIn } from '@tsuua
 interface State {
   /** The latest result, and when its probe started. */
   latest?: { at: number; evidence: RuntimeEvidence }
+  /** The last available result, past its bound too: what the runtime proved before a probe was late (T282); never used to admit. */
+  available?: RuntimeEvidence | undefined
   /** The probe in flight. */
   running?: Promise<RuntimeEvidence> | undefined
   /** When the next background probe starts. */
@@ -70,6 +72,24 @@ const UNBOUNDED_TTL_PROBE_MS =5 * 60_000
 /** Evidence that admits no Worker, with why. */
 export const refused = (detail: string): RuntimeEvidence => ({ available: false, detail, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false })
 
+/**
+ * Evidence that admits nothing only because a probe is late (T282): the last one is past
+ * `probeTtlMs` and the next has not finished, or a probe timed out. It says nothing against what the
+ * runtime proved before, so each is kept beside the runtime's last available result, if it had one.
+ */
+const LATE = new WeakMap<RuntimeEvidence, RuntimeEvidence | undefined>()
+const late = (detail: string, before: RuntimeEvidence | undefined): RuntimeEvidence => {
+  const evidence = refused(detail)
+  LATE.set(evidence, before)
+  return evidence
+}
+
+/** Whether evidence admits nothing only because its probe is late (T282). */
+export const isLate = (evidence: RuntimeEvidence): boolean => LATE.has(evidence)
+
+/** Beside late evidence, the runtime's last available result before it; undefined when it had none (its first probe is the late one), or for evidence that is not late. */
+export const provenBefore = (evidence: RuntimeEvidence): RuntimeEvidence | undefined => LATE.get(evidence)
+
 export class Probes {
   private readonly states = new Map<string, State>()
 
@@ -96,7 +116,7 @@ export class Probes {
     void this.probe(target, state, provider)
     const named = label(target)
     this.options.warn(`agent Workers: the last probe of ${named} is older than probeTtlMs (${this.options.ttlMs} ms) and the next has not finished; its Workers take no work until it does`)
-    return refused(`the last probe of ${named} started ${Math.round(age / 1000)} s ago, past probeTtlMs (${this.options.ttlMs} ms), and the next has not finished`)
+    return late(`the last probe of ${named} started ${Math.round(age / 1000)} s ago, past probeTtlMs (${this.options.ttlMs} ms), and the next has not finished`, state.available)
   }
 
   /** For a run's own check before the agent starts: the latest result while it stands, else the probe it waits for. */
@@ -141,7 +161,7 @@ export class Probes {
     const boundMs = this.options.ttlMs || UNBOUNDED_TTL_PROBE_MS
     let bound: NodeJS.Timeout | undefined
     const timedOut = new Promise<RuntimeEvidence>((resolve) => {
-      bound = setTimeout(() => resolve(refused(`probe timed out: the probe of ${label(target)} did not finish within ${this.options.ttlMs ? 'probeTtlMs' : 'its bound'} (${boundMs} ms)`)), boundMs)
+      bound = setTimeout(() => resolve(late(`probe timed out: the probe of ${label(target)} did not finish within ${this.options.ttlMs ? 'probeTtlMs' : 'its bound'} (${boundMs} ms)`, state.available)), boundMs)
       bound.unref()
     })
     // The bound covers the accounts' re-read too: a result stands only once that read is done, or as timed out.
@@ -156,6 +176,9 @@ export class Probes {
       .then((evidence) => {
         clearTimeout(bound)
         state.latest = { at, evidence }
+        // A probe that ran and proved less (or failed) replaces what was proven: only a late one keeps it.
+        if (evidence.available) state.available = evidence
+        else if (!isLate(evidence)) state.available = undefined
         state.running = undefined
         this.schedule(target, state, at)
         return evidence

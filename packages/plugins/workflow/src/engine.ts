@@ -20,7 +20,7 @@ import { authorDraft, commitFixed, commitReviewed, continued, waitForAuthor, wai
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
 import { heldNow, release } from './hold.ts'
 import { admissionInfrastructure, executionInfrastructure, sourceGone } from './infrastructure.ts'
-import { admissionKind, assignmentOf, choiceHoldEnded, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForChoice, waitForLimit } from './recovery.ts'
+import { admissionKind, assignmentOf, choiceHoldEnded, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForChoice, waitForLimit, waitForRetry } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
 import { cycleOf, missingSubject, remediate, reviewSubject, settleReview, subjectGate, verificationGate, verificationSubject, wordingOf } from './review.ts'
 import { riskAtAcceptance, settleRisk, tierAtRisk } from './risk.ts'
@@ -868,7 +868,10 @@ export class Engine {
             // A team member short of provider families: say what the team needs, beside why this one failed.
             const team = spec.team?.member && exclude ? await this.familyShortage(spec, record.requirement, leftOut) : ''
             // Refused only for assigned accounts' limits: it waits for the reset, bounded, spending no attempt (ADR-0052).
-            const waiting = error.limitUntil ? waitForLimit(this, run, node, error, `${team}${error.message}`, lease) : undefined
+            // A Worker that proves it is refused only for a while that passes by itself (out of quota, at a
+            // limit no reset of which is assigned, its probe late): it waits to be routed again, bounded (T282).
+            const waiting = error.limitUntil ? waitForLimit(this, run, node, error, `${team}${error.message}`, lease)
+              : error.retryAt ? waitForRetry(this, run, node, error, `${team}${error.message}`, lease) : undefined
             if (waiting && 'waited' in waiting) return
             const unwaited = waiting ? `; it does not wait: ${waiting.why}` : ''
             // A Worker that would otherwise take it is unavailable: the infrastructure's failure, not the attempt's (ADR-0069).

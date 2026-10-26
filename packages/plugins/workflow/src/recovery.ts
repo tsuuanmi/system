@@ -147,10 +147,12 @@ function assignedOf(node: NodeRow): { group: string; account: string } | undefin
   return account?.mode === 'assigned' ? { group: account.group, account: account.id } : undefined
 }
 
-/** Until when a node waits for an assigned account's limit (ADR-0052), while it does. */
+/** Until when a node waits for an assigned account's limit (ADR-0052), or for a Worker that proves it to be free again (T282), while it does. */
 export function waitingUntil(node: NodeRow): string | undefined {
   if (node.state !== 'READY' || !node.limit_wait_since || !node.not_before || Date.parse(node.not_before) <= Date.now()) return undefined
-  return (node.error ? (JSON.parse(node.error) as WorkflowError).kind : undefined) === 'quota_exhausted' ? node.not_before : undefined
+  // A limit's wait (ADR-0052), or a wait for a Worker that proves it to be free again (T282, `overloaded`).
+  const kind = node.error ? (JSON.parse(node.error) as WorkflowError).kind : undefined
+  return kind === 'quota_exhausted' || kind === 'overloaded' ? node.not_before : undefined
 }
 
 /**
@@ -197,6 +199,53 @@ export function waitForLimit(e: Engine, run: RunRow, node: NodeRow, failure: Adm
 }
 
 const round = (hours: number): string => (Math.round(hours * 100) / 100).toString()
+
+/**
+ * A node refused while a Worker that proves it is refused only for a while that passes by itself
+ * (T282: out of quota, or at a limit, with no assigned account's reset `waitForLimit` waits for; or
+ * unavailable while its runtime's probe is late) waits for the time routing names to look again
+ * (`AdmissionFailure.retryAt`), as a `recovery` decision with outcome `wait`: `READY` with
+ * `not_before` that time, on its row so a restart waits on (INV-4), sending nothing, spending no
+ * attempt; then it is routed again, and waits again or runs. Bounded (INV-9) as a limit's wait: from
+ * its first wait, at most `maxLimitWaitHours` in all; past it, it fails as before, saying so. Never a
+ * configuration problem: only no configured Worker proving the work at any tier is one.
+ */
+export function waitForRetry(e: Engine, run: RunRow, node: NodeRow, failure: AdmissionFailure, message: string, lease: () => Lease): { waited: true } | { why: string } {
+  const until = failure.retryAt
+  if (!until) return { why: 'no Worker that proves it is back by itself' }
+  const max = e.config.maxLimitWaitHours ?? 24
+  const since = node.limit_wait_since ?? new Date().toISOString()
+  const hours = (Date.parse(until) - Date.parse(since)) / 3_600_000
+  if (!(max > 0) || hours > max) return { why: `looking again at ${until} would pass maxLimitWaitHours (${max}) from its first wait at ${since}` }
+  const waited = Math.max(0, (Date.now() - Date.parse(since)) / 3_600_000)
+  // While it waits, it is a Worker not free yet, never a sign-in to make: `overloaded` unless it is a limit.
+  const kind = admissionKind(failure) === 'quota_exhausted' ? 'quota_exhausted' : 'overloaded'
+  const decision = e.ctx.artifacts.recordDecision({
+    schema: 'decision@1.8',
+    decisionType: 'recovery',
+    question: `How does node ${node.node_id} of run ${run.run_id} recover when the Workers that prove it are not free now?`,
+    inputs: [failure.decision],
+    candidates: [
+      { option: 'retry', selected: false, reasons: ['not retry now: no Worker is admitted now'] },
+      { option: 'failover', selected: false, reasons: ['not failover: no other Worker that proves it is admitted'] },
+      { option: 'wait', selected: true, reasons: [`a Worker that proves it is out of quota, at a limit, or not yet known to be ready, which passes by itself; it is routed again at ${until} (${round(waited)} h of the ${max} h it may wait in all), sends nothing, and spends no attempt`] },
+      { option: 'fail', selected: false, reasons: [`not fail: a Worker proves it, and ${until} is within maxLimitWaitHours (${max}) of its first wait; only no Worker proving it at any tier is a configuration problem`] },
+    ],
+    decider: { type: 'rule', id: 'workflow.recovery.retry', version: '1' },
+    outcome: { option: 'wait', detail: { kind, attempt: node.attempt, until, since, maxLimitWaitHours: max } },
+    deterministic: true,
+  }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id })
+  const error: WorkflowError = { kind, disposition: 'BACKOFF', message: `${message}; waiting until ${until}` }
+  e.ctx.store.transaction(() => {
+    e.writeNode(node, { state: 'READY', execution_id: null, worker: null, not_before: until, limit_wait_since: since, error: JSON.stringify(error), decisions: JSON.stringify([failure.decision]) }, (r) => {
+      const next: NodeRecord = { ...r, lastDecision: decision.id as ArtifactRef }
+      delete next.execution
+      return next
+    }, lease)
+    e.ctx.eventLog.append({ type: 'workflow.node.waiting', runId: run.run_id, nodeId: node.node_id, decision: decision.id, data: { until, since, attempt: node.attempt } })
+  })
+  return { waited: true }
+}
 
 /**
  * A dispatched run's writing step whose chosen Worker routing refused (ADR-0064): it runs on that
@@ -474,10 +523,13 @@ export function errorLine(message: string): string {
 
 /**
  * How a refused admission is handled: by the state that kept an otherwise fitting Worker
- * out. With no Worker at all, the operator still has to add and sign in an account.
+ * out. With no Worker at all, the operator still has to add and sign in an account. A refusal
+ * routing says is worth routing again (`retryAt`, T282: a Worker that proves it is not free now,
+ * or a source that has not described its Workers yet since it started) is never `config_error`:
+ * only no configured Worker proving the work at any tier is.
  */
 export function admissionKind(failure: AdmissionFailure): ProviderErrorKind {
-  if (failure.rejections.length === 0) return 'reauth_required'
+  if (failure.rejections.length === 0) return failure.retryAt ? 'overloaded' : 'reauth_required'
   const onlyState = failure.rejections.filter((r) => r.failed.every((f) => f.check === 'state'))
   if (onlyState.some((r) => r.state === 'reauth-required' || r.state === 'unavailable')) return 'reauth_required'
   if (onlyState.some((r) => r.state === 'quota-exhausted')) return 'quota_exhausted'
@@ -486,7 +538,7 @@ export function admissionKind(failure: AdmissionFailure): ProviderErrorKind {
   if (failure.rejections.some((r) => r.failed.every((f) => f.check === 'locality'))) return 'egress_denied'
   // Too long for every Worker that could otherwise take it: sending it again cannot help (ADR-0032).
   if (failure.rejections.some((r) => r.failed.every((f) => f.check === 'input'))) return 'invalid_input'
-  return 'config_error'
+  return failure.retryAt ? 'overloaded' : 'config_error'
 }
 
 /**

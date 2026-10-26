@@ -286,6 +286,9 @@ The **`agents` Worker source**: agent runtimes as Workers
   source 5 s):
   - a describe waits only for the first probe of a runtime in a home; a result past `probeTtlMs`
     admits nothing (the Worker is `unavailable`) until the probe in the background finishes;
+    while a probe is only late (or timed out), the Worker still lists what its runtime's last
+    available probe proved (its role's offers before any), with `expectedBack` one `probeTtlMs` on
+    (`capability-descriptor@1.12`, T282), so routing refuses it for its state and the step waits;
   - each probe, a background one included, re-reads the runtime's `ready` accounts (an account
     home's alone) before its result stands;
   - an account home is probed in the background only while a Worker whose account is `ready`

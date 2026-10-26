@@ -400,6 +400,14 @@ guesses.
   gives none, so capacity, health, and the Workers page say why; routing never reads it. A record
   carrying it below `@1.9`, or with another state, is refused. Readers accept 1.0 to 1.9. Example:
   [`capability-descriptor.unavailable-reason.json`](../../schemas/examples/capability-descriptor.unavailable-reason.json).
+- `capability-descriptor@1.12` adds the optional `expectedBack` (date-time): when its source expects
+  to know again whether a Worker whose `state` is `unavailable` takes work, because it is
+  unavailable only for a while that passes by itself (an agent runtime's late probe: its next result
+  is due by then); its capabilities are then what it last proved. Routing tells the caller to route
+  the work again then (`AdmissionFailure.retryAt`), and the workflow engine waits, bounded, instead
+  of failing the step ([routing](../design/routing.md#intelligence-tiers), T282). A record carrying it
+  below `@1.12`, or with another state, is refused; `tiers` is accepted at `@1.10` to `@1.12`.
+  Readers accept 1.0 to 1.12.
 
 ### `plan`
 

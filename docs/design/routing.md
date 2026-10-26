@@ -424,6 +424,39 @@ D91), and differs in family from `literature:1`:
   it, and the caller passes it to the start (`WorkerStart.tier`), so the run runs that tier's model.
   The route decision is `workers.route.deterministic` version 3. A Worker that offers one tier is
   routed as before.
+- **A refusal that waits is never "proves nothing" (T282).** Only a requirement no configured Worker
+  proves, at any tier it asks for, is a configuration problem: a Worker that proves it and offers no
+  tier within the bounds fails `tier`, and the workflow engine fails the step as `config_error`
+  ([recovery](workflow-engine.md#admission)). A Worker that proves it and is busy is admitted (it
+  queues, ordered after idle ones); one at its limit or out of quota fails `cooldown` or `state`. An
+  agent Worker whose runtime probe is only late (the last one past `probeTtlMs` and the next not
+  finished, or one timed out) still lists what its runtime's last available probe proved (its role's
+  offers when its first probe is the late one), reads `unavailable`, and says when its next probe's
+  result is due (`capability-descriptor@1.12` `expectedBack`, one `probeTtlMs` on), so it fails
+  `state` alone, never `capability`; a probe that failed or proved less, an account signed out, or a
+  pool that cannot be read still proves nothing, as before.
+  When no Worker is admitted and a Worker that proves the work is refused only for such a while
+  (its checks only `state` or `cooldown`, never `assignment`, which its assigned account's own
+  refusal decides; its state out of quota, or unavailable with an `expectedBack`), the `AdmissionFailure` carries `retryAt`: the earliest time one of them is back
+  (its account's `limitUntil`, the latest of its limits on what the work needs, its closed tiers'
+  first reset, or its `expectedBack`), a look five minutes on when no one knows, and absent when an
+  assigned account's reset (`limitUntil`) already says when. The workflow engine waits for it,
+  bounded by `maxLimitWaitHours` ([recovery](workflow-engine.md#admission)). A Worker unavailable
+  with no `expectedBack`, or one that needs a sign-in, gives none: someone must act.
+  A source that has not described its Workers once since it registered (`describing`: right after
+  a host starts, while its agent runtimes' first probes run past the router's 5 s) may hold the
+  Worker that proves the work, so its Workers are not known yet, never known to prove nothing: the
+  failure's reason says so ("agents has not described its Workers yet since it started"), and
+  `retryAt` is at most 30 s on. A source silent after one of its describes has landed gives none. This was the one path found by which a Worker that
+  proves a step was read as one that does not (seen live on T271: its frontier review failed at once
+  with "no Worker proves review, local-data"); the cause could not be read from that record, whose
+  reason was cut, so it is the likely one, not a confirmed one.
+- **What a failure's message keeps (T282).** An `AdmissionFailure`'s message, which a step's stored
+  failure keeps, lists the refusals of the Workers that prove the work's capabilities first, those
+  refused for the fewest checks (the nearest to taking it) before the others, then the rest, each in
+  id order, at most 700 characters (a longer line clipped with `…`), then "and N more
+  refused Worker(s), listed in the decision". `rejections` and the `admission` decision keep every
+  Worker, whole, in id order.
 - Profiles declare each node's minimum tier, for example triage → `economy`,
   research → `frontier`, compacting a handoff → `economy`.
 - **Escalation:** if acceptance rejects a result, the workflow engine opens a

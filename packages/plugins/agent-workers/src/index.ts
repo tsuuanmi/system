@@ -60,7 +60,7 @@ import { DENIAL_MIGRATION, GATE_MIGRATION, type Deferral, readToolsOf, recordDen
 import { repositoryLessons } from './lessons.ts'
 import { type Applied, CUTOVER_MIGRATION, Cutover, type CutoverRecord, type MigrationPlan, type Moved, planMigration, type RolledBack } from './migrate.ts'
 import { Overlaps } from './overlaps.ts'
-import { Probes, refused } from './probes.ts'
+import { Probes, isLate, provenBefore, refused } from './probes.ts'
 import { regenerationOf } from './regenerate.ts'
 import { ReportSchedule, type ReportTarget } from './reports.ts'
 import {
@@ -846,8 +846,17 @@ export class AgentWorkers extends Service {
       const proof = admits(evidence, worker) && (!repository || 'repository' in repository)
       // A Worker takes work only while its account does (INV-2): no Worker of it while its runtime
       // cools down from a limit no ledger reading holds, or while the pool of any of them is closed.
-      const { state: pool, until, why: gateWhy } = proof ? await this.accountGate(worker, true) : { state: 'ready' as const, until: undefined, why: undefined }
+      // A Worker whose probe is only late is gated too (T282), so it stands only while its pools can be read.
+      const { state: pool, until, why: gateWhy } = proof || isLate(evidence) ? await this.accountGate(worker, true) : { state: 'ready' as const, until: undefined, why: undefined }
       const ready = proof && pool !== 'unavailable'
+      // A probe that is only late (the last past probeTtlMs and the next not finished, or one timed
+      // out) says nothing against what the Worker proved (T282): it still lists what its runtime's last
+      // available probe proved (its role's offers when its first probe is the late one), and reads
+      // unavailable. A step that needs it is then refused for its state, which passes, never told that
+      // no Worker proves the work, which fails it as a configuration problem. Never admitted while late.
+      const before = isLate(evidence) ? provenBefore(evidence) : undefined
+      const standing = ready || (isLate(evidence) && pool !== 'unavailable' && (before === undefined || admits(before, worker)) && !(repository && 'problem' in repository))
+      const shown = before ?? evidence
       // Why it takes no work, for the roster and its readers (`@1.9`): the probe's detail, the
       // repository's problem, or the account's or pool's gate (the live incident of 2026-10-26).
       const refusal = refusalOf(evidence, worker)
@@ -860,26 +869,27 @@ export class AgentWorkers extends Service {
       const research: CapabilityOffer[] = [
         { capability: 'reason', evidence: probed },
         ...(web ? [{ capability: 'web-search', evidence: { kind: 'probe' as const, ref: web.decision as ArtifactRef, at: web.at } }] : []),
-        ...(evidence.resume ? [{ capability: 'persistent-conversation', evidence: probed }] : []),
+        ...(shown.resume ? [{ capability: 'persistent-conversation', evidence: probed }] : []),
       ]
-      const proven: CapabilityOffer[] = ready && worker.research ? research : ready
+      const proven: CapabilityOffer[] = standing && worker.research ? research : standing
         ? [
             ...[
               'local-data',
               // A review is independent of the change, so only a Worker that cannot write proves it (INV-15).
-              ...(worker.sandbox === 'workspace-write' ? ['develop', ...(evidence.executes ? ['validate'] : [])] : ['review']),
-              ...(evidence.resume ? ['persistent-conversation'] : []),
+              ...(worker.sandbox === 'workspace-write' ? ['develop', ...(shown.executes ? ['validate'] : [])] : ['review']),
+              ...(shown.resume ? ['persistent-conversation'] : []),
               // A writer whose runtime gives its runs the dossier tools (ADR-0070) can show its checks' output there (T267).
-              ...(worker.sandbox === 'workspace-write' && evidence.hostTools === true && dossiersOf(this.ctx) ? ['dossier'] : []),
+              ...(worker.sandbox === 'workspace-write' && shown.hostTools === true && dossiersOf(this.ctx) ? ['dossier'] : []),
             ].map((capability) => ({ capability, evidence: probed })),
             // The review-member profile (ADR-0049) grants reason for a review team member's steps only,
-            // and only while it is enforced: the Worker is read-only (checked at load) and ready, so
-            // its runtime enforces the read-only sandbox, keeps host state unreadable, and asks the
-            // run's gate before every tool call, which the gate denies. Never plain reason, so an
-            // ordinary ask never spends agent-plan quota (P1). Its conversation is kept natively when
-            // the runtime resumes one, else by this source's replay, for that work only.
+            // and only while it is enforced: the Worker is read-only (checked at load) and its runtime
+            // enforces the read-only sandbox, keeps host state unreadable, and asks the run's gate before
+            // every tool call, which the gate denies. It is admitted only while ready: listed while its
+            // probe is late (T282), it reads unavailable and routing refuses it for its state. Never plain
+            // reason, so an ordinary ask never spends agent-plan quota (P1). Its conversation is kept
+            // natively when the runtime resumes one, else by this source's replay, for that work only.
             ...(worker.reviewMember ? [{ capability: 'reason', evidence: probed, scope: REVIEW_MEMBER }] : []),
-            ...(worker.reviewMember && !evidence.resume ? [{ capability: 'persistent-conversation', evidence: { kind: 'conformance' as const, at: observedAt }, scope: REVIEW_MEMBER }] : []),
+            ...(worker.reviewMember && !shown.resume ? [{ capability: 'persistent-conversation', evidence: { kind: 'conformance' as const, at: observedAt }, scope: REVIEW_MEMBER }] : []),
           ]
         : []
       // A Worker runs on its account (a hand-named one on its runtime's one home), compared within the
@@ -891,10 +901,14 @@ export class AgentWorkers extends Service {
       const state = !ready ? 'unavailable' : pool === 'ready' && load && load.running >= load.slots ? 'busy' : pool
       // The tiers it offers (ADR-0073), each with the pools a run at it draws on, closed while its model's pool is.
       const tiers = worker.tiers ? await this.tierOffers(id, worker, ready && pool === 'ready') : undefined
+      // Standing while its probe is late (T282): the next result is due within one probe's bound, so
+      // routing looks again then and the step waits, bounded, instead of failing (`@1.12`).
+      const expectedBack = !ready && standing ? new Date(Date.now() + (this.config.probeTtlMs || 5 * 60_000)).toISOString() : undefined
       return {
         // The operator's family, else the runtime, who serves the work (ADR-0027); the kinds of work
         // the operator gives it, so it takes no other (ADR-0057).
-        schema: tiers ? 'capability-descriptor@1.11' : why !== undefined ? 'capability-descriptor@1.9' : worker.description ? 'capability-descriptor@1.7' : worker.kinds ? 'capability-descriptor@1.6' : 'capability-descriptor@1.5', account, ...(worker.kinds ? { kinds: [...worker.kinds] } : {}),
+        ...(expectedBack !== undefined ? { expectedBack } : {}),
+        schema: expectedBack !== undefined ? 'capability-descriptor@1.12' : tiers ? 'capability-descriptor@1.11' : why !== undefined ? 'capability-descriptor@1.9' : worker.description ? 'capability-descriptor@1.7' : worker.kinds ? 'capability-descriptor@1.6' : 'capability-descriptor@1.5', account, ...(worker.kinds ? { kinds: [...worker.kinds] } : {}),
         ...(worker.description ? { description: worker.description } : {}),
         ...(why !== undefined ? { unavailableReason: boundedReason(why) } : {}),
         worker: id, provider: worker.runtime, family: worker.family ?? worker.runtime, ...(load ? { load } : {}), tier: worker.tier, ...(tiers ? { tiers } : {}), quotaClass: worker.quotaClass ?? 'agent-plan',

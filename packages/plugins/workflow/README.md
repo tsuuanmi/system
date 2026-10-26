@@ -766,6 +766,10 @@ second execution path (INV-1).
     `READY`, `not_before` the reset, nothing sent, no attempt spent, its first
     wait kept (`limit_wait_since`) and bounded by `maxLimitWaitHours` (default
     24; past it, or with no known reset, it fails `quota_exhausted` as before).
+    A node refused with the router's `retryAt` (a Worker that proves it is not
+    free now, or its source not described yet since a start; T282) waits the
+    same way until then (`waitForRetry`, `overloaded` unless a limit), within the
+    same bound, and such a refusal is never `config_error` (`admissionKind`).
     After an unsent failure on an assigned account, no other account of its group
     takes the node (`assignment` on the row, `RouteOptions.assignment` on every
     later route); an unsent overload there is retried, never failed over.

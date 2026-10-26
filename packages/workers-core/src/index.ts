@@ -128,7 +128,7 @@ export const servedTier = (worker: Pick<CapabilityDescriptor, 'tier' | 'tiers'>,
 
 /** What a Worker has proven right now (`capability-descriptor@1.0`; `@1.1` adds `family`). */
 export interface CapabilityDescriptor {
-  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4' | 'capability-descriptor@1.5' | 'capability-descriptor@1.6' | 'capability-descriptor@1.7' | 'capability-descriptor@1.8' | 'capability-descriptor@1.9' | 'capability-descriptor@1.10' | 'capability-descriptor@1.11'
+  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4' | 'capability-descriptor@1.5' | 'capability-descriptor@1.6' | 'capability-descriptor@1.7' | 'capability-descriptor@1.8' | 'capability-descriptor@1.9' | 'capability-descriptor@1.10' | 'capability-descriptor@1.11' | 'capability-descriptor@1.12'
   worker: string
   /** Informational only; routing never branches on it (INV-11). */
   provider: string
@@ -156,6 +156,13 @@ export interface CapabilityDescriptor {
    * characters. For people only (the roster, capacity, health): routing never reads it.
    */
   unavailableReason?: string
+  /**
+   * When its source expects to know again whether this unavailable Worker takes work (`@1.12`,
+   * T282): it is unavailable only for a while that passes by itself, as an agent runtime's late
+   * probe, whose next result is due by then. Only with state `unavailable`; its capabilities are what
+   * it last proved. Routing tells a caller to try the work again then (`AdmissionFailure.retryAt`).
+   */
+  expectedBack?: string
   /**
    * The longest input this Worker takes, in characters (code points) of what it is sent, when its
    * source knows one (`@1.2`; ADR-0032). Admission refuses it work whose input is longer.
@@ -864,9 +871,13 @@ export interface Acceptance extends AcceptanceCheck {
  * `limitUntil` (ADR-0052): when every Worker refused only for its limit is on an assigned account,
  * the earliest reset among their known limits, so the caller may wait for it instead of failing;
  * absent otherwise, and when no reset is known.
+ * `retryAt` (T282): when a Worker that proves the work is refused only for a while that passes by
+ * itself (out of quota or at a limit with no reset `limitUntil` names, or unavailable with its
+ * source's `expectedBack`), the next time the work is worth routing again, so the caller waits,
+ * bounded, instead of failing it; absent otherwise. A caller that knows nothing of it fails as before.
  */
 export class AdmissionFailure extends Error {
-  constructor(readonly rejections: readonly Rejection[], readonly decision: ArtifactRef, message: string, readonly limitUntil?: string) {
+  constructor(readonly rejections: readonly Rejection[], readonly decision: ArtifactRef, message: string, readonly limitUntil?: string, readonly retryAt?: string) {
     super(message)
     this.name = 'AdmissionFailure'
   }

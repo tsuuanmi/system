@@ -164,6 +164,127 @@ describe('ctx.workers: quota in every route (PROP-0014 D3, quota-score@2)', () =
   })
 })
 
+describe('ctx.workers: a failure\'s message names the Workers that prove the work first (T282)', () => {
+  const frontierReview = requirement({ capabilities: ['review', 'local-data'], tier: { min: 'frontier', source: 'caller' } })
+  const reviewer = (id: string, extra: Parameters<typeof worker>[1] = {}) => onAccount(id, `acct-${id}`, {
+    schema: 'capability-descriptor@1.10', tier: 'economy', proves: ['review', 'local-data'], tiers: [{ tier: 'economy' }, { tier: 'standard' }, { tier: 'frontier' }], ...extra,
+  })
+  /** A Worker that proves nothing a review needs, first by id. */
+  const writer = (i: number) => onAccount(`w:a${String(i).padStart(2, '0')}`, `acct-a${i}`, { proves: ['develop', 'local-data'], tier: 'frontier' })
+  const refusal = (ctx: Context, options: Parameters<Context['workers']['route']>[1] = {}): Promise<AdmissionFailure> => ctx.workers.route(frontierReview, options).then(() => {
+    throw new Error('admitted, refused expected')
+  }, (error: unknown) => error as AdmissionFailure)
+  const summaryOf = (failure: AdmissionFailure): string => /^no Worker can take this work: no Worker passes admission \((.*); decision sha256:[0-9a-f]+\)$/.exec(failure.message)![1]!
+
+  it('lists the proving candidates before the ones that do not prove the work, whatever their ids, within its bound, and counts the rest', async () => {
+    const { ctx, dispose } = await boot()
+    try {
+      ctx.workers.register(source('test', [...Array.from({ length: 30 }, (_, i) => writer(i)), reviewer('w:z', { state: 'quota-exhausted' })]))
+      const refused = await refusal(ctx)
+      expect(refused).toBeInstanceOf(AdmissionFailure)
+      const summary = summaryOf(refused)
+      expect(summary.startsWith('w:z: state quota-exhausted; w:a00: does not prove review')).toBe(true)
+      expect(summary).toMatch(/; and \d+ more refused Worker\(s\), listed in the decision$/)
+      expect(summary.replace(/; and \d+ more refused Worker\(s\), listed in the decision$/, '').length).toBeLessThanOrEqual(700)
+      // The rejections and the decision keep every Worker, in id order.
+      expect(refused.rejections.map((r) => r.worker)).toEqual([...Array.from({ length: 30 }, (_, i) => `w:a${String(i).padStart(2, '0')}`), 'w:z'])
+      const decision = ctx.artifacts.get(refused.decision)!.body as { candidates: Array<{ option: string }> }
+      expect(decision.candidates.map((c) => c.option)).toEqual([...refused.rejections.map((r) => r.worker), 'none'])
+    } finally {
+      await dispose()
+    }
+  })
+
+  it('says when the work is worth routing again while a Worker that proves it is refused only for a while that passes by itself, and never when someone must act (retryAt)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-27T10:00:00.000Z') })
+    const look = async (workers: ReturnType<typeof reviewer>[]): Promise<AdmissionFailure> => {
+      const { ctx, dispose } = await boot()
+      try {
+        ctx.workers.register(source('test', [writer(0), ...workers]))
+        return await refusal(ctx)
+      } finally {
+        await dispose()
+      }
+    }
+    try {
+      // Unavailable while its probe is late: back when its source expects it (capability-descriptor@1.12).
+      const late = await look([reviewer('w:z', { schema: 'capability-descriptor@1.12', state: 'unavailable', expectedBack: '2026-10-27T10:05:00.000Z' })])
+      expect([late.limitUntil, late.retryAt]).toEqual([undefined, '2026-10-27T10:05:00.000Z'])
+      // Out of quota on a pooled account, back at its reset; with no reset known, a look five minutes on.
+      const pooled = (limitUntil?: string) => ({ id: 'acct-z', group: 'other', mode: 'pooled' as const, ...(limitUntil ? { limitUntil } : {}) })
+      expect((await look([reviewer('w:z', { state: 'quota-exhausted', account: pooled('2026-10-27T11:00:00.000Z') })])).retryAt).toBe('2026-10-27T11:00:00.000Z')
+      expect((await look([reviewer('w:z', { state: 'quota-exhausted', account: pooled() })])).retryAt).toBe('2026-10-27T10:05:00.000Z')
+      // At its frontier model's limit, back when that model is.
+      const closed = await look([reviewer('w:z', { account: pooled(), tiers: [{ tier: 'economy' }, { tier: 'standard' }, { tier: 'frontier', closed: true, until: '2026-10-27T12:00:00.000Z' }] })])
+      expect(closed.retryAt).toBe('2026-10-27T12:00:00.000Z')
+      // The earliest Worker back is when to look.
+      expect((await look([reviewer('w:y', { state: 'quota-exhausted', account: pooled('2026-10-27T11:00:00.000Z') }), reviewer('w:z', { schema: 'capability-descriptor@1.12', state: 'unavailable', expectedBack: '2026-10-27T10:05:00.000Z' })])).retryAt).toBe('2026-10-27T10:05:00.000Z')
+      // Never for a Worker unavailable with nothing to say when (signed out, a failed probe), one signed out, or one refused for its tier as well.
+      expect((await look([reviewer('w:z', { state: 'unavailable' })])).retryAt).toBeUndefined()
+      expect((await look([reviewer('w:z', { state: 'reauth-required' })])).retryAt).toBeUndefined()
+      expect((await look([reviewer('w:z', { state: 'quota-exhausted', account: pooled(), tiers: [{ tier: 'economy' }] })])).retryAt).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a proving candidate whose refusal alone passes the bound, clipped to it', async () => {
+    const { ctx, dispose } = await boot()
+    try {
+      // Every Worker is left out by a restriction whose reason is longer than the bound.
+      const reason = `held for the test ${'y'.repeat(900)}`
+      ctx.workers.register(source('test', [writer(0), reviewer('w:z')]))
+      const refused = await refusal(ctx, { restrict: { workers: [], reason } })
+      const summary = summaryOf(refused)
+      expect(summary).toMatch(/^w:z: held for the test y+…; and 1 more refused Worker\(s\), listed in the decision$/)
+      expect(summary.indexOf('…')).toBe(699)
+      // The rejection keeps the reason whole; the decision lists the Worker, its reason within a decision's own bound.
+      expect(refused.rejections.find((r) => r.worker === 'w:z')!.failed).toEqual([{ check: 'restricted', reason }])
+      const decision = ctx.artifacts.get(refused.decision)!.body as { candidates: Array<{ option: string; reasons: string[] }> }
+      expect(decision.candidates.find((c) => c.option === 'w:z')!.reasons[0]).toMatch(/^held for the test y+…$/)
+    } finally {
+      await dispose()
+    }
+  })
+
+  it('looks again soon while a source has not described its Workers once since it started (a host just restarted), and never once it has', async () => {
+    const { ctx, dispose } = await boot()
+    // The 5 s describe deadline, the slow first describe, and the clock run on fake time.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], now: new Date('2026-10-27T10:00:00.000Z') })
+    try {
+      // Its first describe (its runtimes' first probes after a start) takes 7 s; the second answers at once; every later one hangs.
+      let calls = 0
+      ctx.workers.register(source('agents', async () => {
+        calls++
+        await new Promise((resolve) => (calls === 1 ? setTimeout(resolve, 7000) : calls === 2 ? resolve(undefined) : undefined))
+        return [reviewer('w:z')]
+      }))
+      ctx.workers.register(source('test', [writer(0)]))
+      const first = refusal(ctx)
+      await vi.advanceTimersByTimeAsync(5000)
+      const refused = await first
+      expect(refused).toBeInstanceOf(AdmissionFailure)
+      // Its Workers are not known yet: said, and worth routing again in 30 s, never "proves nothing" for good.
+      expect(refused.message).toMatch(/^no Worker can take this work: no Worker proves review; agents has not described its Workers yet since it started \(w:a00: does not prove review/)
+      expect([refused.limitUntil, refused.retryAt]).toEqual([undefined, '2026-10-27T10:00:35.000Z'])
+      // Its first describe lands: the frontier review is routed to its three-tier Worker.
+      await vi.advanceTimersByTimeAsync(2000)
+      const admitted = await ctx.workers.route(frontierReview)
+      expect([admitted.worker.worker, admitted.tier]).toEqual(['w:z', 'frontier'])
+      admitted.release()
+      // A later silent read is not its first: its Workers were known, so nothing says to look again.
+      const later = refusal(ctx)
+      await vi.advanceTimersByTimeAsync(5000)
+      const again = await later
+      expect(again.message).toMatch(/^no Worker can take this work: no Worker proves review \(/)
+      expect(again.retryAt).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+      await dispose()
+    }
+  })
+})
+
 describe('ctx.workers: one Worker, several tiers (ADR-0073)', () => {
   const NOW = new Date('2026-10-26T10:00:00.000Z')
   const BACK = '2026-10-29T09:00:00.000Z'

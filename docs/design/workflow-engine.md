@@ -35,6 +35,28 @@ Lifecycle: `draft → preflight → confirm → accepted → active`.
   to the profile version. A run keeps its resolved spec, so a template removed
   later still answers `explain` and `result` for the runs it started; a new run
   of it is refused as an unknown template.
+- A step routing refuses fails as `config_error` (`CODE_FIX`: not retried, its attempt spent) only
+  when no configured Worker proves its capabilities at any tier it asks for (`admissionKind`, T282):
+  the Workers that prove them are refused for their tier alone, or none proves them. A Worker that
+  proves them and is busy takes the step (it queues there). A Worker that proves them and is refused
+  only for a while that passes by itself makes the step wait, `READY` with `not_before`, sending
+  nothing and spending no attempt, as a `recovery` decision with outcome `wait`:
+  - at its limit on an assigned account whose reset is known: until that reset (`waitForLimit`,
+    [assigned accounts](routing.md#assigned-accounts));
+  - out of quota or at a limit with no such reset (a pooled account, a reset no one knows),
+    unavailable while its runtime's probe is late, or not known yet because its source has not
+    described its Workers once since the host started: until the time routing names to look again
+    (`AdmissionFailure.retryAt`: the Worker's reset, its source's `expectedBack`, a look 30 s on
+    for a source not described yet, or a look five minutes on), then it is routed again, and runs, or waits again (`waitForRetry`, rule
+    `workflow.recovery.retry`; the node's error reads `quota_exhausted` for a limit, else
+    `overloaded`, never a sign-in to make).
+
+  Both waits are bounded together by `maxLimitWaitHours` from the node's first wait (INV-9): a wait
+  that would pass it fails the attempt with the refusal's kind (`quota_exhausted`, or
+  `reauth_required` for a Worker still unavailable, `overloaded` otherwise), saying it does not
+  wait, never as a configuration problem: a refusal that carries `retryAt` is never `config_error`. A Worker unavailable with nothing to say when it is back (signed out, a
+  failed probe, a challenge) or one that needs a sign-in fails the step at once, as before: someone
+  must act ([routing](routing.md#intelligence-tiers)).
 - Two bounds admit a run (INV-9). Both refuse with `overloaded` and say which one was hit.
   - `maxActiveRuns` bounds the unfinished runs that execute.
   - A run whose only unfinished work waits on someone is not one of them. Such a run has a

@@ -43,6 +43,19 @@ class RecordingRuntime extends FakeAgentRuntime {
   limitNext = false
   /** Set: the next run holds its account's one slot until it is stopped, so the runs after it wait queued. */
   holdNext = false
+  /** Set: probes wait until {@link releaseProbes}, so a probe is late (T282). */
+  holdProbes = false
+  private readonly heldProbes: Array<() => void> = []
+  override async probe(options?: Parameters<FakeAgentRuntime['probe']>[0]): ReturnType<FakeAgentRuntime['probe']> {
+    if (this.holdProbes) await new Promise<void>((resolve) => this.heldProbes.push(resolve))
+    return super.probe(options)
+  }
+
+  releaseProbes(): void {
+    this.holdProbes = false
+    for (const resolve of this.heldProbes.splice(0)) resolve()
+  }
+
   override async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult> {
     this.specs.push(spec)
     if (this.holdNext) {
@@ -221,6 +234,68 @@ describe('a tiered Worker in the agents source (ADR-0073)', () => {
     expect(resultOf(b, run)).not.toHaveProperty('tier')
     expect(() => b.ctx.workers.source('agents')!.start({ key: 'higher', worker: admitted.worker.worker, prompt: 'x', requirement: requirement('economy'), decisions: admitted.decisions, tier: 'frontier' }))
       .toThrow(/offers tier standard only, not frontier/)
+  })
+})
+
+describe('a heavy change\'s review raised to frontier finds its tiered Worker (T282)', () => {
+  /** The checks each refused Worker failed, by Worker. */
+  const checksOf = (failure: AdmissionFailure): Record<string, string[]> => Object.fromEntries(failure.rejections.map((r) => [r.worker, r.failed.map((f) => f.check)]))
+  const refusal = (b: Booted, min: Tier): Promise<AdmissionFailure> => b.ctx.workers.route(requirement(min)).then(
+    (admitted) => {
+      admitted.release()
+      throw new Error(`routed to ${admitted.worker.worker} at ${admitted.tier}, refused expected`)
+    },
+    (error: unknown) => error as AdmissionFailure,
+  )
+
+  it('routes frontier review to a three-tier review Worker, queues it there while the Worker is busy, and while its probe is late refuses it for its state, never as a Worker that proves nothing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-agent-tiers-'))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+    const account = await enrolled(dir, 'alice@example.test')
+    const id = `agent:${account}/review`
+    const b = await boot({ roles: [tieredRole(join(dir, 'ws'))], assignments: [{ account, roles: ['review'] }], probeTtlMs: 1000 }, { dir })
+    onTestFinished(() => b.runtime.releaseProbes())
+    // The step's tier, raised to frontier by the policy's tier by risk, is the requirement's minimum: the Worker serves it at frontier.
+    const top = await b.ctx.workers.route(requirement('frontier'))
+    expect([top.worker.worker, top.tier]).toEqual([id, 'frontier'])
+    // Busy: a run holds its account's one slot. The next frontier review is still routed there, and waits queued behind it.
+    b.runtime.holdNext = true
+    const holding = startOn(b, top, 'holding', 'frontier')
+    top.release()
+    await expect.poll(async () => (await described(b)).get(id)!.state, { timeout: 5000, interval: 20 }).toBe('busy')
+    const queued = await b.ctx.workers.route(requirement('frontier'))
+    expect([queued.worker.worker, queued.tier]).toEqual([id, 'frontier'])
+    queued.release()
+    expect(b.ctx.workers.source('agents')!.cancel!(holding.id)).toBe(true)
+    // Its probe is late: past probeTtlMs, the next one not finished. It reads unavailable and still lists what its role proves, and its tiers.
+    b.runtime.holdProbes = true
+    await expect.poll(async () => (await described(b)).get(id)!.state, { timeout: 5000, interval: 20 }).toBe('unavailable')
+    const late = (await described(b)).get(id)!
+    expect(late.capabilities.map((c) => c.capability)).toEqual(expect.arrayContaining(['review', 'local-data']))
+    expect(late.tiers!.map((t) => t.tier)).toEqual(['economy', 'standard', 'frontier'])
+    const refused = await refusal(b, 'frontier')
+    expect(refused).toBeInstanceOf(AdmissionFailure)
+    expect(checksOf(refused)).toEqual({ [id]: ['state'] })
+    expect(refused.message).not.toMatch(/no Worker proves/)
+    // It says when its next probe's result is due (capability-descriptor@1.12), so routing tells the caller when to look again: the step waits.
+    expect(late).toMatchObject({ schema: 'capability-descriptor@1.12', state: 'unavailable', expectedBack: expect.any(String) })
+    schemas.assertRecord(late)
+    expect(refused.limitUntil).toBeUndefined()
+    expect(Number.isNaN(Date.parse(refused.retryAt ?? ''))).toBe(false)
+    // Once the probe finishes, the Worker takes frontier work again.
+    b.runtime.releaseProbes()
+    await expect.poll(async () => (await described(b)).get(id)!.state, { timeout: 5000, interval: 20 }).not.toBe('unavailable')
+  }, 30_000)
+
+  it('refuses frontier work for its tier alone when the review role offers no frontier tier: the one configuration problem', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-agent-tiers-'))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+    const account = await enrolled(dir, 'alice@example.test')
+    const role = { id: 'review', workspace: join(dir, 'ws'), sandbox: 'read-only' as const, runtimes: { [A]: { tiers: { economy: { model: ECONOMY }, standard: { model: STANDARD } } } } }
+    const b = await boot({ roles: [role], assignments: [{ account, roles: ['review'] }] }, { dir })
+    const refused = await refusal(b, 'frontier')
+    expect(checksOf(refused)).toEqual({ [`agent:${account}/review`]: ['tier'] })
+    expect(refused.rejections[0]!.failed[0]!.reason).toBe('its tiers economy, standard are below the minimum frontier')
   })
 })
 

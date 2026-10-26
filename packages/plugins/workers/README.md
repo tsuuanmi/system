@@ -110,6 +110,13 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
     that proves it all takes (`no Worker that proves develop takes code work`). When every
     Worker refused only for its limit is on an assigned account, the failure's
     `limitUntil` is the earliest known reset, and the decision says when the first is back.
+    Otherwise, when a Worker that proves the work is refused only for a while that passes by
+    itself (out of quota, at a limit, unavailable with an `expectedBack`), or a source silent on
+    this read has not described its Workers once since it registered (a host just started), the
+    failure's `retryAt` says when to route it again (T282,
+    [routing](../../../docs/design/routing.md#intelligence-tiers)). Its message lists the refusals
+    of the Workers that prove the work first (the fewest failed checks first), within 700
+    characters, and counts the rest.
 - **Acceptance (REQ-WRK-3).** `contract(id, check)` registers a deterministic
   contract for the plugin's lifetime. `accept(result, contract)` checks a stored
   result and records an `acceptance` decision; with a `resultSchema`, the result's JSON must first

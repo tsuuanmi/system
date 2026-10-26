@@ -30,7 +30,8 @@ Routing **seam definition**
   [routing](../../docs/design/routing.md#assigned-accounts)): the admission check `assignment`
   refuses another account of an assigned group the work its limited account could take, and an
   `AdmissionFailure` whose limited Workers are all on assigned accounts carries `limitUntil`, the
-  earliest known reset. All of it is optional: a Worker with no `account` routes as before.
+  earliest known reset; one refused while a Worker that proves the work is not free now, or its
+  Workers are not known yet, carries `retryAt` (T282). All of it is optional: a Worker with no `account` routes as before.
 - **Briefs** ([workflow engine](../../docs/design/workflow-engine.md#briefs)): a caller that
   composes a `brief@1.x` records it as an `objective` artifact and starts the execution with its
   id; the source renders its own prompt from it at start (`startPrompt` and `renderBrief` in

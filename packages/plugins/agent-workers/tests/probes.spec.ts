@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 import type { AgentRuntimeProvider, RuntimeEvidence } from '@tsuuanmi/system-agent-runtime-core'
 import { afterEach, describe, expect, it } from 'vitest'
-import { Probes } from '../src/probes.ts'
+import { Probes, isLate, provenBefore } from '../src/probes.ts'
 
 const READY: RuntimeEvidence = { available: true, detail: 'gated 1.0', sandboxes: ['read-only'], resume: true, executes: false, readsConfined: true, gatesToolCalls: true }
 
@@ -118,6 +118,38 @@ describe('agent runtime probes: refreshed in the background, never waited for by
     // And a later probe that proves it again brings the runtime back.
     runtime.answer = READY
     await expect.poll(async () => (await probes.described('gated')).available, { timeout: 5000, interval: 20 }).toBe(true)
+  }, 20_000)
+
+  it('marks evidence that admits nothing only because its probe is late, with what the runtime proved before it; a probe that failed is never late (T282)', async () => {
+    const { probes, runtime } = setup(800)
+    const proved = { ...READY, executes: true, detail: 'gated 2.0' }
+    runtime.answer = proved
+    const first = await probes.described('gated')
+    expect(isLate(first)).toBe(false)
+    expect(provenBefore(first)).toBeUndefined()
+    // The next probe never settles: past the bound, and then timed out, the evidence is late, and carries the last result.
+    runtime.hold = true
+    await expect.poll(async () => (await atOnce(probes.described('gated'))) as RuntimeEvidence, { timeout: 5000, interval: 20 }).toMatchObject({ available: false })
+    const expired = await probes.described('gated')
+    expect(isLate(expired)).toBe(true)
+    expect(provenBefore(expired)).toEqual(proved)
+    // A probe that fails is a refusal of its own: not late, and it forgets what was proven before.
+    runtime.hold = false
+    runtime.answer = new Error('claude --version failed: spawn EACCES')
+    runtime.release(runtime.answer)
+    await expect.poll(async () => (await atOnce(probes.described('gated')) as RuntimeEvidence).detail, { timeout: 5000, interval: 20 }).toBe('claude --version failed: spawn EACCES')
+    const failed = await probes.described('gated')
+    expect(isLate(failed)).toBe(false)
+    expect(provenBefore(failed)).toBeUndefined()
+  }, 20_000)
+
+  it('marks a first probe that times out as late, with nothing proven before it (T282)', async () => {
+    const { probes, runtime } = setup(600)
+    runtime.hold = true
+    const first = await probes.described('gated')
+    expect(first).toMatchObject({ available: false, detail: 'probe timed out: the probe of gated did not finish within probeTtlMs (600 ms)' })
+    expect(isLate(first)).toBe(true)
+    expect(provenBefore(first)).toBeUndefined()
   }, 20_000)
 
   it('runs one probe at a time per runtime: concurrent reads share it', async () => {

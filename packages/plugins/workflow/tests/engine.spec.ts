@@ -78,16 +78,116 @@ describe('ctx.workflow: the engine under injected faults', () => {
     expect(pending).toBe(0)
   }, 60_000)
 
-  it('fails a node whose only Worker is under a usage limit for what it needs as quota_exhausted, unsent (ADR-0034)', async () => {
+  it('fails a node whose only Worker is under a usage limit for what it needs as quota_exhausted, unsent, when its reset lies past maxLimitWaitHours (ADR-0034, T282)', async () => {
     const survey = { nodeId: 'survey:1', objective: 'survey', prompt: 'Survey {{input}}', capabilities: ['reason', 'deep-research'], tier: 'standard', conversation: 'persistent', acceptance: 'acceptance.answer' }
-    const { ctx } = await boot({}, { templates: { survey: [survey] } })
+    const { ctx } = await boot({}, { templates: { survey: [survey] }, maxLimitWaitHours: 0.5 })
     const until = new Date(Date.now() + 3_600_000).toISOString()
     ctx.workers.register(source('limited', [worker('w:limited', { schema: 'capability-descriptor@1.3', proves: ['reason', 'persistent-conversation', 'deep-research'], cooldowns: [{ capability: 'deep-research', until }] })]))
     const run = ctx.workflow.start({ template: 'survey', input: 'q', classification: 'public' })
     const done = await ctx.workflow.wait(run.runId, 30_000)
     expect(done.status).toBe('failed')
-    expect(done.nodes.find((n) => n.error?.kind === 'quota_exhausted')?.error?.message).toMatch(/deep-research limit until/)
+    const failed = done.nodes.find((n) => n.error?.kind === 'quota_exhausted')!.error!.message
+    expect(failed).toMatch(/deep-research limit until/)
+    expect(failed).toMatch(/it does not wait: looking again at .* would pass maxLimitWaitHours \(0\.5\)/)
   }, 60_000)
+
+  describe('a Worker that proves the step but is not free now makes it wait, bounded, never a config error (T282)', () => {
+    const REVIEW = { nodeId: 'review:1', objective: 'review', prompt: 'Review {{input}}', capabilities: ['review', 'local-data'], tier: 'frontier', conversation: 'temporary', acceptance: 'acceptance.answer' }
+    const REVIEWS = ['review', 'local-data']
+    /** A three-tier review Worker as its source describes it now (`now` replaced by the test), and the runs started on it. */
+    function reviewer(ctx: Context, initial: CapabilityDescriptor) {
+      const state = { now: initial, started: [] as string[] }
+      const executions = new Map<string, WorkerExecution>()
+      ctx.workers.register(source('review', async () => [state.now], {
+        start: (request) => {
+          state.started.push(request.worker)
+          const id = `x-${state.started.length}`
+          const execution: WorkerExecution = { id, status: 'completed', submitted: true, decisions: [], result: ctx.artifacts.put({ kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'public', producer: { type: 'worker', ref: request.worker },
+            body: { schema: 'provider-answer@1.0', provider: 'p', account: 'acct-r', turnId: id, conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text: 'reviewed' } }).id as `sha256:${string}` }
+          executions.set(id, execution)
+          return execution
+        },
+        get: (id) => executions.get(id),
+        wait: async (id) => executions.get(id)!,
+      }))
+      return state
+    }
+    const threeTiers = (extra: Partial<CapabilityDescriptor> = {}): CapabilityDescriptor => worker('w:review', {
+      schema: 'capability-descriptor@1.10', family: 'fam-r', tier: 'economy', proves: REVIEWS, tiers: [{ tier: 'economy' }, { tier: 'standard' }, { tier: 'frontier' }], ...extra,
+    })
+    const recoveries = (ctx: Context, runId: string): string[] => ctx.artifacts.list({ kind: 'decision', decisionType: 'recovery', runId, limit: 100 })
+      .map((a) => a as unknown as { createdAt: string; body: { outcome: { option: string } } }).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map((a) => a.body.outcome.option)
+
+    it('routes a frontier review to the three-tier review Worker, and waits for it while it is out of quota, then runs it there, spending no attempt', async () => {
+      const { ctx } = await boot({}, { templates: { review: [REVIEW] } })
+      // Out of quota on a pooled account (no assigned account's reset to wait for), back in a moment.
+      const back = new Date(Date.now() + 5000).toISOString()
+      const r = reviewer(ctx, threeTiers({ state: 'quota-exhausted', account: { id: 'acct-r', group: 'fam-r', mode: 'pooled', limitUntil: back } }))
+      const run = ctx.workflow.start({ template: 'review', input: 'the diff', classification: 'public' })
+      // Refused for its state alone: the node waits READY to be routed again when its account is back, sends nothing, spends no attempt.
+      await vi.waitFor(() => expect(ctx.workflow.get(run.runId)!.nodes[0]).toMatchObject({ state: 'READY', attempt: 0, waitingUntil: back }), { timeout: 10_000, interval: 20 })
+      const waiting = ctx.workflow.get(run.runId)!.nodes[0]!
+      expect(waiting.error).toMatchObject({ kind: 'quota_exhausted', disposition: 'BACKOFF' })
+      expect(waiting.error!.message).not.toMatch(/no Worker proves/)
+      expect(r.started).toEqual([])
+      expect(recoveries(ctx, run.runId)).toEqual(['wait'])
+      // Its account is back: routed again, it runs on that Worker at frontier.
+      r.now = threeTiers()
+      const done = await ctx.workflow.wait(run.runId, 30_000)
+      expect(done).toMatchObject({ status: 'completed', nodes: [{ nodeId: 'review:1', attempt: 1 }] })
+      expect(r.started).toEqual(['w:review'])
+    }, 60_000)
+
+    it('waits for a Worker whose probe is late, then fails only past maxLimitWaitHours, never as config_error', async () => {
+      // maxLimitWaitHours is 3 s here; the Worker's source says it is back within 1 s, every time it is asked.
+      const { ctx } = await boot({}, { templates: { review: [REVIEW] }, maxLimitWaitHours: 3 / 3600 })
+      const late = (): CapabilityDescriptor => threeTiers({ schema: 'capability-descriptor@1.12', state: 'unavailable', unavailableReason: 'its probe is late', expectedBack: new Date(Date.now() + 1000).toISOString() })
+      const r = reviewer(ctx, late())
+      const refresh = setInterval(() => { r.now = late() }, 100)
+      onTestFinished(() => clearInterval(refresh))
+      const run = ctx.workflow.start({ template: 'review', input: 'the diff', classification: 'public' })
+      await vi.waitFor(() => expect(ctx.workflow.get(run.runId)!.nodes[0]).toMatchObject({ state: 'READY', attempt: 0, waitingUntil: expect.any(String) }), { timeout: 10_000, interval: 20 })
+      expect(ctx.workflow.get(run.runId)!.nodes[0]!.error).toMatchObject({ kind: 'overloaded', disposition: 'BACKOFF' })
+      const done = await ctx.workflow.wait(run.runId, 30_000)
+      expect(done.status).toBe('failed')
+      const error = done.nodes[0]!.error!
+      expect(error.kind).not.toBe('config_error')
+      expect(error.message).not.toMatch(/no Worker proves/)
+      expect(error.message).toMatch(/it does not wait: looking again at .* would pass maxLimitWaitHours/)
+      expect(r.started).toEqual([])
+      const options = recoveries(ctx, run.runId)
+      expect(options[0]).toBe('wait')
+      expect(options.at(-1)).toBe('fail')
+    }, 60_000)
+
+    it('waits, never config_error, while the source of the Worker that proves it has not described its Workers yet since the host started', async () => {
+      const { ctx } = await boot({}, { templates: { review: [REVIEW] } })
+      // Right after a start: the agents source's first describe waits for its runtimes' first probes, past the router's 5 s.
+      let calls = 0
+      ctx.workers.register(source('agents', async () => {
+        calls++
+        if (calls === 1) await new Promise((resolve) => setTimeout(resolve, 6000))
+        return [threeTiers()]
+      }))
+      const run = ctx.workflow.start({ template: 'review', input: 'the diff', classification: 'public' })
+      // Refused only because its Workers are not known yet: READY, waiting to be routed again, no attempt spent.
+      await vi.waitFor(() => expect(ctx.workflow.get(run.runId)!.nodes[0]).toMatchObject({ state: 'READY', attempt: 0, waitingUntil: expect.any(String) }), { timeout: 15_000, interval: 50 })
+      const waiting = ctx.workflow.get(run.runId)!.nodes[0]!
+      expect(waiting.error).toMatchObject({ kind: 'overloaded', disposition: 'BACKOFF' })
+      expect(waiting.error!.message).toMatch(/no Worker proves review, local-data; agents has not described its Workers yet since it started/)
+      expect(recoveries(ctx, run.runId)).toEqual(['wait'])
+    }, 60_000)
+
+    it('fails as config_error at once when no Worker offers frontier: the one configuration problem', async () => {
+      const { ctx } = await boot({}, { templates: { review: [REVIEW] } })
+      const r = reviewer(ctx, worker('w:review', { schema: 'capability-descriptor@1.10', family: 'fam-r', tier: 'economy', proves: REVIEWS, tiers: [{ tier: 'economy' }, { tier: 'standard' }] }))
+      const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: 'the diff', classification: 'public' }).runId, 30_000)
+      expect(done).toMatchObject({ status: 'failed', nodes: [{ state: 'FAILED', error: { kind: 'config_error' } }] })
+      expect(done.nodes[0]!.error!.message).toMatch(/w:review: its tiers economy, standard are below the minimum frontier/)
+      expect(recoveries(ctx, done.runId)).not.toContain('wait')
+      expect(r.started).toEqual([])
+    }, 60_000)
+  })
 
   /** Two scripted Workers: each attempt's outcome per Worker comes from `plan`, then they answer. */
   function pair(ctx: Context, plan: Record<string, Array<{ kind: string; disposition: string; sent: boolean }>>, workers: Array<string | CapabilityDescriptor> = ['w:a', 'w:b'], siblings?: (worker: string) => string[] | undefined) {
