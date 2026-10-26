@@ -47,18 +47,18 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
       action: { class: 'remediation' }, requester: { component: 'workflow', runId: run.runId },
       subject: { type: 'artifact', ref: waiting.plan, version: reviewed },
     })
-    expect(agent.runs.map((r) => r.role)).toEqual(['develop', 'review'])
+    expect(agent.runs.map((r) => r.role)).toEqual(['develop', 'review', 'verify'])
     await decide(ctx, request.requestId)
     const done = await reported(ctx, run.runId)
     expect(done.status).toBe('completed')
     expect(done.nodes.map((n) => [n.nodeId, n.state])).toEqual([
-      ['develop:1', 'COMPLETED'], ['review:1', 'COMPLETED'], ['review:1:approve:1', 'COMPLETED'], ['review:1:fix:1', 'COMPLETED'], ['review:1:review:2', 'COMPLETED'], ['validate:1', 'COMPLETED'],
+      ['develop:1', 'COMPLETED'], ['review:1', 'COMPLETED'], ['review:1:verify', 'COMPLETED'], ['review:1:approve:1', 'COMPLETED'], ['review:1:fix:1', 'COMPLETED'], ['review:1:review:2', 'COMPLETED'], ['validate:1', 'COMPLETED'],
     ])
 
     // Every step of the run worked in the run's own worktree, on its branch; the repository's tree is untouched.
     const work = agent.runs.filter((r) => r.role !== 'digest')
     expect(work.map((r) => [r.role, r.sandbox])).toEqual([
-      ['develop', 'workspace-write'], ['review', 'read-only'], ['fix', 'workspace-write'], ['review', 'read-only'], ['validate', 'workspace-write'],
+      ['develop', 'workspace-write'], ['review', 'read-only'], ['verify', 'read-only'], ['fix', 'workspace-write'], ['review', 'read-only'], ['validate', 'workspace-write'],
     ])
     const worktree = work[0]!.workspace
     expect(basename(worktree)).toBe(run.runId)
@@ -71,7 +71,7 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
     // One task, one author session (T232): the fix continued develop:1's session, and the change the
     // review read and the fix's result are each a commit of the run's review history, while the
     // worktree's HEAD stays the commit the task writes, so its result and checks still bind (below).
-    expect(work[2]!.resume).toBe('h-1')
+    expect(work[3]!.resume).toBe('h-1')
     const history = `refs/system/reviews/${run.runId}`
     expect(pilot.git(worktree, 'rev-parse', 'HEAD')).toBe(pilot.head)
     expect(pilot.git(worktree, 'log', '--format=%s', history).split('\n')).toEqual([
@@ -94,10 +94,10 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
     const asked = (prompt: string): string => prompt.split('\n\n## The exact subject of this review')[0]!
     expect(asked(reviews[1]!.prompt)).toBe(asked(reviews[0]!.prompt))
     expect(asked(reviews[1]!.prompt)).toContain('Review this change as an independent reviewer')
-    // The review and its re-review read and judge, and run no test or build: an environment limit is at most info.
+    // The review and its re-review read and judge, and run no test or build: an environment limit is at most a nit.
     for (const review of reviews) {
       expect(asked(review.prompt)).toContain('you never run the project\'s tests or builds')
-      expect(asked(review.prompt)).toContain('A command you could not run is not a finding about the change; an environment limit is at most an info finding.')
+      expect(asked(review.prompt)).toContain('A command you could not run is not a finding about the change; an environment limit is at most a nit.')
       expect(review.prompt).toContain('never run the project\'s tests or builds, which the validation and the run\'s required checks run.')
     }
 
@@ -171,7 +171,7 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
     const done = await reported(ctx, run.runId)
     expect(done.status).toBe('completed')
     expect(done.nodes.map((n) => [n.nodeId, n.worker])).toEqual([
-      ['develop:1', 'agent:developer'], ['review:1', 'agent:reviewer'], ['review:1:approve:1', undefined], ['review:1:fix:1', 'agent:developer'],
+      ['develop:1', 'agent:developer'], ['review:1', 'agent:reviewer'], ['review:1:verify', 'agent:reviewer'], ['review:1:approve:1', undefined], ['review:1:fix:1', 'agent:developer'],
       ['review:1:review:2', 'agent:reviewer'], ['validate:1', 'agent:tester'],
     ])
     // Each route decision says why the other Worker lost the step.

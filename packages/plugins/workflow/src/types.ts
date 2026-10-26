@@ -451,6 +451,18 @@ export interface ExplainedDecision {
   ballots?: Array<{ round: number; member: string; choice: string; confidence: string; rationale: string }>
 }
 
+/**
+ * A review step's latest assessment as `explain` shows it (ADR-0075): its summary, which opens with the
+ * count, its verdict, and its findings by severity, each with its place, class, and the second
+ * reviewer's vote and reason when it has one.
+ */
+export interface ExplainedReview {
+  assessment: ArtifactRef
+  verdict: string
+  summary: string
+  findings: Array<{ id?: string; severity: string; title: string; place?: string; class?: string; blocks: boolean; vote?: string; reason?: string; repeated?: string }>
+}
+
 export interface Explanation {
   runId: string
   template: string
@@ -469,7 +481,7 @@ export interface Explanation {
    */
   risk?: { tier: 'light' | 'normal' | 'heavy'; reasons: string[]; decision: ArtifactRef; at?: string }
   /** `tier` and `model`: the tier a tiered Worker's step ran at and the model it ran on (ADR-0073), only when its result names them. */
-  nodes: Array<{ nodeId: string; state: NodeState; executionId?: string; worker?: string; quotaClass?: string; tier?: Tier; model?: string; decisions: ExplainedDecision[] }>
+  nodes: Array<{ nodeId: string; state: NodeState; executionId?: string; worker?: string; quotaClass?: string; tier?: Tier; model?: string; decisions: ExplainedDecision[]; review?: ExplainedReview }>
   /**
    * The run's executions whose liveness needs a look, as their Worker sources tell it
    * (`ctx.workers.liveness`, PROP-0013): stalled, looked at, or ended not known to be gone, with the

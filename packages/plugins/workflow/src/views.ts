@@ -4,12 +4,13 @@ import { type ContentId, drawFigures, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDra
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import { waitsOnCall } from './continuations.ts'
 import type { Engine } from './engine.ts'
-import type { ResolvedNode } from './spec.ts'
+import { blocks, bySeverity, countOf, type ResolvedNode } from './spec.ts'
 import { isSameFamily, waitingUntil } from './recovery.ts'
+import { latestAssessment } from './review.ts'
 import { riskOf } from './risk.ts'
 import { singleFamilyHeader } from './single-family.ts'
 import { tieOf, type TeamRound } from './teams.ts'
-import { type ExplainedDecision, type Explanation, MAX_WEB_CALLS_SHOWN, type NodeRecord, type NodeView, type RunRow, type RunView, type StalledCheck, type UsageDraws, type UsageFilter, type UsageRunView, type WebCall, type WebCalls, type WorkflowError } from './types.ts'
+import { type ExplainedDecision, type ExplainedReview, type Explanation, MAX_WEB_CALLS_SHOWN, type NodeRecord, type NodeRow, type NodeView, type RunRow, type RunView, type StalledCheck, type UsageDraws, type UsageFilter, type UsageRunView, type WebCall, type WebCalls, type WorkflowError } from './types.ts'
 
 export function view(e: Engine, run: RunRow): RunView {
   const rows = e.nodeRows(run.run_id)
@@ -210,8 +211,26 @@ export function explain(e: Engine, runId: string): Explanation | undefined {
           return model.model && node.served_tier ? { tier: node.served_tier, model: model.model } : {}
         })(),
         decisions: ids.filter((id): id is ArtifactRef => !!id).map((id) => decision(e, id)).filter((d): d is ExplainedDecision => !!d),
+        ...(() => {
+          const review = explainedReview(e, node)
+          return review ? { review } : {}
+        })(),
       }
     }),
+  }
+}
+
+/** A review step's latest assessment for `explain` (ADR-0075): summary first, findings by severity with their votes. */
+function explainedReview(e: Engine, node: NodeRow): ExplainedReview | undefined {
+  const latest = latestAssessment(e, node)
+  if (!latest) return undefined
+  const findings = latest.body.findings ?? []
+  return {
+    assessment: latest.ref, verdict: latest.body.verdict ?? '', summary: latest.body.summary ?? countOf(findings),
+    findings: bySeverity(findings).map((f) => ({
+      ...(f.id ? { id: f.id } : {}), severity: f.severity, title: f.title, ...(f.file ? { place: `${f.file}${f.line ? `:${f.line}` : ''}` } : {}),
+      ...(f.class ? { class: f.class } : {}), blocks: blocks(f), ...(f.verification ? { vote: f.verification.vote, reason: f.verification.reason } : {}), ...(f.repeated ? { repeated: f.repeated } : {}),
+    })),
   }
 }
 

@@ -41,7 +41,7 @@ import type { Engine, Prepared } from './engine.ts'
 import { routedDecisions } from './recovery.ts'
 import { type AcceptanceRisk, secondFamily } from './risk.ts'
 import { heldWhy } from './sessions.ts'
-import { clampText, type ResolvedNode } from './spec.ts'
+import { blocks, clampText, type Finding, type ResolvedNode } from './spec.ts'
 import { admittedRestriction } from './teams.ts'
 import {
   newId, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type StepHold, TASK_LEASE_TTL_MS, type TaskBudget, type TaskDispatch, type TaskOutcome, type TaskQuestion, type TaskRow, type TaskStartInput, type TaskView, type WorkflowError, WorkflowFailure,
@@ -65,7 +65,7 @@ type Result = { artifacts: ArtifactRef[]; subject: Subject }
 /** `infrastructure`: the holder lapsed while the host was stopped, found at the first renewal after the start (ADR-0069). */
 type Lost = { at: string; decision: ArtifactRef; reason: string; infrastructure?: InfrastructureFailure }
 /** The run's last review as a task's acceptance names it (`outcome.detail.review`, D80). */
-type AcceptanceReview = { node: string; gate: ArtifactRef; assessment: ArtifactRef; verdict: string; blocking: number; cycle: number; maxCycles: number; subject: { ref: string; version: string } }
+type AcceptanceReview = { node: string; gate: ArtifactRef; assessment: ArtifactRef; verdict: string; blocking: number; summary?: string; cycle: number; maxCycles: number; subject: { ref: string; version: string } }
 
 const describe = (s: Subject): string => `${s.type} ${s.ref}${s.version ? ` at ${s.version}` : ''}`
 const refusal = (error: BoardError): string => `${error.failure}: ${error.message}`
@@ -1341,7 +1341,7 @@ export class TaskRuns {
     })
     // The System's evidence in the task's dossier: the checks and the acceptance, linked (ADR-0070).
     this.dossiers.safely('the acceptance', () => this.dossiers.evidence(run.run_id,
-      `Acceptance of attempt ${this.frame(run.run_id)?.attempt ?? '?'} (run ${run.run_id}): ${option} on ${describe(subject)}; ${said}${review ? `; the last review (${review.node}) ${review.verdict} with ${review.blocking} blocking finding(s), cycle ${review.cycle} of ${review.maxCycles}` : ''}${tierSaid.length ? `; ${tierSaid[0]}` : ''}${short ? `; ${short}` : ''}${notes.length ? `; ${notes.join('; ')}` : ''}.`,
+      `Acceptance of attempt ${this.frame(run.run_id)?.attempt ?? '?'} (run ${run.run_id}): ${option} on ${describe(subject)}; ${said}${review ? `; the last review (${review.node}) ${review.verdict} with ${review.blocking} blocking finding(s)${review.summary ? ` (${review.summary.split(';')[0]})` : ''}, cycle ${review.cycle} of ${review.maxCycles}` : ''}${tierSaid.length ? `; ${tierSaid[0]}` : ''}${short ? `; ${short}` : ''}${notes.length ? `; ${notes.join('; ')}` : ''}.`,
       [acceptance, ...(ran?.evidence ? [ran.evidence] : []), ...artifacts], subject))
     return undefined
   }
@@ -1357,11 +1357,13 @@ export class TaskRuns {
       for (const ref of node.decisions ? JSON.parse(node.decisions) as ArtifactRef[] : []) {
         const body = this.e.ctx.artifacts.get(ref)?.body as { decisionType?: string; decider?: { id?: string }; outcome?: { option?: string; detail?: { assessment?: ArtifactRef } } } | undefined
         if (body?.decisionType !== 'gate' || body.decider?.id !== 'workflow.exact-subject' || body.outcome?.option !== 'pass' || !body.outcome.detail?.assessment) continue
-        const assessment = this.e.ctx.artifacts.get(body.outcome.detail.assessment)?.body as { verdict?: string; findings?: Array<{ severity?: string }>; subject?: Subject } | undefined
+        const assessment = this.e.ctx.artifacts.get(body.outcome.detail.assessment)?.body as { verdict?: string; findings?: Finding[]; subject?: Subject; summary?: string } | undefined
         if (!assessment?.verdict || !assessment.subject) continue
         last = {
           node: node.node_id, gate: ref, assessment: body.outcome.detail.assessment, verdict: assessment.verdict,
-          blocking: (assessment.findings ?? []).filter((f) => f.severity === 'blocking').length,
+          // Blocking is a confirmed important finding (ADR-0075): a nit or an unverified finding never is.
+          blocking: (assessment.findings ?? []).filter(blocks).length,
+          ...(assessment.summary ? { summary: assessment.summary } : {}),
           cycle: (JSON.parse(node.spec) as ResolvedNode).cycle ?? 1, maxCycles: this.e.config.maxReviewCycles ?? 3,
           subject: { ref: assessment.subject.ref, version: assessment.subject.version ?? '' },
         }

@@ -21,7 +21,7 @@ import { heldNow, release } from './hold.ts'
 import { admissionInfrastructure, executionInfrastructure, sourceGone } from './infrastructure.ts'
 import { admissionKind, assignmentOf, choiceHoldEnded, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForChoice, waitForLimit } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
-import { cycleOf, missingSubject, remediate, reviewSubject, subjectGate, wordingOf } from './review.ts'
+import { cycleOf, missingSubject, remediate, reviewSubject, settleReview, subjectGate, verificationGate, verificationSubject, wordingOf } from './review.ts'
 import { riskAtAcceptance, settleRisk, tierAtRisk } from './risk.ts'
 import { leaveSession, type Moved, sessionGaps } from './session-moves.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
@@ -580,7 +580,9 @@ export class Engine {
     if (spec.resultSchema) parts = appended(parts, `\n\n${schemaBlock(spec.resultSchema, this.schemas.schemaOf(spec.resultSchema))}`)
     // A review of an agent's change binds to the workspace's exact subject now (REQ-TEAM-5, REQ-WF-5).
     // A re-review reads the change since the subject the last review read, and the whole change (review cycles).
-    const found = spec.capabilities.includes('review') ? reviewSubject(this, results, run.input, (workspace, now) => cycleOf(this, run.run_id, spec, nodes, workspace, now)) : undefined
+    // A verification step is bound to the very tree the review it verifies read (ADR-0075).
+    const found = spec.verifies ? verificationSubject(this, spec, nodes, run.input)
+      : spec.capabilities.includes('review') ? reviewSubject(this, results, run.input, (workspace, now) => cycleOf(this, run.run_id, spec, nodes, workspace, now)) : undefined
     if (found && 'missing' in found) {
       const decision = missingSubject(this, run, node, found.missing)
       const error: WorkflowError = { kind: 'stale_subject', disposition: 'NONE', message: `exact-subject gate: the agent's working tree ${found.missing} can no longer be captured` }
@@ -623,7 +625,8 @@ export class Engine {
 
   /** The routed nodes that name this one in their `differentFrom`: the relation holds both ways. */
   private namers(run: RunRow, spec: ResolvedNode): NodeRow[] {
-    return this.nodeRows(run.run_id).filter((n) => n.worker && ((JSON.parse(n.spec) as ResolvedNode).differentFrom ?? []).includes(spec.nodeId))
+    // A retired step (a verification of a review that runs again) constrains nothing.
+    return this.nodeRows(run.run_id).filter((n) => n.worker && n.state !== 'RETIRED' && ((JSON.parse(n.spec) as ResolvedNode).differentFrom ?? []).includes(spec.nodeId))
   }
 
   /**
@@ -645,6 +648,9 @@ export class Engine {
       if (!row.worker) continue
       const family = listed.get(row.worker)
       if (family === undefined) {
+        // A verification prefers another family, never requires one (ADR-0075): with the review's
+        // family unknown it runs on any reviewer, in a session of its own, rather than failing the run.
+        if (spec.verifies) return undefined
         return { problem: `node ${row.node_id}'s Worker ${row.worker} ${listed.has(row.worker) ? 'declares no provider family' : 'is no longer listed'}, so no Worker can be shown to differ from it (ADR-0027)` }
       }
       families.add(family)
@@ -1043,21 +1049,24 @@ export class Engine {
     const rejected = [...acceptance.reasons, ...(cut ? [cut] : [])]
     const decisions = { decisions: JSON.stringify([...execution.decisions, ...routedDecisions(node, this)]) }
     const data = { executionId: execution.id, source: node.source, worker: node.worker, tier: node.served_tier, quotaClass: node.quota_class, accepted: acceptance.accepted }
-    let gate: ReturnType<typeof subjectGate> | undefined
+    let gate: ReturnType<typeof verificationGate> | undefined
     this.ctx.store.transaction(() => {
       const refused = acceptance.accepted && spec.grows ? grow(this, run, node, spec, result, lease) : undefined
       if (refused) {
         const error: WorkflowError = { kind: 'plan_rejected', disposition: 'NONE', message: refused.message }
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: refused.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: refused.decision, data: { ...data, kind: error.kind, disposition: error.disposition } })
-      } else if (acceptance.accepted && node.subject && !(gate = subjectGate(this, run, node, result)).passed) {
+      } else if (acceptance.accepted && node.subject && !(gate = spec.verifies ? verificationGate(this, run, node, result, lease) : subjectGate(this, run, node, result)).passed) {
         const error: WorkflowError = { kind: 'stale_subject', disposition: 'NONE', message: `exact-subject gate: ${gate.reason}` }
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: gate!.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: gate.decision, data: { ...data, kind: error.kind, disposition: error.disposition } })
       } else if (acceptance.accepted) {
         if (gate?.passed) {
           decisions.decisions = JSON.stringify([...JSON.parse(decisions.decisions) as string[], gate.decision])
-          remediate(this, run, node, spec, gate.assessment, gate.subject, lease)
+          // A review's findings are settled by severity: important ones go to a verification step
+          // first; only those it confirmed grow a fix, after it (ADR-0075).
+          if (spec.verifies && gate.review) remediate(this, run, gate.review, JSON.parse(gate.review.spec) as ResolvedNode, gate.assessment, gate.subject, lease, node)
+          else if (!spec.verifies) settleReview(this, run, node, spec, gate.assessment, gate.ref, lease)
         }
         this.writeNode(node, { state: 'COMPLETED', error: null, ...decisions }, (r) => ({ ...r, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: acceptance.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.completed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data })

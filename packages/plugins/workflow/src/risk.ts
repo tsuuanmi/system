@@ -28,7 +28,7 @@ import { checksFor } from './checks.ts'
 import type { Engine } from './engine.ts'
 import { append } from './growth.ts'
 import { queueOf } from './queue.ts'
-import type { ResolvedNode } from './spec.ts'
+import { blocks, type Finding, pendingImportant, type ResolvedNode } from './spec.ts'
 import type { NodeRecord, NodeRow, RunRow } from './types.ts'
 
 const PRODUCER = { producer: { type: 'system' as const, ref: 'workflow' } }
@@ -138,8 +138,10 @@ export function approvals(e: Engine, nodes: readonly NodeRow[]): Approval[] {
     for (const ref of node.decisions ? JSON.parse(node.decisions) as ArtifactRef[] : []) {
       const body = e.ctx.artifacts.get(ref)?.body as { decisionType?: string; decider?: { id?: string }; outcome?: { option?: string; detail?: { assessment?: ArtifactRef } } } | undefined
       if (body?.decisionType !== 'gate' || body.decider?.id !== 'workflow.exact-subject' || body.outcome?.option !== 'pass' || !body.outcome.detail?.assessment) continue
-      const assessment = e.ctx.artifacts.get(body.outcome.detail.assessment)?.body as { verdict?: string; findings?: Array<{ severity?: string }>; subject?: { ref?: string; version?: string } } | undefined
-      const approved = assessment?.verdict === 'approve' && !(assessment.findings ?? []).some((f) => f.severity === 'blocking') && !!assessment.subject?.ref
+      const assessment = e.ctx.artifacts.get(body.outcome.detail.assessment)?.body as { verdict?: string; findings?: Finding[]; subject?: { ref?: string; version?: string } } | undefined
+      // Blocking is a confirmed important finding (ADR-0075); a nit never holds an approval, and an
+      // important finding still waiting for its verification is no approval yet.
+      const approved = assessment?.verdict === 'approve' && !(assessment.findings ?? []).some((f) => blocks(f) || pendingImportant(f)) && !!assessment.subject?.ref
       last = approved ? { node: node.node_id, ...(node.worker ? { worker: node.worker } : {}), subject: `git:${assessment!.subject!.ref}:${assessment!.subject!.version ?? ''}` } : undefined
     }
     if (last) found.push(last)

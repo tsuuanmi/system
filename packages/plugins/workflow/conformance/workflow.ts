@@ -50,6 +50,21 @@ export type Rendered = WorkerStart & { prompt: string }
  */
 export type Reply = { text: string } | { fail: string; disposition: string; sent: boolean; siteError?: true; infrastructure?: ExecutionInfrastructure } | 'hold'
 
+/**
+ * A scripted second reviewer's answer to a review's verification step (ADR-0075): a vote on every
+ * important finding it is given (`confirm` unless told otherwise), naming the subject it was given.
+ * Undefined for any other prompt, so a scenario's reply falls through to its own script.
+ */
+export function verifierReply(prompt: string, vote: 'confirm' | 'reject' = 'confirm'): { text: string } | undefined {
+  if (!prompt.includes('## Verify these findings')) return undefined
+  const subject = /^Verified subject: (\S+)$/m.exec(prompt)?.[1]
+  const votes = [...prompt.matchAll(/^- (f\d+) important:/gm)].map((m) => ({ finding: m[1], vote, reason: `scripted ${vote}` }))
+  return { text: '```json\n' + JSON.stringify({ subject, votes }) + '\n```' }
+}
+
+/** A scripted reviewer's important finding, with the file, line, and evidence an important finding needs (ADR-0075). */
+export const importantFinding = (title: string, file: string): Record<string, unknown> => ({ severity: 'important', title, file, line: 1, evidence: `${file} line 1 shows it: ${title}` })
+
 const PROVES = ['reason', 'develop']
 /** One Worker per tier, each proving `reason` and `develop`, none `deep-research`. */
 export const WORKERS: readonly CapabilityDescriptor[] = [

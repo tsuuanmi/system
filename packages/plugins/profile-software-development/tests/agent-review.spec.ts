@@ -31,7 +31,7 @@ describe('the agent-review template\'s review in a remediation cycle', () => {
     }, 'the run to finish', 60_000)
     expect(done.status).toBe('completed')
     expect(done.nodes.map((n) => [n.nodeId, n.state])).toEqual([
-      ['develop:1', 'COMPLETED'], ['review:1', 'COMPLETED'], ['review:1:approve:1', 'COMPLETED'], ['review:1:fix:1', 'COMPLETED'], ['review:1:review:2', 'COMPLETED'],
+      ['develop:1', 'COMPLETED'], ['review:1', 'COMPLETED'], ['review:1:verify', 'COMPLETED'], ['review:1:approve:1', 'COMPLETED'], ['review:1:fix:1', 'COMPLETED'], ['review:1:review:2', 'COMPLETED'],
     ])
     const reviews = agent.runs.filter((r) => r.role === 'review')
     expect(reviews.map((r) => r.sandbox)).toEqual(['read-only', 'read-only'])
@@ -40,7 +40,7 @@ describe('the agent-review template\'s review in a remediation cycle', () => {
       expect(review.prompt).not.toContain('{{')
       // The engine tells every bound review, this one too, to read and judge and run no test or build.
       expect(review.prompt).toContain('Read and judge the change: never run the project\'s tests or builds')
-      expect(review.prompt).toContain('an environment limit (a read-only sandbox, a denied or failing command) is at most an "info" finding, never a "blocking" one.')
+      expect(review.prompt).toContain('an environment limit (a read-only sandbox, a denied or failing command) is at most a "nit", never an "important" finding.')
     }
     expect(subject(reviews[1]!.prompt)).not.toBe(subject(reviews[0]!.prompt))
   })

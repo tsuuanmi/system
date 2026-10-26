@@ -740,6 +740,31 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
       expect(await ctx.board.accept(bound.taskId, operator, at(6))).toMatchObject({ state: 'done', lastDecision: operator })
     })
 
+    it('never holds a result for nits, a pre-existing finding, or an important finding its verifier rejected; holds it for a confirmed one (ADR-0075)', async () => {
+      const { ctx } = await boot({ board: AUTO })
+      await active(ctx)
+      const evidence = checkRun(ctx, { tests: 'passed', lint: 'passed' })
+      const checks = { review: true, tests: true, lint: true }
+      /** An `assessment@1.1`, as the engine stores a review's verified findings. */
+      const verified = (verdict: 'approve' | 'changes-requested', findings: Array<Record<string, unknown>>): ArtifactRef => ctx.artifacts.put({
+        kind: 'assessment', bodySchema: 'assessment@1.1', classification: 'operator-shared', producer: { type: 'system', ref: 'workflow' },
+        body: { schema: 'assessment@1.1', subject: TREE, verdict, findings, summary: 'counted' },
+      }).id as ArtifactRef
+      const vote = (v: string) => ({ vote: v, reason: `scripted ${v}`, node: 'review:1:verify' })
+      const nits = await inReview(ctx, 'nits')
+      const review = verified('approve', [
+        { id: 'f1', severity: 'nit', title: 'rename x' }, { id: 'f2', severity: 'nit', title: 'wording' },
+        { id: 'f3', severity: 'pre-existing', title: 'sub() subtracts wrong', file: 'calc.py', line: 4, evidence: 'line 4' },
+        { id: 'f4', severity: 'important', title: 'off by one', file: 'calc.py', line: 2, evidence: 'line 2', verification: vote('reject') },
+      ])
+      expect(await ctx.board.accept(nits.taskId, engineAcceptance(ctx, nits.taskId, nits.r, { checks, review, evidence, branch: 'dev' }), at(5))).toMatchObject({ state: 'done' })
+      const confirmed = await inReview(ctx, 'confirmed')
+      const blocking = verified('changes-requested', [{ id: 'f1', severity: 'important', title: 'off by one', file: 'calc.py', line: 2, evidence: 'line 2', verification: vote('confirm') }])
+      const held = await ctx.board.accept(confirmed.taskId, engineAcceptance(ctx, confirmed.taskId, confirmed.r, { checks, review: blocking, cycle: 3, evidence, branch: 'dev' }), at(5))
+      expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review' } })
+      expect(autoReasons(ctx, held)).toEqual([expect.stringMatching(/did not approve \(changes-requested\) and left 1 blocking finding\(s\)/)])
+    })
+
     it('holds a result with a required check pending or failed, and one whose check-run record does not show it passed on that tree', async () => {
       const { ctx } = await boot({ board: AUTO })
       await active(ctx)

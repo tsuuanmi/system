@@ -26,7 +26,7 @@ import { bodyText, type BriefFile, type BriefPointer } from '@tsuuanmi/system-li
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { writes } from './review.ts'
-import { clampText, type ResolvedNode } from './spec.ts'
+import { blocks, bySeverity, clampText, countOf, type Finding, findingLine, type ResolvedNode } from './spec.ts'
 import { type NodeRow, now, type RunRow, WorkflowFailure } from './types.ts'
 
 export type DossierKind = 'plan' | 'progress' | 'review' | 'response' | 'evidence'
@@ -343,11 +343,17 @@ export class TaskDossiers {
     let subject: Subject | undefined = answer?.subject
     const refs: ArtifactRef[] = [result]
     if (assessment) {
-      const body = assessment.body as { verdict: string; findings: Array<{ severity: string; title: string; file?: string }> }
+      const body = assessment.body as { verdict: string; findings: Finding[]; summary?: string }
       subject = assessment.subject as Subject | undefined
+      const blocking = body.findings.filter(blocks).length
+      const what = spec.verifies ? `Verification ${node.node_id} of review ${spec.verifies.review}` : `Review ${node.node_id}`
       text = [
-        `Review ${node.node_id} by ${worker}${subject ? ` of ${describe(subject)}` : ''}: ${body.verdict}, ${body.findings.length} finding${body.findings.length === 1 ? '' : 's'}${body.findings.filter((f) => f.severity === 'blocking').length ? ` (${body.findings.filter((f) => f.severity === 'blocking').length} blocking)` : ''}. Its result and assessment are linked.${own ? ' The reviewer\'s own entry precedes this one.' : ''}`,
-        ...body.findings.map((f) => `- ${f.severity}: ${f.title}${f.file ? ` (${f.file})` : ''}`),
+        // The summary opens with the count (ADR-0075): "2 important, 3 nits", or "no issues".
+        `${body.summary ?? countOf(body.findings)}`,
+        `${what} by ${worker}${subject ? ` of ${describe(subject)}` : ''}: ${body.verdict}, ${body.findings.length} finding${body.findings.length === 1 ? '' : 's'}${blocking ? ` (${blocking} blocking)` : ''}. Its result and assessment are linked.${own ? ' The reviewer\'s own entry precedes this one.' : ''}`,
+        // By severity: important (with its vote), then pre-existing, then nits; a repeat says what it repeats.
+        ...bySeverity(body.findings).map((f) => `${findingLine(f)}${f.verification ? ` — ${f.verification.vote}${f.verification.reason ? `: ${f.verification.reason}` : ''}` : ''}${f.repeated ? ` (repeats ${f.repeated}; not counted)` : ''}`),
+        ...(body.findings.some((f) => f.severity === 'nit' && !f.repeated) ? ['Nits are optional notes: the author may take or leave each, with one response line each; they never start a fix round or hold the result.'] : []),
       ].join('\n')
       refs.push(assessmentRef!, gate!.decision)
     } else if (agent) {
