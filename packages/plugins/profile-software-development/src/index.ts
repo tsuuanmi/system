@@ -150,6 +150,11 @@ const VALIDATE_PROMPT = [
  *   after any fix, and is the run's result: what the task keeps, its digest summarizes, and the next
  *   attempt reads.
  *
+ * Process tiered by risk (ADR-0071), when the task's project policy has a path map: a heavy change
+ * gets a second review by a Worker of another provider family after `review:1` approves it (the
+ * engine grows it); a light change skips `validate:1` (`riskSkip`) once every check the policy
+ * requires passed on its exact tree, and the run's result is then its last review's.
+ *
  * Which inputs reach which step is in docs/reference/workflow-templates.md#algorithm-development.
  *
  * Its measurements are evidence, not a check the engine reports: under a policy that requires tests,
@@ -180,6 +185,7 @@ export function algorithmDevelopment(configured: Partial<StepKinds> = {}): NodeT
     {
       nodeId: 'validate:1', objective: 'Run the task\'s tests and benchmarks on the reviewed change, and report what they measured', dependsOn: ['review:1'], prompt: VALIDATE_PROMPT,
       capabilities: ['validate', 'local-data'], tier: 'economy', kind: kinds.validate, conversation: 'temporary', acceptance: 'acceptance.answer',
+      riskSkip: ['light'],
     },
   ]
 }

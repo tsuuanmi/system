@@ -21,6 +21,7 @@ import { admissionInfrastructure, executionInfrastructure, sourceGone } from './
 import { admissionKind, assignmentOf, choiceHoldEnded, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForChoice, waitForLimit } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
 import { cycleOf, missingSubject, remediate, reviewSubject, subjectGate, wordingOf } from './review.ts'
+import { riskAtAcceptance, settleRisk } from './risk.ts'
 import { leaveSession, type Moved, sessionGaps } from './session-moves.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
 import { appended, compose, DEFAULT_TEMPLATES, type Instructions, literal, type NodeTemplate, recordExecutor, type ResolvedNode, type ResolvedSpec, resolve, schemaBlock, UnfilledPlaceholders, variantProblem, variantsOf } from './spec.ts'
@@ -375,6 +376,10 @@ export class Engine {
             }
             return this.finish(run, 'failed', { error: failed.error }, current)
           }
+          // A change a review approved gets its risk tier before anything after the review starts
+          // (./risk.ts, ADR-0071): a heavy one grows its second review, a light one may skip a step.
+          if (!this.tasks.lost(runId) && !this.tasks.budgetStopped(runId) && await settleRisk(this, run, nodes, current, signal)) continue
+          if (signal.aborted) return
           if (nodes.every((n) => n.state === 'COMPLETED')) {
             const final = (JSON.parse(nodes[nodes.length - 1]!.record) as NodeRecord).outputReceipt!.result
             // A board task's acceptance stored before a crash stands (INV-4): the run finishes on it, its
@@ -389,8 +394,11 @@ export class Engine {
             // Where a task's result would land, for the board's auto-accept rule (D80): read before its acceptance is decided.
             const targets = this.tasks.bound(runId) ? await landingTargets(this, runId) : []
             if (signal.aborted) return
+            // The final change's risk tier, recorded on the run; a heavy result needs two families' approvals (ADR-0071).
+            const risk = await riskAtAcceptance(this, run, nodes, signal)
+            if (signal.aborted) return
             // A board task's result binds to the exact subject it writes (INV-5), or the run fails.
-            const unbound = this.tasks.complete(run, nodes, final, ran, targets)
+            const unbound = this.tasks.complete(run, nodes, final, ran, targets, risk)
             if (unbound) return this.finish(run, 'failed', { error: JSON.stringify(unbound) }, current)
             // A plain run that wrote records the policy's checks still pending; it applies nothing, so they never block it.
             if (!this.tasks.bound(runId)) await acceptPlain(this, run, nodes, final, ran)
@@ -568,7 +576,9 @@ export class Engine {
     this.writeNode(node, {
       state: 'READY', prompt, brief_parts: JSON.stringify(parts), ...(composed === spec ? {} : { spec: JSON.stringify(composed) }),
       ...(bound ? { subject: JSON.stringify({ workspace: bound.workspace, subject: bound.subject }) } : {}),
-    }, (record) => ({ ...record, inputReceipt: { inputHash, bundle: results } }), lease)
+    // A bundle is a set: two dependencies whose results are one artifact (a heavy change's two
+    // reviews that answered alike, ADR-0071) name it once.
+    }, (record) => ({ ...record, inputReceipt: { inputHash, bundle: [...new Set(results)] } }), lease)
   }
 
   /**
@@ -742,7 +752,8 @@ export class Engine {
           try {
             admitted = await route({ ...restricted, ...(exclude ? { exclude } : {}) })
           } catch (error) {
-            if (!(error instanceof AdmissionFailure) || !this.config.allowSameFamily || (!exclude && !distinctAccounts)) throw error
+            // A heavy change's second review is the other family's judgement, or nothing (ADR-0071): never lifted.
+            if (!(error instanceof AdmissionFailure) || !this.config.allowSameFamily || (!exclude && !distinctAccounts) || spec.secondReview) throw error
             // Opt-in only: with no Worker of another family (or account), route without that rule, and say so.
             // A session's own Worker still binds it; only the family and distinct-account rules are
             // lifted, so a Worker refused for its quota, sign-in, tier, or capability stays refused, and

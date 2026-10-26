@@ -225,6 +225,14 @@ Worker, in the run's own git worktree when the Workers (or their role) set `work
   the operator configured for the repository, and reports those by their exit codes
   ([a run's required checks](../design/workflow-engine.md#a-runs-required-checks)); with none
   configured, under a policy that requires `tests` the board holds the result for the operator.
+- **Tiered by risk** when the task's project policy has a path map
+  ([process tiered by risk](../design/workflow-engine.md#process-tiered-by-risk), ADR-0071): once
+  `review:1` (or a re-review) approves, the engine decides the change's tier. A **heavy** change gets
+  `review:1:second`, a review of the same change by a Worker of another provider family, before
+  `validate:1`; with one family it fails admission and the run fails. A **light** change skips
+  `validate:1` (`riskSkip: ['light']`) once every check the policy requires passed on its exact
+  tree, and the run's result is then the last review's answer. A heavy result is never accepted
+  without the operator.
 
 #### Which inputs reach which step
 

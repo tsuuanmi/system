@@ -183,7 +183,7 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
     expect(done).toMatchObject({ state: 'done' })
     expect(checker.steps).toEqual([{ runId, workspace, subject: { ref: subject.ref, version: subject.version }, checks: ['tests', 'lint'], classification: 'public' }])
     const acceptance = acceptanceOf(ctx, runId)
-    expect(acceptance).toMatchObject({ decider: { version: '3' }, outcome: { option: 'accept', detail: { checks: { tests: true, lint: true }, checkRun: { source: 'checker', outcome: 'checked', asked: ['tests', 'lint'] } } } })
+    expect(acceptance).toMatchObject({ decider: { version: '4' }, outcome: { option: 'accept', detail: { checks: { tests: true, lint: true }, checkRun: { source: 'checker', outcome: 'checked', asked: ['tests', 'lint'] } } } })
     const evidence = (acceptance.outcome.detail['checkRun'] as { evidence: string }).evidence
     expect(acceptance.inputs).toContain(evidence)
     expect(ctx.artifacts.get(evidence as ArtifactRef)).toMatchObject({ kind: 'evidence', bodySchema: 'check-run@1.0' })

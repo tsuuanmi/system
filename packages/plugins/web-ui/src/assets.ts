@@ -1478,7 +1478,11 @@ export const APP_JS = `'use strict'
     // after a site's own error (ADR-0062), and where its accepted result stands (ADR-0060).
     const carry = run.task && run.task.carry
     const resent = (explain ? explain.nodes : []).flatMap((n) => n.decisions.filter((d) => d.type === 'recovery' && d.outcome === 'resend').map(() => n.nodeId))
+    // Its risk tier, by the paths its change touches, and why (ADR-0071): light, normal, or heavy.
+    const risk = explain && explain.risk
     const happened = [
+      risk ? el('li', {}, 'Risk tier: ' + risk.tier + (risk.tier === 'heavy' ? ' (a second review by another provider family; never accepted automatically)' : risk.tier === 'light' ? ' (may skip its validation once its required checks pass)' : '') + '.',
+        fold('Why', el('ul', {}, risk.reasons.map((r) => el('li', {}, r))), el('div', {}, 'decision ', el('code', {}, risk.decision), copyId('Copy decision ID', risk.decision)))) : null,
       carry ? carryLine(carry) : null,
       ...resent.map((nodeId) => {
         const node = run.nodes.find((x) => x.nodeId === nodeId)

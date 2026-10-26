@@ -456,6 +456,12 @@ export interface Explanation {
    * report, the funding gate, and the digest. Only when there are any.
    */
   decisions?: ExplainedDecision[]
+  /**
+   * The run's risk tier (ADR-0071) and why: its latest `workflow.risk-tier` decision, the
+   * acceptance's when there is one, else the latest review's (`at` names that step). Only when the
+   * run's project has a path map.
+   */
+  risk?: { tier: 'light' | 'normal' | 'heavy'; reasons: string[]; decision: ArtifactRef; at?: string }
   nodes: Array<{ nodeId: string; state: NodeState; executionId?: string; worker?: string; quotaClass?: string; decisions: ExplainedDecision[] }>
   /**
    * The run's executions whose liveness needs a look, as their Worker sources tell it

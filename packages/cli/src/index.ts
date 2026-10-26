@@ -1181,6 +1181,8 @@ interface Explained {
   specHash: string
   /** The engine's decisions on the run as a whole (a board task's admission, subject, acceptance, report), which no step holds. */
   decisions?: ExplainedDecision[]
+  /** The run's risk tier and why (ADR-0071), when its project's policy has a path map. */
+  risk?: { tier: string; reasons: string[]; decision: string; at?: string }
   nodes: Array<{ nodeId: string; state: string; worker?: string; quotaClass?: string; turnId?: string; decisions: ExplainedDecision[] }>
   liveness?: ExplainedLiveness[]
   livenessUnread?: Array<{ source: string; detail: string }>
@@ -1205,9 +1207,10 @@ export function formatLiveness(runs: readonly ExplainedLiveness[], unread: Reado
 }
 
 /**
- * `system explain <runId>`: the run's own decisions (a board task's admission, subject, acceptance,
- * report), then each step's (egress, tier, route, acceptance) with their reasons, then its
- * executions whose liveness needs a look, and its checks stalled now.
+ * `system explain <runId>`: the run's risk tier and why (ADR-0071), when it has one; the run's own
+ * decisions (a board task's admission, subject, acceptance, report), then each step's (egress, tier,
+ * route, acceptance) with their reasons, then its executions whose liveness needs a look, and its
+ * checks stalled now.
  */
 export function formatExplanation(explained: Explained): string[] {
   const liveness = explained.liveness?.length || explained.livenessUnread?.length ? ['liveness', ...formatLiveness(explained.liveness ?? [], explained.livenessUnread)] : []
@@ -1217,6 +1220,7 @@ export function formatExplanation(explained: Explained): string[] {
   const line = (d: ExplainedDecision): string => `    ${d.type}  ${d.outcome}  ${d.reasons.join('; ')}  (${d.id})${d.result ? `  result ${d.result}` : ''}`
   return [
     `${explained.runId}  ${explained.template}  ${explained.status}  spec ${explained.specHash}`,
+    ...(explained.risk ? [`  risk tier ${explained.risk.tier}${explained.risk.at ? ` (at ${explained.risk.at})` : ''}  (${explained.risk.decision})`, ...explained.risk.reasons.map((r) => `    why   ${r}`)] : []),
     ...(explained.decisions?.length ? ['  run (decisions no step holds)', ...explained.decisions.map(line)] : []),
     ...explained.nodes.flatMap((n) => [
       `  ${n.nodeId}  ${n.state}  ${n.worker ?? '-'}  ${n.quotaClass ?? '-'}  ${n.turnId ?? '-'}`,

@@ -6,6 +6,7 @@ import { waitsOnCall } from './continuations.ts'
 import type { Engine } from './engine.ts'
 import type { ResolvedNode } from './spec.ts'
 import { isSameFamily, waitingUntil } from './recovery.ts'
+import { riskOf } from './risk.ts'
 import { tieOf, type TeamRound } from './teams.ts'
 import type { ExplainedDecision, Explanation, NodeRecord, NodeView, RunRow, RunView, StalledCheck, UsageDraws, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
 
@@ -166,9 +167,12 @@ export function explain(e: Engine, runId: string): Explanation | undefined {
   const chosen = (e.tasks.dispatchOf(runId)?.decisions ?? []).map((id) => decision(e, id)).filter((d): d is ExplainedDecision => !!d)
   const own = [...chosen, ...runDecisions(e, runId)]
   const stalled = run.status === 'running' ? stalledChecks(e, runId) : []
+  // Its risk tier and why (ADR-0071), when its project's policy has a path map.
+  const risk = riskOf(e, runId)
   return {
     runId, template: run.template, status: run.status, specHash: run.spec_hash as ContentId,
     ...(own.length ? { decisions: own } : {}),
+    ...(risk ? { risk } : {}),
     ...(stalled.length ? { stalledChecks: stalled } : {}),
     nodes: e.nodeRows(runId).map((node) => {
       const record = JSON.parse(node.record) as NodeRecord

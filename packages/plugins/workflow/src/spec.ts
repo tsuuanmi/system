@@ -4,6 +4,7 @@
  * binds to exactly what was admitted.
  */
 import { BRIEF_LIMITS, type BriefPointer, type BriefSegment, contentId, type ContentId, extractJson } from '@tsuuanmi/system-libs'
+import type { RiskTier } from '@tsuuanmi/system-approvals-core'
 import { type ArtifactRef, TIERS, type Tier, WORK_KIND } from '@tsuuanmi/system-workers-core'
 
 export interface NodeTemplate {
@@ -68,6 +69,13 @@ export interface NodeTemplate {
    * result renders as `{{node:<id>}}`.
    */
   snapshot?: true
+  /**
+   * The risk tiers (PROP-0016 §4, ADR-0071) at which a board task's run skips this step: once its
+   * review approved a change of such a tier and every check the policy requires of it passed on its
+   * exact tree, the step is retired before it starts, recorded (`workflow.risk-skip`). Only on the
+   * final step, never at `heavy`; with no path map in the policy, it always runs.
+   */
+  riskSkip?: RiskTier[]
 }
 
 /** What a variant may change of a node: what it needs, what kind of work it is, where it runs, and how it is judged. */
@@ -228,6 +236,12 @@ export interface ResolvedNode extends Omit<NodeTemplate, 'callerTier' | 'convers
    * and which path it took is a `workflow.fix-session` decision (docs/design/sessions-and-messaging.md).
    */
   author?: { node: string; sessionId: string }
+  /**
+   * On a heavy change's second review (ADR-0071): the approving review it differs from in provider
+   * family (`differentFrom` names it), and the `workflow.risk-tier` decision that grew it. It never
+   * runs on the same family for want of another (`allowSameFamily` does not apply).
+   */
+  secondReview?: { of: string; decision: string }
   /** `member` names a team member's identity; the engine issues its session at admission. */
   session: { sessionId?: string; persist?: boolean; member?: string }
   team?: TeamRole
@@ -392,7 +406,22 @@ export function preflight(nodes: readonly NodeTemplate[]): string[] {
   const used = new Set(nodes.flatMap((n) => n.dependsOn ?? []))
   const finals = nodes.filter((n) => !used.has(n.nodeId))
   if (finals.length !== 1) throw new TypeError(`a workflow needs exactly one final node, whose result is the run's; found ${finals.map((n) => n.nodeId).join(', ')}`)
+  for (const node of nodes) if (node.riskSkip !== undefined) checkRiskSkip(node, finals[0]!.nodeId)
   return order
+}
+
+/**
+ * A step skipped at a risk tier (ADR-0071) is the final one, so no step ever waits for one that
+ * never runs, and a Worker step that depends on another; it names light or normal, never heavy.
+ */
+function checkRiskSkip(node: NodeTemplate, final: string): void {
+  const tiers: unknown = node.riskSkip
+  if (!Array.isArray(tiers) || !tiers.length || new Set(tiers).size !== tiers.length || !tiers.every((t) => t === 'light' || t === 'normal')) {
+    throw new TypeError(`node ${node.nodeId}: riskSkip is a list of distinct risk tiers, light or normal (a heavy change never skips a step)`)
+  }
+  if (node.nodeId !== final || !(node.dependsOn ?? []).length || node.team || node.grows || node.snapshot) {
+    throw new TypeError(`node ${node.nodeId}: only the final step, a Worker step that depends on another, may be skipped at a risk tier`)
+  }
 }
 
 /** Every node a node waits for, directly or through others. */

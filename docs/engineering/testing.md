@@ -303,6 +303,11 @@ a root [`package.json`](../../package.json) script:
    - `check:migrations` ([`scripts/check-migrations.ts`](../../scripts/check-migrations.ts)): within
      each owner's store migrations, across all its `migrate` calls, no version appears twice, and
      each list's versions strictly increase in list order ([store migrations](#store-migration-versions));
+   - `check:tiers` ([`scripts/check-risk-tiers.ts`](../../scripts/check-risk-tiers.ts)): the
+     `system` project's policy ([`policies/system.json`](../../policies/system.json)) is a valid
+     `autonomy-policy@1.1` whose path map matches every tracked path and names every package
+     directory with a rule of its own, so a new package is given a risk tier on purpose
+     ([ADR-0071](../decisions/adr/0071-a-changes-risk-tier-comes-from-the-policys-path-map.md));
    - `check:reference`, `check:packages`, and `check:traceability`: the generated
      [configuration catalog](../reference/configuration.md),
      [package graph](../architecture/packages.md), and

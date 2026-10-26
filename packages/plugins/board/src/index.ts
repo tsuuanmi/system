@@ -156,7 +156,7 @@ interface NextAttempt { verdict: AutonomyVerdict; request?: ApprovalRequest }
  * An accepting decision only the operator's can replace now: the verdict, the checks still pending,
  * how long the operator has, and, when the auto-accept rule held it, why it did not apply.
  */
-interface Held { verdict: AutonomyVerdict; pendingChecks: Check[]; seconds: number; autoAccept?: string[] }
+interface Held { verdict: AutonomyVerdict; pendingChecks: Check[]; seconds: number; autoAccept?: string[]; heavy?: string }
 /** An accepting decision the auto-accept rule applies (D80): the records it stands on. */
 interface AutoAccepted { verdict: AutonomyVerdict; review: ArtifactRef; evidence?: ArtifactRef; checks: Check[]; branch: string }
 /** What the board does with an acceptance decision: hold it for the operator, apply it by the auto-accept rule, or apply it as it is (neither). */
@@ -1705,11 +1705,31 @@ export class StoreBoard extends Board {
     if (verdict.mode === 'forbid' || verdict.failedChecks?.length) {
       return { held: { verdict, pendingChecks: verdict.mode === 'forbid' ? [] : verdict.failedChecks!, seconds: await seconds() } }
     }
+    // A heavy result is never accepted unattended (ADR-0071), by the policy or by the auto-accept rule: the operator decides it.
+    const heavy = this.heavyOf(acceptance)
+    if (heavy) return { held: { verdict, pendingChecks: [], seconds: await seconds(), heavy } }
     // The auto-accept rule (D80, ADR-0067) is for a listed project's results that land: on a git working tree.
     if (!this.autoAccept?.projects.includes(task.projectId) || result.subject.type !== 'git-head') return {}
     const judged = this.autoAccepted(result, acceptance, read)
     if ('reasons' in judged) return { held: { verdict, pendingChecks: [], seconds: await seconds(), autoAccept: judged.reasons } }
     return { auto: { verdict, ...judged } }
+  }
+
+  /**
+   * Why an accepting decision is of a heavy result (ADR-0071), read from the record it names, never
+   * from its own account: `outcome.detail.risk.decision`, among its inputs, is a `workflow.risk-tier`
+   * decision whose outcome is `heavy`. A decision that names a tier it does not back with that record
+   * is held too (INV-2). Undefined when it names no tier (tiering off) or a tier below heavy.
+   */
+  private heavyOf(acceptance: ArtifactRef): string | undefined {
+    const body = this.ctx.artifacts.get(acceptance)?.body as { inputs?: string[]; outcome?: { detail?: Record<string, unknown> } } | undefined
+    const risk = body?.outcome?.detail?.['risk']
+    if (risk === undefined) return undefined
+    const ref = isObject(risk) && typeof risk['decision'] === 'string' ? risk['decision'] as ArtifactRef : undefined
+    const record = ref && (body!.inputs ?? []).includes(ref) ? this.ctx.artifacts.get(ref)?.body as { decider?: { id?: string }; outcome?: { option?: string } } | undefined : undefined
+    if (!record || record.decider?.id !== 'workflow.risk-tier') return `it names a risk tier with no workflow.risk-tier decision among its inputs (outcome.detail.risk.decision), so the tier is taken as heavy`
+    if (record.outcome?.option === 'heavy') return `the result is heavy-tier (risk decision ${ref}): a heavy change is never accepted automatically`
+    return isObject(risk) && risk['tier'] !== record.outcome?.option ? `it says the tier is ${String(risk['tier'])}, but its risk decision ${ref} says ${String(record.outcome?.option)}` : undefined
   }
 
   /**
@@ -1785,6 +1805,7 @@ export class StoreBoard extends Board {
     const { project } = this.projectOf(task.projectId)
     const expiresAt = new Date(at.getTime() + held.seconds * 1000).toISOString()
     const why = held.verdict.mode === 'forbid' ? `the policy forbids ${task.actionClass}`
+      : held.heavy ? `${held.heavy}; the operator decides it`
       : held.autoAccept ? `the auto-accept rule (board.autoAccept, D80) does not apply: ${held.autoAccept.join('; ')}`
         : `required check(s) ${held.pendingChecks.join(', ')} not passed`
     return {
@@ -1798,7 +1819,7 @@ export class StoreBoard extends Board {
             ? 'the board never accepts by default, and the reviewer\'s lease would end the operator\'s review when the run that holds it ends'
             : 'the run\'s owner reported a result the board never accepts by default',
           inputs: [acceptance, held.verdict.decision],
-          detail: { reason: 'operator-review', pendingChecks: held.pendingChecks, expiresAt, ...(held.autoAccept ? { autoAccept: held.autoAccept } : {}) },
+          detail: { reason: 'operator-review', pendingChecks: held.pendingChecks, expiresAt, ...(held.autoAccept ? { autoAccept: held.autoAccept } : {}), ...(held.heavy ? { heavy: held.heavy } : {}) },
         }, at),
       },
     }

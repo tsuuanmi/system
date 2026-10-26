@@ -1,0 +1,174 @@
+{
+  "schema": "autonomy-policy@1.1",
+  "id": "system.policy",
+  "version": 1,
+  "scope": "project",
+  "projectId": "system",
+  "narrows": "studio-default",
+  "rules": [
+    {
+      "actionClass": "merge",
+      "mode": "ask",
+      "note": "an accepted result lands on the operator's merge approval (D56, ADR-0060); this policy is here for its path map"
+    }
+  ],
+  "default": "ask",
+  "expiry": {
+    "defaultSeconds": 86400,
+    "maxSeconds": 1209600
+  },
+  "riskTiers": {
+    "version": 1,
+    "rules": [
+      {
+        "tier": "light",
+        "note": "documentation, proposals, and research: read by people and Workers, run by nothing",
+        "paths": ["docs/", "README.md", "**/README.md", "CONTRIBUTING.md", "SECURITY.md"]
+      },
+      {
+        "tier": "light",
+        "note": "changesets: release notes",
+        "paths": [".changeset/"]
+      },
+      {
+        "tier": "heavy",
+        "note": "ADRs and invariants: the constitution (handbook layer 1)",
+        "paths": ["docs/decisions/adr/", "docs/architecture/invariants.md"]
+      },
+      {
+        "tier": "heavy",
+        "note": "this policy and its path map: changed only through a policy-change approval (ADR-0041)",
+        "paths": ["policies/"]
+      },
+      {
+        "tier": "heavy",
+        "note": "the gate and approvals: the autonomy policy, the approval queue, the tool gates, the board's acceptance gate and auto-accept, and the landing seam that merges an accepted result",
+        "paths": [
+          "packages/approvals-core/",
+          "packages/plugins/approvals/",
+          "packages/board-core/",
+          "packages/plugins/board/",
+          "packages/landing-core/",
+          "packages/plugins/landing-local/",
+          "packages/plugins/workflow/src/acceptance.ts",
+          "packages/plugins/workflow/src/checks.ts",
+          "packages/plugins/workflow/src/queue.ts",
+          "packages/plugins/workflow/src/continuations.ts",
+          "packages/plugins/workflow/src/landings.ts",
+          "packages/plugins/workflow/src/review.ts",
+          "packages/plugins/workflow/src/risk.ts",
+          "packages/plugins/workflow/src/tasks.ts"
+        ]
+      },
+      {
+        "tier": "heavy",
+        "note": "dispatch and routing: which Worker takes which work, and what starts on its own",
+        "paths": [
+          "packages/workers-core/",
+          "packages/plugins/workers/",
+          "packages/decision-core/",
+          "packages/plugins/workflow/src/dispatch.ts",
+          "packages/plugins/workflow/src/advisor.ts"
+        ]
+      },
+      {
+        "tier": "heavy",
+        "note": "confinement and credentials: sandboxes, the workspace reads server, egress, the credential vault, and sign-ins",
+        "paths": [
+          "packages/agent-runtime-core/",
+          "packages/plugins/agent-runtimes/",
+          "packages/plugins/agent-workers/",
+          "packages/plugins/runtime-acp/",
+          "packages/plugins/runtime-antigravity-cli/",
+          "packages/plugins/runtime-claude-agent-sdk/",
+          "packages/plugins/runtime-codex-sdk/",
+          "packages/plugins/credentials-vault/",
+          "packages/plugins/egress/",
+          "packages/plugins/login/",
+          "packages/plugins/accounts/",
+          "packages/libs/src/secrets.ts",
+          "scripts/check-secrets.ts"
+        ]
+      },
+      {
+        "tier": "heavy",
+        "note": "the ledger's guarantees: the store, the artifacts and decisions of record, the event log, and the resource ledger",
+        "paths": [
+          "packages/plugins/store/",
+          "packages/plugins/artifacts/",
+          "packages/plugins/event-log/",
+          "packages/resources-core/",
+          "packages/plugins/resources/"
+        ]
+      },
+      {
+        "tier": "heavy",
+        "note": "store migrations and schema majors: a record's shape changes for every reader",
+        "paths": [
+          "**/migrations.ts",
+          "**/migrations/",
+          "scripts/check-migrations.ts",
+          "schemas/*.v2.json",
+          "schemas/*.v3.json",
+          "schemas/*.v4.json",
+          "schemas/*.v5.json",
+          "schemas/*.v6.json",
+          "schemas/*.v7.json",
+          "schemas/*.v8.json",
+          "schemas/*.v9.json"
+        ]
+      },
+      {
+        "tier": "heavy",
+        "note": "the invariants' own checks: the architecture test and the conformance and crash suites every provider of a guarantee seam must pass",
+        "paths": ["scripts/architecture.spec.ts", "**/conformance/", "**/tests/crash/"]
+      },
+      {
+        "tier": "normal",
+        "note": "a capability package: source, tests, and configuration",
+        "paths": [
+          "packages/cli/",
+          "packages/digest-core/",
+          "packages/evaluations-core/",
+          "packages/experiments-core/",
+          "packages/gateway-core/",
+          "packages/gateway-turns/",
+          "packages/libs/",
+          "packages/models-core/",
+          "packages/plugin-host-core/",
+          "packages/provider-core/",
+          "packages/statistics/",
+          "packages/system-bundle/",
+          "packages/ui-ops/",
+          "packages/plugins/browser-patchright/",
+          "packages/plugins/digest/",
+          "packages/plugins/digest-extractive/",
+          "packages/plugins/display-virtual/",
+          "packages/plugins/gateway-anthropic/",
+          "packages/plugins/gateway-responses/",
+          "packages/plugins/leases/",
+          "packages/plugins/mcp-server/",
+          "packages/plugins/models/",
+          "packages/plugins/notify/",
+          "packages/plugins/plugin-host/",
+          "packages/plugins/profile-scientific-research/",
+          "packages/plugins/profile-software-development/",
+          "packages/plugins/provider-chatgpt-web/",
+          "packages/plugins/provider-gemini-web/",
+          "packages/plugins/providers/",
+          "packages/plugins/report/",
+          "packages/plugins/turn-receipts/",
+          "packages/plugins/turns/",
+          "packages/plugins/web-ui/",
+          "packages/plugins/worker-sessions/",
+          "packages/plugins/workflow/"
+        ]
+      },
+      {
+        "tier": "normal",
+        "note": "the repository's tooling, dependency patches, schemas' minor versions, and root configuration",
+        "paths": ["scripts/", "schemas/", "patches/", ".github/", "*.json", "*.yaml", "*.ts", ".*", "AGENTS.md"]
+      }
+    ]
+  }
+}

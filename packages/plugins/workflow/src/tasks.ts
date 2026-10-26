@@ -39,6 +39,7 @@ import { TaskDossiers } from './dossiers.ts'
 import { TaskLandings } from './landings.ts'
 import type { Engine, Prepared } from './engine.ts'
 import { routedDecisions } from './recovery.ts'
+import { type AcceptanceRisk, secondFamily } from './risk.ts'
 import { heldWhy } from './sessions.ts'
 import { clampText, type ResolvedNode } from './spec.ts'
 import { admittedRestriction } from './teams.ts'
@@ -1270,7 +1271,7 @@ export class TaskRuns {
    * result artifact itself. Undefined when the run is not a task's,
    * or the result binds; else why it does not, and the run fails (INV-5).
    */
-  complete(run: RunRow, nodes: NodeRow[], final: ArtifactRef, ran?: RanChecks, targets: readonly LandingTarget[] = []): WorkflowError | undefined {
+  complete(run: RunRow, nodes: NodeRow[], final: ArtifactRef, ran?: RanChecks, targets: readonly LandingTarget[] = [], risk?: AcceptanceRisk): WorkflowError | undefined {
     const row = this.row(run.run_id)
     if (!row) return undefined
     const writes = row.writes ? JSON.parse(row.writes) as Subject : undefined
@@ -1307,21 +1308,31 @@ export class TaskRuns {
     // The required checks the run ran on this very subject (./checks.ts) count with its own; one bound elsewhere never does (INV-5).
     const checks: Partial<Record<Check, boolean>> = { ...this.checksOf(done, subject), ...ranOn(ran, subject) }
     const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([check]) => check)
-    const option = failed.length ? 'reject' : 'accept'
+    // A heavy result needs approving reviews of its exact tree by Workers of two provider families (ADR-0071).
+    const second = secondFamily(risk, subject.type === 'git-head' ? `git:${subject.ref}:${subject.version ?? ''}` : '')
+    const short = second.met ? undefined : `the change is heavy (decision ${risk!.decision}), and ${second.families ? `only ${second.families} provider family has` : 'no provider family listed now has'} approved its exact tree ${describe(subject)}: a heavy result needs approving reviews by Workers of two families`
+    const option = failed.length || short ? 'reject' : 'accept'
     const said = Object.keys(checks).length ? `the checks it ran: ${Object.entries(checks).map(([c, p]) => `${c} ${p ? 'passed' : 'failed'}`).join(', ')}` : 'it ran none of the checks a policy can require; the board binds those'
+    const tierSaid = risk ? [`its risk tier is ${risk.tier} (decision ${risk.decision})${risk.tier === 'heavy' && second.met ? `, and ${second.families} provider families approved its exact tree` : ''}`] : []
     // What the board's auto-accept rule reads (D80, ADR-0067): the run's last review, and where the result would land.
     const review = this.lastReview(done)
     const landing = this.landingOf(artifacts, subject, targets)
+    const rejectWhy = [...(failed.length ? [`the run's own ${failed.join(', ')} check failed on ${describe(subject)}`] : []), ...(short ? [short] : [])]
     const acceptance = this.e.ctx.artifacts.recordDecision({
       decisionType: 'acceptance',
       question: `Does run ${run.run_id}'s result complete its attempt of board task ${row.task_id}?`,
-      inputs: [...artifacts, ...(ran?.evidence ? [ran.evidence] : []), ...(review && !artifacts.includes(review.assessment) ? [review.assessment] : [])],
+      inputs: [...artifacts, ...(ran?.evidence ? [ran.evidence] : []), ...(review && !artifacts.includes(review.assessment) ? [review.assessment] : []), ...(risk ? [risk.decision] : [])],
       candidates: [
-        { option: 'accept', selected: !failed.length, reasons: failed.length ? [`not accept: the run's own ${failed.join(', ')} check failed`] : [`every step of the run was accepted by its contract, and its result is on ${describe(subject)}`, said, ...notes] },
-        { option: 'reject', selected: !!failed.length, reasons: failed.length ? [`the run's own ${failed.join(', ')} check failed on ${describe(subject)}: the work goes back as another attempt`, ...notes] : ['not reject: no check the run ran failed'] },
+        { option: 'accept', selected: option === 'accept', reasons: option === 'reject' ? rejectWhy.map((w) => `not accept: ${w}`) : [`every step of the run was accepted by its contract, and its result is on ${describe(subject)}`, said, ...tierSaid, ...notes] },
+        { option: 'reject', selected: option === 'reject', reasons: option === 'reject' ? [`${rejectWhy.join('; ')}: the work goes back as another attempt`, ...notes] : ['not reject: no check the run ran failed', ...(risk?.tier === 'heavy' ? ['not reject: approving reviews of its exact tree by two provider families are recorded'] : [])] },
       ],
-      decider: { type: 'rule', id: 'workflow.task-acceptance', version: '3' },
-      outcome: { option, detail: { taskId: row.task_id, runId: run.run_id, subject, checks, ...(ran ? { checkRun: ran.detail } : {}), ...(review ? { review } : {}), ...(landing ? { landing } : {}) } },
+      decider: { type: 'rule', id: 'workflow.task-acceptance', version: '4' },
+      outcome: {
+        option, detail: {
+          taskId: row.task_id, runId: run.run_id, subject, checks, ...(ran ? { checkRun: ran.detail } : {}), ...(review ? { review } : {}), ...(landing ? { landing } : {}),
+          ...(risk ? { risk: { tier: risk.tier, decision: risk.decision, ...(risk.tier === 'heavy' ? { families: second.families, reviews: second.reviews.map((r) => ({ node: r.node, ...(r.worker ? { worker: r.worker } : {}) })) } : {}) } } : {}),
+        },
+      },
       deterministic: true,
     }, { ...PRODUCER, runId: run.run_id }).id as ArtifactRef
     const result: Result = { artifacts, subject }
@@ -1330,7 +1341,7 @@ export class TaskRuns {
     })
     // The System's evidence in the task's dossier: the checks and the acceptance, linked (ADR-0070).
     this.dossiers.safely('the acceptance', () => this.dossiers.evidence(run.run_id,
-      `Acceptance of attempt ${this.frame(run.run_id)?.attempt ?? '?'} (run ${run.run_id}): ${option} on ${describe(subject)}; ${said}${review ? `; the last review (${review.node}) ${review.verdict} with ${review.blocking} blocking finding(s), cycle ${review.cycle} of ${review.maxCycles}` : ''}${notes.length ? `; ${notes.join('; ')}` : ''}.`,
+      `Acceptance of attempt ${this.frame(run.run_id)?.attempt ?? '?'} (run ${run.run_id}): ${option} on ${describe(subject)}; ${said}${review ? `; the last review (${review.node}) ${review.verdict} with ${review.blocking} blocking finding(s), cycle ${review.cycle} of ${review.maxCycles}` : ''}${tierSaid.length ? `; ${tierSaid[0]}` : ''}${short ? `; ${short}` : ''}${notes.length ? `; ${notes.join('; ')}` : ''}.`,
       [acceptance, ...(ran?.evidence ? [ran.evidence] : []), ...artifacts], subject))
     return undefined
   }

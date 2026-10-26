@@ -809,6 +809,19 @@ guesses.
   `command` class. When the `command` class is `forbid`, listed commands are forbidden too. An
   argv word holding a shell metacharacter (`; & | $`, the backquote, `< > ( ) { } [ ] * ? ~`,
   quotes, backslash, newline, carriage return, tab, NUL) is forbidden, listed or not.
+- `@1.1` adds the optional `riskTiers`, the path map that gives a board task's change its risk tier
+  ([ADR-0071](../decisions/adr/0071-a-changes-risk-tier-comes-from-the-policys-path-map.md),
+  [process tiered by risk](../design/workflow-engine.md#process-tiered-by-risk)): its own `version`,
+  raised whenever a path's tier changes, and rules of repository-relative patterns, each with a tier
+  (`light`, `normal`, `heavy`) and a `note` saying why. `*` matches within one segment, `**` any
+  number of whole segments, and a pattern ending in `/` is that directory and everything below it;
+  a pattern with a `.` or `..` segment, or `**` inside a segment, is refused when the policy loads. A
+  path's tier is the **highest** of the rules that match it, never the most specific one; a path no
+  rule matches is `heavy`, and so is a part of a change that cannot be read. A change's tier is the
+  highest of its paths' under every applying policy's map (the studio's and the project's: a
+  project's map only makes a path stricter). With no applying map, tiering is off. A map changes
+  only as its policy does, through a `policy-change` approval; `policies/system.json` holds the
+  system repository's, which `pnpm check` (`check:tiers`) keeps whole.
 - An approval request expires at its creation plus the shortest `expiresSeconds` of the rules
   that apply to its class (the studio's and the project's), else the stricter
   `expiry.defaultSeconds`, never more than the stricter `expiry.maxSeconds`.

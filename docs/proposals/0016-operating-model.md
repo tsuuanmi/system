@@ -7,7 +7,7 @@ summary: System runs as a startup inside a group. It has room to grow itself ins
 owners: [operator]
 evidence: [operator vision 2026-10-26 (four points), the lead's analysis 2026-10-26, T224 brainstorm (two model families, both chose one option), T215, T216, T217, T218, T219, T220 (2026-10-25/26)]
 related: [PROP-0008, PROP-0011, PROP-0013, PROP-0014, PROP-0015, ADR-0027, ADR-0028, ADR-0036, ADR-0041, ADR-0049, ADR-0050, ADR-0057, ADR-0060, ADR-0063, ADR-0064, ADR-0066, ADR-0067, ADR-0068, ADR-0069]
-implementation: []
+implementation: [ADR-0071]
 ---
 
 # Proposal: Operating model — a startup inside a group
@@ -414,4 +414,12 @@ Accepted by the operator on 2026-10-26, each open question answered as this prop
 
 ## Implementation
 
-None yet.
+- **I2, part 1** (T237): the path map in the policy (`autonomy-policy@1.1` `riskTiers`; the system
+  repository's in `policies/system.json`, kept whole by `check:tiers`), the tier as a decision on the
+  run, a heavy change's second review by another provider family and its hold for the operator, and
+  a light change's skipped validation:
+  [ADR-0071](../decisions/adr/0071-a-changes-risk-tier-comes-from-the-policys-path-map.md),
+  [process tiered by risk](../design/workflow-engine.md#process-tiered-by-risk). As T237 asks, an
+  unmatched path is heavy (fail closed, like an unreadable one), not normal as §4 first wrote; the
+  check keeps every tracked path matched, so only a new one is ever unmatched. The adversarial review
+  prompt, the decision brief, and the lead-touch metric are I2's later parts.

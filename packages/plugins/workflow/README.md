@@ -348,12 +348,22 @@ second execution path (INV-1).
     the board refuses the generation, the run starts nothing new (`workflow.task-holder`
     `wind-down`), reconciles what is in flight, and fails the rest as `holder_lost`;
   - a completed run's result is bound to the subject the task writes (else `stale_subject`),
-    with an `acceptance` decision (`workflow.task-acceptance`, version 3) naming the task, the
+    with an `acceptance` decision (`workflow.task-acceptance`, version 4) naming the task, the
     subject, and the checks the run ran (`schema`, `review`, and the required checks it ran on
-    that subject, below), the run's last review (`review`, its assessment among the inputs) and
+    that subject, below), the run's last review (`review`, its assessment among the inputs),
     where the result would land (`landing`, the base branch of its worktree as `ctx.workers.changes`
-    tells it), which the board's auto-accept rule reads (D80, ADR-0067), then submitted and accepted; one only the
-    operator may accept leaves the review held for the operator. A failed or stopped run, and a run whose holder was
+    tells it), which the board's auto-accept rule reads (D80, ADR-0067), and, when its project's
+    policy has a path map, the change's risk tier (`risk`, its `workflow.risk-tier` decision among
+    the inputs; a heavy result without approving reviews of its exact tree by two provider families
+    is rejected, ADR-0071), then submitted and accepted; one only the
+    operator may accept leaves the review held for the operator.
+  - process tiered by risk (`src/risk.ts`, ADR-0071,
+    [design](../../../docs/design/workflow-engine.md#process-tiered-by-risk)): when a review of a
+    board task's run approves, the change's tier is decided from the policy's path map and the paths
+    `ctx.workers.changes` tells (`workflow.risk-tier`; an unmatched path or an unreadable change is
+    heavy); a heavy change grows `<review>:second`, routed only to another provider family, never
+    lifted by `allowSameFamily`; a light change retires a waiting `riskSkip` step once its required
+    checks passed on its exact tree (`workflow.risk-skip`); `explain` gives `risk`. A failed or stopped run, and a run whose holder was
     lost, is reported with `reconcileRun` (a `reconciliation` decision, `workflow.task-report`
     version 2). One that failed only on the infrastructure (`host-stopped`: a step its Worker
     source says the host's stop alone ended, `error.infrastructure`, or the holder lapsed while the

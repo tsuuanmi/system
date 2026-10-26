@@ -1,0 +1,339 @@
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Context, type Fiber } from '@deepseek-ai/cordis'
+import StoreApprovals from '@tsuuanmi/system-approvals'
+import type { AutonomyPolicy, RiskTierMap } from '@tsuuanmi/system-approvals-core'
+import Artifacts from '@tsuuanmi/system-artifacts'
+import StoreBoard, { type Config as BoardConfig } from '@tsuuanmi/system-board'
+import type { ArtifactRef, BoardTask } from '@tsuuanmi/system-board-core'
+import Egress from '@tsuuanmi/system-egress'
+import EventLog from '@tsuuanmi/system-event-log'
+import Leases from '@tsuuanmi/system-leases'
+import { captureGitSubject, sha256 } from '@tsuuanmi/system-libs'
+import Store from '@tsuuanmi/system-store'
+import WorkerSessions from '@tsuuanmi/system-worker-sessions'
+import WorkerRouter from '@tsuuanmi/system-workers'
+import type { CapabilityDescriptor, ChangedFile, CheckStep, WorkerExecution } from '@tsuuanmi/system-workers-core'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
+import { worker } from '../../../workers-core/conformance/workers.ts'
+import { activeProject, CONFIG, readyTask, type Rendered, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
+import Workflow from '../src/index.ts'
+import { type AcceptanceRisk, secondFamily } from '../src/risk.ts'
+import type { NodeTemplate } from '../src/spec.ts'
+
+// Process tiered by risk (PROP-0016 §4, D83, ADR-0071), over the store-backed board and approval
+// queue: the policy's path map gives a board task's change its tier, by the paths the Worker source
+// says it touches. A heavy change gets a second review by another provider family before anything
+// after its review runs, and is never accepted unattended; a light one skips its validation step once
+// its required checks passed on its exact tree.
+vi.setConfig({ testTimeout: 60_000 })
+
+const MAP: RiskTierMap = {
+  version: 1,
+  rules: [
+    { tier: 'light', note: 'documentation', paths: ['docs/'] },
+    { tier: 'heavy', note: 'the gate', paths: ['src/gate/'] },
+    { tier: 'normal', note: 'the source', paths: ['src/'] },
+  ],
+}
+const policy = (riskTiers?: RiskTierMap): AutonomyPolicy => ({
+  schema: riskTiers ? 'autonomy-policy@1.1' : 'autonomy-policy@1.0', id: 'studio', version: 1, scope: 'studio',
+  rules: [{ actionClass: 'read', mode: 'auto' }, { actionClass: 'workspace-write', mode: 'auto', requires: ['tests', 'lint'] }, { actionClass: 'merge', mode: 'ask' }],
+  default: 'ask', expiry: { defaultSeconds: 3600, maxSeconds: 86400 }, ...(riskTiers ? { riskTiers } : {}),
+})
+
+/** Scripted Workers whose results name a git working tree and the subject it is at, as an agent's do. */
+class TreeWorkers extends ScriptedWorkers {
+  private readonly results = new Map<string, ArtifactRef>()
+  constructor(private readonly tree: string, private readonly artifacts: () => Context['artifacts']) {
+    super()
+  }
+
+  override get(id: string): WorkerExecution | undefined {
+    const execution = super.get(id)
+    if (!execution?.result) return execution
+    if (!this.results.has(id)) {
+      const text = (this.artifacts().get(execution.result)!.body as { text: string }).text
+      this.results.set(id, this.artifacts().put({
+        kind: 'report', bodySchema: 'agent-result@1.1', classification: 'public', producer: { type: 'worker', ref: 'w:standard' },
+        body: { schema: 'agent-result@1.1', worker: 'w:standard', runtime: 'scripted', runId: 'agent-run', promptHash: sha256(text), sandbox: 'workspace-write', text, workspace: this.tree, subject: captureGitSubject(this.tree)!.subject },
+      }).id as ArtifactRef)
+    }
+    return { ...execution, result: this.results.get(id)! }
+  }
+}
+
+/** The source that holds the run's worktree: it tells the change's paths (or cannot), and runs the required checks. */
+class Holder {
+  readonly checks: CheckStep[] = []
+  files: string[] = []
+  /** Files past the bound, counted only. */
+  more = 0
+  /** Set: the change cannot be read, with this error. */
+  unreadable: string | undefined
+  lint: 'passed' | 'failed' = 'passed'
+  workspace = ''
+  private artifacts!: Context['artifacts']
+
+  register(ctx: Context): void {
+    this.artifacts = ctx.artifacts
+    ctx.workers.register({
+      name: 'holder', describe: async () => [],
+      changes: async (runId) => {
+        if (this.unreadable) throw new Error(this.unreadable)
+        return [{
+          repository: '/repo', workspace: this.workspace, branch: `system/run/${runId}`, base: { branch: 'dev', sha: 'b'.repeat(40) }, head: 'b'.repeat(40),
+          files: this.files.map((path): ChangedFile => ({ path, status: 'modified', added: 1, removed: 1 })), more: this.more, truncated: false,
+        }]
+      },
+      start: () => {
+        throw new Error('the holder runs no Worker')
+      },
+      get: () => undefined, wait: () => Promise.reject(new Error('the holder runs no Worker')),
+      check: async (step) => {
+        this.checks.push(step)
+        const results = step.checks.map((check) => {
+          const outcome = check === 'lint' ? this.lint : 'passed'
+          return { check, outcome, exitCode: outcome === 'passed' ? 0 : 1, reason: `exited ${outcome === 'passed' ? 0 : 1}` }
+        })
+        const evidence = this.artifacts.put({
+          kind: 'evidence', bodySchema: 'check-run@1.0', classification: step.classification, producer: { type: 'system', ref: 'holder' }, runId: step.runId,
+          body: { schema: 'check-run@1.0', runId: step.runId, repository: step.workspace, workspace: step.workspace, subject: { type: 'git-head', ...step.subject }, setup: sha256('setup'), checks: results },
+        }).id
+        return { outcome: 'checked', results, evidence }
+      },
+    })
+  }
+}
+
+function tree(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'system-workflow-risk-'))
+  const git = (...args: string[]): void => void execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { stdio: 'ignore' })
+  git('init', '-q')
+  writeFileSync(join(dir, 'a.c'), 'int a;\n')
+  git('add', '.')
+  git('commit', '-q', '-m', 'init')
+  writeFileSync(join(dir, 'a.c'), 'int a = 1;\n')
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+  return dir
+}
+
+const step = (nodeId: string, extra: Partial<NodeTemplate>): NodeTemplate => ({ nodeId, objective: `Do ${nodeId}`, prompt: '{{input}}', capabilities: ['develop'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', ...extra })
+/** `algorithm-development`'s shape: a change, an exact-subject review of it, and a validation step a light change may skip. */
+const TIERED: NodeTemplate[] = [
+  step('develop', {}),
+  step('review', { prompt: 'Review: {{input}}', capabilities: ['review'], dependsOn: ['develop'] }),
+  step('validate', { prompt: 'Validate it', capabilities: ['reason'], dependsOn: ['review'], riskSkip: ['light'] }),
+]
+
+/** A reviewer of a provider family: it proves `review`, and its family is what routing compares (ADR-0027). */
+const reviewer = (id: string, family: string): CapabilityDescriptor => worker(id, { schema: 'capability-descriptor@1.1', family, tier: 'standard', proves: ['review'] })
+const TWO_FAMILIES = [reviewer('w:reviewer-a', 'fam-a'), reviewer('w:reviewer-b', 'fam-b')]
+const AUTO: BoardConfig = { autoAccept: { projects: ['p1'], branches: ['dev'] } }
+
+/** `map: null`: the policy carries no path map. */
+async function boot({ map = MAP as RiskTierMap | null, reviewers = TWO_FAMILIES, board = AUTO, allowSameFamily = false }: { map?: RiskTierMap | null; reviewers?: CapabilityDescriptor[]; board?: BoardConfig; allowSameFamily?: boolean } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'system-workflow-risk-db-'))
+  const workspace = tree()
+  const holder = new Holder()
+  holder.workspace = workspace
+  const ctx = new Context()
+  const workers = new TreeWorkers(workspace, () => ctx.artifacts)
+  workers.extra = reviewers
+  const answer = workers.reply
+  workers.reply = (request: Rendered) => {
+    const subject = /^Subject: (\S+)$/m.exec(request.prompt)?.[1]
+    if (!subject) return answer(request)
+    return { text: '```json\n' + JSON.stringify({ subject, verdict: 'approve', findings: [] }) + '\n```' }
+  }
+  const config = { ...CONFIG, approvalPollSeconds: 1, maxReviewCycles: 1, allowSameFamily, templates: { ...TEMPLATES, tiered: TIERED } }
+  const fibers: Fiber[] = [
+    ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
+    ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}),
+    ctx.plugin({ name: 'scripted-workers', inject: ['workers', 'artifacts'], apply: (c: Context) => {
+      c.workers.register(workers.source(c))
+      holder.register(c)
+    } }),
+    ctx.plugin(StoreApprovals, { policies: [policy(map ?? undefined)], sweepSeconds: 3600 }), ctx.plugin(StoreBoard, { sweepSeconds: 0, ...board }),
+  ]
+  await Promise.all(fibers)
+  const engine = ctx.plugin(Workflow, config)
+  await engine
+  onTestFinished(async () => {
+    await engine.dispose()
+    for (const fiber of [...fibers].reverse()) await fiber.dispose()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  await activeProject(ctx)
+  const { subject } = captureGitSubject(workspace)!
+  const task = async (): Promise<{ taskId: string; runId: string }> => {
+    const ready = await readyTask(ctx, 'tree', { writes: { type: 'git-head' as const, ref: subject.ref }, actionClass: 'workspace-write' })
+    const run = await ctx.workflow.start({ template: 'tiered', input: 'change it', classification: 'public', task: { taskId: ready.taskId } })
+    return { taskId: ready.taskId, runId: run.runId }
+  }
+  return { ctx, holder, workers, subject, task }
+}
+
+/** The task once its run's result reached the board: done, held for the operator, or sent back. */
+const settled = (ctx: Context, taskId: string): Promise<BoardTask> => vi.waitFor(async () => {
+  const task = (await ctx.board.task(taskId))!
+  if (task.state === 'running' || task.state === 'claimed' || (task.state === 'review' && !task.waiting)) throw new Error(`task ${taskId} is ${task.state}`)
+  return task
+}, { timeout: 30_000, interval: 25 })
+
+type Decision = { decider: { id: string; version: string }; inputs: string[]; candidates: Array<{ option: string; selected: boolean; reasons: string[] }>; outcome: { option: string; detail: Record<string, unknown> } }
+const decisionsOf = (ctx: Context, runId: string, rule: string): Array<Decision & { nodeId?: string }> =>
+  ctx.artifacts.list({ kind: 'decision', runId, limit: 1000 }).filter((a) => (a.body as Decision).decider.id === rule).map((a) => ({ ...(a.body as Decision), ...(a.nodeId ? { nodeId: a.nodeId } : {}) }))
+const acceptanceOf = (ctx: Context, runId: string): Decision => {
+  const found = decisionsOf(ctx, runId, 'workflow.task-acceptance')
+  expect(found).toHaveLength(1)
+  return found[0]!
+}
+
+describe('a heavy change (ADR-0071): a second review by another provider family, never accepted unattended', () => {
+  it('grows a second review the other family takes, accepts with both families\' approvals, and holds the result for the operator though the auto-accept rule would apply', async () => {
+    const { ctx, holder, workers, subject, task } = await boot()
+    holder.files = ['docs/a.md', 'src/gate/policy.ts']
+    const { taskId, runId } = await task()
+    const held = await settled(ctx, taskId)
+
+    // The tier, decided when the review approved, under that review, from the paths the change touches.
+    const atReview = decisionsOf(ctx, runId, 'workflow.risk-tier').find((d) => d.nodeId === 'review')!
+    expect(atReview.outcome).toMatchObject({ option: 'heavy', detail: { counts: { light: 1, normal: 0, heavy: 1 }, maps: [{ policy: { id: 'studio', version: 1 }, version: 1 }] } })
+    expect(atReview.candidates.find((c) => c.selected)!.reasons).toContain('src/gate/policy.ts is heavy: the gate (src/gate/)')
+
+    // The second review ran after the first, on a Worker of the other family, before the validation step.
+    const view = ctx.workflow.get(runId)!
+    const first = view.nodes.find((n) => n.nodeId === 'review')!
+    const second = view.nodes.find((n) => n.nodeId === 'review:second')!
+    expect(second.state).toBe('COMPLETED')
+    expect(new Set([first.worker, second.worker])).toEqual(new Set(['w:reviewer-a', 'w:reviewer-b']))
+    const validate = workers.started.findIndex((s) => s.prompt.includes('Validate it'))
+    expect(validate).toBeGreaterThan(workers.started.findIndex((s) => s.worker === second.worker))
+
+    // The acceptance names the run-level tier decision among its inputs, and the two families.
+    const acceptance = acceptanceOf(ctx, runId)
+    expect(acceptance).toMatchObject({ decider: { version: '4' }, outcome: { option: 'accept', detail: { risk: { tier: 'heavy', families: 2 } } } })
+    const risk = acceptance.outcome.detail['risk'] as { decision: string }
+    expect(acceptance.inputs).toContain(risk.decision)
+    expect(ctx.artifacts.get(risk.decision as ArtifactRef)?.body).toMatchObject({ decider: { id: 'workflow.risk-tier' }, outcome: { option: 'heavy' } })
+    expect(decisionsOf(ctx, runId, 'workflow.risk-tier').filter((d) => d.nodeId === undefined)).toHaveLength(1)
+
+    // Reviewed, checked, landing on a listed branch: the auto-accept rule would apply, but a heavy result is the operator's.
+    expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: [] } })
+    expect(ctx.artifacts.get(held.lastDecision!)?.body).toMatchObject({ outcome: { option: 'operator-review', detail: { heavy: expect.stringContaining('heavy-tier') } } })
+
+    // The tier and why, in the run's explain.
+    expect(ctx.workflow.explain(runId)?.risk).toMatchObject({ tier: 'heavy', decision: risk.decision, reasons: expect.arrayContaining([expect.stringContaining('src/gate/policy.ts is heavy')]) })
+    expect(acceptance.outcome.detail['subject']).toMatchObject({ type: 'git-head', ref: subject.ref })
+  })
+
+  it('fails the second review when only one provider family can review, even with allowSameFamily on: no heavy result is accepted on one family\'s word (INV-2)', async () => {
+    const { ctx, holder, task } = await boot({ reviewers: [reviewer('w:reviewer-a', 'fam-a'), reviewer('w:reviewer-a2', 'fam-a')], allowSameFamily: true })
+    holder.files = ['src/gate/policy.ts']
+    const { taskId, runId } = await task()
+    const after = await settled(ctx, taskId)
+    expect(after.state).not.toBe('done')
+    const view = ctx.workflow.get(runId)!
+    expect(view.status).toBe('failed')
+    expect(view.nodes.find((n) => n.nodeId === 'review:second')).toMatchObject({ state: 'FAILED' })
+    expect(view.nodes.find((n) => n.nodeId === 'validate')?.state).toBe('WAITING')
+    expect(decisionsOf(ctx, runId, 'workflow.same-family')).toEqual([])
+    expect(decisionsOf(ctx, runId, 'workflow.task-acceptance')).toEqual([])
+  })
+
+  it('is heavy when the change cannot be read, or holds paths past the bound, or touches a path no rule matches (INV-2)', async () => {
+    const unread = await boot()
+    unread.holder.unreadable = 'the worktree is gone'
+    const one = await unread.task()
+    await settled(unread.ctx, one.taskId)
+    expect(decisionsOf(unread.ctx, one.runId, 'workflow.risk-tier').find((d) => d.nodeId === 'review')?.outcome).toMatchObject({
+      option: 'heavy', detail: { paths: [{ tier: 'heavy', why: 'unreadable', detail: 'source holder could not read its worktree of the run: the worktree is gone' }] },
+    })
+
+    const past = await boot()
+    past.holder.files = ['docs/a.md']
+    past.holder.more = 4
+    const two = await past.task()
+    await settled(past.ctx, two.taskId)
+    expect(acceptanceOf(past.ctx, two.runId).outcome.detail['risk']).toMatchObject({ tier: 'heavy' })
+
+    const unmatched = await boot()
+    unmatched.holder.files = ['docs/a.md', 'tools/new.sh']
+    const three = await unmatched.task()
+    await settled(unmatched.ctx, three.taskId)
+    expect(acceptanceOf(unmatched.ctx, three.runId).outcome.detail['risk']).toMatchObject({ tier: 'heavy' })
+  })
+})
+
+describe('the acceptance of a heavy result requires approving reviews of its exact tree by two provider families', () => {
+  const at = 'git:abc:v1'
+  const risk = (reviews: AcceptanceRisk['reviews'], tier: AcceptanceRisk['tier'] = 'heavy'): AcceptanceRisk => ({ tier, decision: 'sha256:r' as ArtifactRef, reviews })
+
+  it('counts families, never reviews: two Workers of one family are one', () => {
+    expect(secondFamily(risk([{ node: 'review', worker: 'a1', subject: at, family: 'fam-a' }, { node: 'review:second', worker: 'a2', subject: at, family: 'fam-a' }]), at)).toMatchObject({ met: false, families: 1 })
+    expect(secondFamily(risk([{ node: 'review', worker: 'a', subject: at, family: 'fam-a' }, { node: 'review:second', worker: 'b', subject: at, family: 'fam-b' }]), at)).toMatchObject({ met: true, families: 2 })
+  })
+
+  it('counts only approvals of the exact tree, and a Worker whose family is not listed now as none (INV-5, ADR-0027)', () => {
+    expect(secondFamily(risk([{ node: 'review', worker: 'a', subject: at, family: 'fam-a' }, { node: 'review:second', worker: 'b', subject: 'git:abc:v0', family: 'fam-b' }]), at)).toMatchObject({ met: false, families: 1 })
+    expect(secondFamily(risk([{ node: 'review', worker: 'a', subject: at, family: 'fam-a' }, { node: 'review:second', worker: 'gone', subject: at }]), at)).toMatchObject({ met: false, families: 1 })
+  })
+
+  it('asks nothing of a light or normal result, or of a run with no tier', () => {
+    expect(secondFamily(risk([], 'normal'), at).met).toBe(true)
+    expect(secondFamily(undefined, at).met).toBe(true)
+  })
+})
+
+describe('a light change (ADR-0071): its validation step is skipped once its required checks pass', () => {
+  it('retires the validation step after the review approved and the checks passed on its exact tree, and is accepted without the operator', async () => {
+    const { ctx, holder, workers, task } = await boot()
+    holder.files = ['docs/a.md', 'docs/b.md']
+    const { taskId, runId } = await task()
+    expect(await settled(ctx, taskId)).toMatchObject({ state: 'done' })
+    expect(workers.started.some((s) => s.prompt.includes('Validate it'))).toBe(false)
+    const view = ctx.workflow.get(runId)!
+    expect(view.nodes.find((n) => n.nodeId === 'validate')?.state).toBe('RETIRED')
+    expect(view.nodes.some((n) => n.nodeId === 'review:second')).toBe(false)
+    const [skip] = decisionsOf(ctx, runId, 'workflow.risk-skip')
+    expect(skip).toMatchObject({ nodeId: 'validate', outcome: { option: 'skip', detail: { tier: 'light' } } })
+    expect(acceptanceOf(ctx, runId).outcome).toMatchObject({ option: 'accept', detail: { risk: { tier: 'light' }, checks: { tests: true, lint: true } } })
+    expect(ctx.workflow.explain(runId)?.risk?.tier).toBe('light')
+  })
+
+  it('runs the validation step when a required check failed, recorded, and the failed check sends the work back', async () => {
+    const { ctx, holder, workers, task } = await boot()
+    holder.files = ['docs/a.md']
+    holder.lint = 'failed'
+    const { taskId, runId } = await task()
+    expect((await settled(ctx, taskId)).state).toBe('ready')
+    expect(workers.started.some((s) => s.prompt.includes('Validate it'))).toBe(true)
+    const [run] = decisionsOf(ctx, runId, 'workflow.risk-skip')
+    expect(run).toMatchObject({ nodeId: 'validate', outcome: { option: 'run' } })
+    expect(run!.candidates.find((c) => c.selected)!.reasons[0]).toMatch(/a required check failed: lint/)
+  })
+
+  it('a normal change runs every step and is accepted as before', async () => {
+    const { ctx, holder, workers, task } = await boot()
+    holder.files = ['src/a.c']
+    const { taskId, runId } = await task()
+    expect(await settled(ctx, taskId)).toMatchObject({ state: 'done' })
+    expect(workers.started.some((s) => s.prompt.includes('Validate it'))).toBe(true)
+    expect(decisionsOf(ctx, runId, 'workflow.risk-skip')).toEqual([])
+    expect(acceptanceOf(ctx, runId).outcome.detail['risk']).toMatchObject({ tier: 'normal' })
+  })
+})
+
+it('is off with no path map in the policy: no tier is decided, and the process is as before', async () => {
+  const { ctx, holder, workers, task } = await boot({ map: null })
+  holder.files = ['src/gate/policy.ts']
+  const { taskId, runId } = await task()
+  expect(await settled(ctx, taskId)).toMatchObject({ state: 'done' })
+  expect(workers.started.some((s) => s.prompt.includes('Validate it'))).toBe(true)
+  expect(decisionsOf(ctx, runId, 'workflow.risk-tier')).toEqual([])
+  expect(acceptanceOf(ctx, runId).outcome.detail).not.toHaveProperty('risk')
+  expect(ctx.workflow.explain(runId)).not.toHaveProperty('risk')
+})

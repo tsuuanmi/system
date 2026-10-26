@@ -793,6 +793,52 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
       expect(await off.ctx.board.accept(before.taskId, accepting, at(5))).toMatchObject({ state: 'done', lastDecision: accepting })
     })
 
+    it('never applies an acceptance of a heavy result unattended, by the rule or by the policy alone; the tier is read from the record it names (ADR-0071, INV-2)', async () => {
+      const { ctx } = await boot({ board: AUTO })
+      await active(ctx)
+      const review = assessed(ctx, 'approve')
+      const evidence = checkRun(ctx, { tests: 'passed', lint: 'passed' })
+      const checks = { review: true, tests: true, lint: true }
+      /** The engine's `workflow.risk-tier` decision of a tier. */
+      const tiered = (tier: 'light' | 'heavy'): ArtifactRef => ctx.artifacts.recordDecision({
+        decisionType: 'gate', question: `What risk tier is the change (${tier})?`, inputs: [],
+        candidates: [{ option: tier, selected: true, reasons: [`the change is ${tier}`] }, { option: tier === 'heavy' ? 'light' : 'heavy', selected: false, reasons: ['not it'] }],
+        decider: { type: 'rule', id: 'workflow.risk-tier', version: '1' }, outcome: { option: tier }, deterministic: true,
+      }, { producer: { type: 'system', ref: 'workflow' } }).id as ArtifactRef
+      /** The engine's acceptance (version 4) naming a tier: `inInputs` false leaves its decision out of the inputs. */
+      const withRisk = (taskId: string, r: ArtifactRef, tier: 'light' | 'heavy', decision: ArtifactRef, inInputs = true): ArtifactRef => ctx.artifacts.recordDecision({
+        decisionType: 'acceptance', question: `Does the run's result complete its attempt of ${taskId}?`, inputs: [r, evidence, review, ...(inInputs ? [decision] : [])],
+        candidates: [{ option: 'accept', selected: true, reasons: ['every step was accepted'] }, { option: 'reject', selected: false, reasons: ['not reject'] }],
+        decider: { type: 'rule', id: 'workflow.task-acceptance', version: '4' },
+        outcome: { option: 'accept', detail: { taskId, subject: TREE, checks, review: { assessment: review, cycle: 1, maxCycles: 3 }, checkRun: { evidence }, landing: { repository: '/repo', branch: 'dev' }, risk: { tier, decision } } },
+        deterministic: true,
+      }, { producer: { type: 'system', ref: 'workflow' } }).id as ArtifactRef
+      const heavyOf = (held: BoardTask): string | undefined => (ctx.artifacts.get(held.lastDecision!)!.body as { outcome?: { detail?: { heavy?: string } } }).outcome?.detail?.heavy
+
+      const heavy = await inReview(ctx, 'heavy')
+      const held = await ctx.board.accept(heavy.taskId, withRisk(heavy.taskId, heavy.r, 'heavy', tiered('heavy')), at(5))
+      expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: [] } })
+      expect(heavyOf(held)).toMatch(/is heavy-tier \(risk decision sha256:[0-9a-f]+\): a heavy change is never accepted automatically/)
+      // A tier the decision claims but does not back with its record, or a claim the record contradicts, is held too.
+      const unbacked = await inReview(ctx, 'unbacked')
+      expect(heavyOf(await ctx.board.accept(unbacked.taskId, withRisk(unbacked.taskId, unbacked.r, 'light', tiered('light'), false), at(5)))).toMatch(/no workflow.risk-tier decision among its inputs/)
+      const claimed = await inReview(ctx, 'claimed')
+      expect(heavyOf(await ctx.board.accept(claimed.taskId, withRisk(claimed.taskId, claimed.r, 'light', tiered('heavy')), at(5)))).toMatch(/heavy-tier/)
+      // A light one the rule applies to is done, as before.
+      const light = await inReview(ctx, 'light')
+      expect(await ctx.board.accept(light.taskId, withRisk(light.taskId, light.r, 'light', tiered('light')), at(5))).toMatchObject({ state: 'done' })
+      // On a project the rule does not list, the policy alone would let a heavy result apply: it is held all the same.
+      await active(ctx, 'p3')
+      const unlisted = await inReview(ctx, 'unlisted', 'p3')
+      expect(heavyOf(await ctx.board.accept(unlisted.taskId, withRisk(unlisted.taskId, unlisted.r, 'heavy', tiered('heavy')), at(5)))).toMatch(/heavy-tier/)
+      // Only the operator's acceptance accepts it.
+      const operator = ctx.artifacts.recordDecision({
+        decisionType: 'acceptance', question: 'Accept it?', inputs: [heavy.r], candidates: [{ option: 'accept', selected: true, reasons: ['the operator accepts it'] }],
+        decider: { type: 'operator', id: 'operator.review', version: '1' }, outcome: { option: 'accept', detail: { taskId: heavy.taskId, subject: TREE } }, deterministic: false,
+      }, { producer: { type: 'operator', ref: 'operator' } }).id as ArtifactRef
+      expect(await ctx.board.accept(heavy.taskId, operator, at(6))).toMatchObject({ state: 'done', lastDecision: operator })
+    })
+
     it('validates the setting: distinct project ids and plain branch names within the bound; off unless both lists name one', () => {
       expect(autoAcceptOf(undefined)).toBeUndefined()
       expect(autoAcceptOf({ projects: ['system'], branches: [] })).toBeUndefined()

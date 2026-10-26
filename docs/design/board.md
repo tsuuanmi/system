@@ -392,6 +392,12 @@ holds, each read from the record the decision names, never from its own account:
   without the setting. The workflow engine's task acceptance names the run's last review and its
   landing target (`workflow.task-acceptance` version 3,
   [a board task's run](workflow-engine.md#a-runs-required-checks)).
+- **A heavy result** ([ADR-0071](../decisions/adr/0071-a-changes-risk-tier-comes-from-the-policys-path-map.md),
+  [process tiered by risk](workflow-engine.md#process-tiered-by-risk)) is never accepted unattended,
+  with or without the setting: an accepting decision that is not the operator's and names a risk
+  tier (`outcome.detail.risk`, version 4) is held for the operator when the `workflow.risk-tier`
+  decision it names among its inputs says `heavy`, or when it names none there (INV-2); the hold's
+  decision says why (`outcome.detail.heavy`). Only the operator's acceptance accepts it.
 - The setting is validated when the board starts: project ids, plain branch names (no patterns), at
   most 64 each, no repeats; off unless both lists name one.
 

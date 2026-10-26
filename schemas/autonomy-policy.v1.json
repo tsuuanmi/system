@@ -6,7 +6,7 @@
   "type": "object",
   "required": ["schema", "id", "version", "scope", "rules", "default", "expiry"],
   "properties": {
-    "schema": { "const": "autonomy-policy@1.0" },
+    "schema": { "enum": ["autonomy-policy@1.0", "autonomy-policy@1.1"] },
     "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "version": {
       "description": "Changes whenever the policy's effect changes; decisions name it.",
@@ -56,12 +56,55 @@
         "maxWaitSeconds": { "type": "integer", "minimum": 0, "maximum": 86400 }
       },
       "additionalProperties": false
+    },
+    "riskTiers": {
+      "description": "1.1 adds the path map that gives each path a change touches a risk tier (PROP-0016 §4, ADR-0071). A path's tier is the highest of the rules that match it, and a path no rule matches, or that cannot be read, is heavy; a change's tier is the highest of its paths'. With no applying policy carrying one, tiering is off.",
+      "type": "object",
+      "required": ["version", "rules"],
+      "properties": {
+        "version": {
+          "description": "The map's own version: it changes whenever a path's tier changes, and a tier decision names it.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "rules": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "items": { "$ref": "#/$defs/riskTierRule" }
+        }
+      },
+      "additionalProperties": false
     }
   },
   "if": { "properties": { "scope": { "const": "project" } } },
   "then": { "required": ["projectId", "narrows"], "properties": { "projectId": true, "narrows": true } },
   "else": { "not": { "anyOf": [{ "required": ["projectId"] }, { "required": ["narrows"] }] } },
+  "allOf": [
+    {
+      "if": { "properties": { "riskTiers": { "type": "object" } }, "required": ["riskTiers"] },
+      "then": { "description": "@1.1 fields (riskTiers) are refused before @1.1.", "properties": { "schema": { "const": "autonomy-policy@1.1" } } }
+    }
+  ],
   "$defs": {
+    "riskTierRule": {
+      "type": "object",
+      "required": ["paths", "tier", "note"],
+      "properties": {
+        "paths": {
+          "description": "Repository-relative path patterns: segments split on /; * matches within one segment, ** any number of whole segments; a pattern ending in / is that directory and everything below it.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9._@+*-]+(/[A-Za-z0-9._@+*-]+)*/?$" }
+        },
+        "tier": { "enum": ["light", "normal", "heavy"] },
+        "note": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" }
+      },
+      "additionalProperties": false
+    },
     "rule": {
       "type": "object",
       "required": ["actionClass", "mode"],

@@ -1355,6 +1355,43 @@ check never installs.
   told its `ended`, is not shown after it. The web UI's run page shows it under **Checks**. The check
   goes on to its deadline; one stopped there says since when it printed nothing.
 
+## Process tiered by risk
+
+> Decision: [ADR-0071](../decisions/adr/0071-a-changes-risk-tier-comes-from-the-policys-path-map.md)
+> (PROP-0016 §4, D83), T237. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
+> (`src/risk.ts`), the map in [`approvals-core`](../../packages/approvals-core/README.md)
+> (`src/risk-tiers.ts`), the hold in [`board`](../../packages/plugins/board/README.md). The
+> adversarial review prompt and the decision brief (I2's later parts) are not built.
+
+A board task's change gets a **risk tier**, `light`, `normal`, or `heavy`, from the path map of its
+project's autonomy policy (`riskTiers`, [schemas](../reference/schemas.md#autonomy-policy)): by what
+it touches, never by a model's opinion. With no applying policy carrying a map, tiering is off and
+everything below is skipped.
+
+| Step | Records | Fails closed when |
+|---|---|---|
+| read | the change's paths from the Worker sources that hold the run's worktrees (`ctx.workers.changes`), a rename's both | a source could not read its worktree, files are past the change's bound, no source holds a worktree of the run, or the read fails: each is a heavy part of the change |
+| tier | each path at the highest tier of the rules that match it, under every applying map (a project's only stricter); the change at the highest of its paths'; a `gate` decision of rule `workflow.risk-tier` with the maps' versions, the counts per tier, and each path (at most 50) with its tier, why, and the patterns | a path no rule matches is heavy; a policy that cannot be read makes the change heavy |
+| at a review | when a review of the run approves a change with no blocking finding left, the tier is decided under that review, before anything after the review is promoted, once per review (its decision joins the review's) | |
+| heavy | unless the exact tree already has approving reviews by Workers of two provider families, a second review `<review>:second` is grown right after the review: worded as it, bound to the same change, `differentFrom` it (it routes only to another family, [ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md)); whatever waited for the review waits for it too; its blocking findings grow a [review cycle](#review-cycles) as any review's | only one family can review: the second review fails admission, and the run fails; `allowSameFamily` never lifts it |
+| light | a waiting final step whose template marks `riskSkip: ['light']` is retired before it starts once every check the policy requires is a command that ran and passed on the exact tree the review approved ([a run's required checks](#a-runs-required-checks)); a `graph-growth` decision of rule `workflow.risk-skip` says `skip`, or why it `run`s | no required check, one failed, pending, or run on another tree: the step runs |
+| at acceptance | the tier of the run's final change is decided again, on the run; the task acceptance (version 4) names it among its inputs (`outcome.detail.risk`) and, for a heavy result, how many provider families approved its exact tree | a heavy result without approving reviews of its exact tree by two families (read from the live descriptors) is rejected: the work goes back as another attempt |
+
+- **The board** never applies an accepting decision of a heavy result unattended, by the auto-accept
+  rule ([ADR-0067](../decisions/adr/0067-system-accepts-a-listed-branchs-result-on-its-review-and-checks.md))
+  or by the policy alone: it holds it for the operator, the reason in the hold's decision
+  (`detail.heavy`), reading the tier from the `workflow.risk-tier` decision among the acceptance's
+  inputs, never from the acceptance's own claim ([board](board.md#required-checks-bind-at-acceptance)).
+- **A light change's result.** With `validate:1` skipped, the run's result is its last review's
+  answer; the required checks still bind at acceptance.
+- **Shown.** `explain` gives `risk`: the run's latest tier, why, and its decision (the acceptance's
+  when there is one, else the latest review's); `system explain` prints it first, and the run's page
+  on `/ui` lists it under *What happened*.
+- **Restart** (INV-4): a review whose tier was decided holds the decision among its own, so it is
+  never decided twice; the growth and the decision are one transaction.
+- **Bounded** (INV-9): one tier decision per approving review and one per acceptance; one second
+  review per approving review; at most 50 paths listed in a decision.
+
 ## Dispatch: starting ready work by itself
 
 > Decision: [ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)
