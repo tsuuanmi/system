@@ -15,7 +15,7 @@ import { type Capacity, CAPACITY_BOUNDS, type CapacityStep, type CapacityTaskRea
 export const ROSTER_SCHEMA = 'mcp-roster@1.9'
 
 /** The engine's event when a step's attempt starts (docs/design/workflow-engine.md), read for when a running step began. */
-export const NODE_STARTED = 'workflow.node.started'
+const NODE_STARTED = 'workflow.node.started'
 
 /** What one roster reads at most (INV-9). */
 export const ROSTER_BOUNDS = {
@@ -208,7 +208,7 @@ export interface RosterInput {
 }
 
 /** The key of one step's start in {@link RosterInput}.starts. */
-export const stepKey = (runId: string, nodeId: string): string => `${runId}\u0000${nodeId}`
+const stepKey = (runId: string, nodeId: string): string => `${runId}\u0000${nodeId}`
 
 // The record.
 
@@ -431,7 +431,7 @@ function poolsOf(input: RosterInput, d: RosterDescriptor, unread: { why: string;
 }
 
 /** How long from `since` to `now`, in words: "less than a minute", "4 min", "2 h 5 min", "3 days". */
-export function spanText(since: string, now: Date): string {
+function spanText(since: string, now: Date): string {
   const minutes = Math.max(0, Math.floor((now.getTime() - Date.parse(since)) / 60_000))
   if (minutes < 1) return 'less than a minute'
   if (minutes < 60) return `${minutes} min`

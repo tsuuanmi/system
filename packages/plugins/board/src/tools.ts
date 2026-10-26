@@ -17,10 +17,10 @@ import { z as zod } from 'zod'
 import type { Chartered, Checked, Closed, Renewed, StoreBoard } from './index.ts'
 
 export const BOARD_TOOLS = ['board_projects', 'board_charter', 'board_brief', 'board_tasks', 'board_task', 'board_propose', 'board_claim', 'board_update', 'board_cancel', 'board_pause', 'board_resume', 'board_close'] as const
-export type BoardTool = typeof BOARD_TOOLS[number]
+type BoardTool = typeof BOARD_TOOLS[number]
 
 /** Who may call each tool: pausing, resuming, and closing a project are the operator's moves (INV-6). */
-export const SCOPES: Record<BoardTool, ToolScope> = {
+const SCOPES: Record<BoardTool, ToolScope> = {
   board_projects: 'client', board_charter: 'client', board_brief: 'client', board_tasks: 'client', board_task: 'client', board_propose: 'client', board_claim: 'client',
   board_update: 'client', board_cancel: 'client', board_pause: 'operator', board_resume: 'operator', board_close: 'operator',
 }
@@ -128,7 +128,7 @@ type Args = Record<string, unknown>
  * Checks the output a call would give: a tool that changes the board passes it, through what it
  * builds that output from, into the move, which runs it before it commits.
  */
-export type OutputCheck = (output: object) => void
+type OutputCheck = (output: object) => void
 type Handler = (args: Args, context: ToolContext, check: OutputCheck) => Promise<object>
 
 /** The output a call would give, refused by its schema before its move committed. */
@@ -137,8 +137,8 @@ class RefusedOutput extends Error {}
 /** `check` on the output `out` builds from what a move returns. */
 const sees = <T>(check: OutputCheck, out: (value: T) => object): Checked<T> => (value) => check(out(value))
 
-/** The tools' behavior, over a board; exported so tests call it as a client would. */
-export function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }): Record<BoardTool, Handler> {
+/** The tools' behavior, over a board. */
+function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }): Record<BoardTool, Handler> {
   return {
     board_projects: async (args) => {
       const { items, next } = board.projectPage({ ...(args.state ? { state: args.state as Project['state'] } : {}), ...pageOf(args) })
@@ -254,7 +254,7 @@ export function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }
  * changes the board runs before its move commits; validate the structured output once more last
  * (all a read needs); and report a refusal as an MCP error.
  */
-export function tool(name: BoardTool, handler: Handler): ToolHandler {
+function tool(name: BoardTool, handler: Handler): ToolHandler {
   return async (args, context) => {
     try {
       schemas.assertDef(MCP_BOARD, defOf(name, 'input'), args)
