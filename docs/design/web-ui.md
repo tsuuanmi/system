@@ -1,7 +1,7 @@
 # The operator's web UI at a glance
 
 > Target state. Boundary: [gateways](../architecture/components.md#gateways), plugin family
-> *surface*. Implemented in [`web-ui`](../../packages/plugins/web-ui/README.md) (T239, T240);
+> *surface*. Implemented in [`web-ui`](../../packages/plugins/web-ui/README.md) (T239, T240, T253);
 > differs from target: the phone is checked in Chromium's emulation of it (its size, scale, touch,
 > and safe areas), not in Safari itself.
 
@@ -23,10 +23,25 @@ checks it.
   when there are any). Then the cards: approvals, reviews, runs needing attention, starts awaiting
   approval; then what happened since you last looked, the Workers' capacity, and the recent runs
   (5 rows, then **Show all N**). The Workers' counts are said once.
-- **The Board** leads with its columns (*Needs your attention* first on a phone); a task's card
-  names its project only when the cards come from several. The projects, with their state, counts,
-  and moves, are under one fold below the columns, its summary saying what of them needs you
-  (*▲ 1 charter approval*), beside the done and cancelled tasks.
+- **Home across projects** (T253, D88: each project has its own lead, and the operator sees every
+  project in one UI). *Needs your attention* is a group per project, each headed by the project's
+  name and its own count tiles, with what is in no project in a group of its own (*Other*). The most
+  urgent group comes first: what expires within the hour, then the most that waits, then the
+  earliest deadline. The cards below follow the same groups and the same order, each group headed
+  by its project's name; a batch of requests stays whole, in its first request's project. A
+  project's name filters Home to it, its recent runs too (`/ui/?project=<id>`, kept through a
+  reload and Back, until **All projects**). Its weekly report and its maturity metrics are under its group's **Reports**
+  fold, as the commands that print them (`system report --project <id>`, `system metrics --project
+  <id>`), each with a copy button (`tests/portfolio.spec.ts`).
+- **The Board** shows one project at a time, chosen by its switcher (*Show*) and kept in the
+  address (`&project=<id>`). It leads with its columns (*Needs your attention* first on a phone).
+  The project, with its state, counts, and moves, is under one fold below the columns, its summary
+  saying what of it needs you (*▲ 1 charter approval*), beside the done and cancelled tasks.
+  **All projects** (`&project=all`, the default when there are several) shows each project's counts
+  only: a card per project with its state, *Needs you · Working · Ready · Proposed*, what of it needs
+  you, and its moves, its name opening its own board.
+- **Workers** serve every project, so the page stays shared; each step a Worker runs now names the
+  project its run is for (*no project* for a run outside the board).
 - **A run's page** leads with its state as a chip, when it started, and **Stop run** or **Retry
   failed step**; then what it waits on as a card; its answer, its first lines and **Show all**; its
   steps, each a line, what it needs and how it was decided under its **Details**; its id under
@@ -62,6 +77,10 @@ checks it.
 | A run's page | 98 | 49 | 45 |
 | Workers | 146 | 73 | 72 |
 
+- **With two projects** (T253), Home, the Board (*All projects* and one project's), and Workers
+  hold the same bound over a store-backed composition of two active projects, each with work that
+  needs the operator and a run on a Worker (`tests/portfolio.spec.ts`; at T253, Home 84, the
+  Board's All projects 69, Workers 28 words).
 - Every section of a page has a heading (`tests/layout.spec.ts`).
 
 ## Visual
@@ -111,7 +130,9 @@ the Dynamic Island above and the home indicator below (T240).
 - No page scrolls sideways at 402 or at 360 px.
 
 `tests/layout.spec.ts` checks each on every page at 402 and 360 px with touch and the safe areas
-(62 px and 34 px) emulated; `tests/web-ui.spec.ts` the run page's bar.
+(62 px and 34 px) emulated; `tests/web-ui.spec.ts` the run page's bar; `tests/portfolio.spec.ts`
+no sideways scroll and the touch targets (a project's name too) at 402 px with two projects: Home,
+Home filtered to one, the Board's All projects and one project's, and Workers.
 
 ## Kept
 
@@ -133,6 +154,20 @@ tests write them again, and print the words each first screen holds, when `SYSTE
 ```sh
 SYSTEM_UI_SHOTS=docs/design/web-ui-screenshots corepack pnpm exec vitest run packages/plugins/web-ui/tests/web-ui.spec.ts packages/plugins/web-ui/tests/layout.spec.ts -t "first screen|T240"
 ```
+
+With two projects (T253), `tests/portfolio.spec.ts` writes `portfolio-<page>-1280.png` and
+`portfolio-<page>-402.png` for Home, the Board's All projects, and Workers (its Workers unfolded, so
+each running step's project is in sight; on the phone, scrolled to the working Worker):
+
+```sh
+SYSTEM_UI_SHOTS=docs/design/web-ui-screenshots corepack pnpm exec vitest run packages/plugins/web-ui/tests/portfolio.spec.ts -t "word bound"
+```
+
+| With two projects | 1280 px | iPhone, 402 px |
+|---|---|---|
+| Home | [now](web-ui-screenshots/portfolio-home-1280.png) | [now](web-ui-screenshots/portfolio-home-402.png) |
+| Board, All projects | [now](web-ui-screenshots/portfolio-board-1280.png) | [now](web-ui-screenshots/portfolio-board-402.png) |
+| Workers | [now](web-ui-screenshots/portfolio-workers-1280.png) | [now](web-ui-screenshots/portfolio-workers-402.png) |
 
 | Page | 1280 px | 360 px | iPhone, 402 px |
 |---|---|---|---|

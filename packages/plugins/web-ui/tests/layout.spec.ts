@@ -88,7 +88,7 @@ describe('web UI: clearer at a glance (T239)', () => {
       if (width === 1280) noteWords('board', words = await wordsInSight(page))
       await shoot(page, `board-${width}`)
       await opened(page, origin + pages.home)
-      await page.locator('#reviews').evaluate((section) => section.scrollIntoView({ block: 'start' }))
+      await page.locator('main section[aria-label="Reviews"]').first().evaluate((section) => section.scrollIntoView({ block: 'start' }))
       await shoot(page, `reviews-${width}`)
       await page.context().close()
     }
@@ -205,7 +205,7 @@ describe('web UI: the operator\'s iPhone 16 Pro (T240)', () => {
         await opened(page, origin + pages.board)
         await shoot(page, 'board-402')
         await opened(page, origin + pages.home)
-        await page.locator('#reviews').evaluate((section) => section.scrollIntoView({ block: 'start' }))
+        await page.locator('main section[aria-label="Reviews"]').first().evaluate((section) => section.scrollIntoView({ block: 'start' }))
         await shoot(page, 'reviews-402')
       }
       await page.context().close()

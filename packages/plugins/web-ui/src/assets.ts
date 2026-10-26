@@ -95,7 +95,7 @@ details.card-details > .fold-body > * { margin: var(--s2) 0; }
 .chip { display: inline-block; max-width: 100%; border: 1px solid color-mix(in srgb, currentColor 45%, transparent); border-radius: 999px; padding: 0 var(--s2); font-size: var(--small); font-weight: 600; line-height: 1.7; vertical-align: baseline; background: color-mix(in srgb, currentColor 10%, transparent); }
 .chip.ok { color: var(--ok); } .chip.warn { color: var(--wait); } .chip.bad { color: var(--bad); } .chip.info { color: var(--accent); } .chip.idle { color: var(--muted); }
 ul.chips { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: var(--s1) var(--s2); }
-.glance .n, .qty .n { font-weight: 600; } time.rel { white-space: nowrap; } time.rel:focus::after { content: ' (' attr(data-exact) ')'; color: var(--muted); }
+.glance .n, .qty .n { font-weight: 600; } .glance > span { white-space: nowrap; } time.rel { white-space: nowrap; } time.rel:focus::after { content: ' (' attr(data-exact) ')'; color: var(--muted); }
 button.copy { min-height: 0; padding: 0 var(--s1); margin: 0 0 0 var(--s1); font-size: var(--small); color: var(--muted); border-radius: 6px; } code.copied { margin-left: var(--s1); }
 button.why { margin: 0 0 0 var(--s1); font-weight: 400; text-transform: none; letter-spacing: 0; }
 .explain-note { font-size: var(--small); font-weight: 400; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 0 var(--s1); display: inline; text-transform: none; letter-spacing: 0; } .explain-note[hidden] { display: none; }
@@ -112,10 +112,17 @@ main p, main li, main dd, p.lead { max-width: 80ch; } ul.plain { list-style: non
 .overview > .panel { margin: 0; } .overview h3 { color: var(--muted); font-size: var(--small); }
 .overview .head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s2); margin-bottom: var(--s2); }
 ul.tiles { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: var(--s2); }
-ul.tiles > li { border-radius: 8px; padding: var(--s2) var(--s3); background: var(--sunk); }
+ul.tiles > li { border-radius: 8px; padding: var(--s2) var(--s3); background: var(--sunk); max-width: none; }
 ul.tiles > li > a:first-child { font-size: var(--large); font-weight: 600; text-decoration: none; display: block; }
 ul.tiles ul.named { padding-left: var(--s3); margin: var(--s1) 0 0; } ul.tiles .soon, ul.tiles .muted { font-size: var(--small); }
 button.show-all { margin: var(--s1) 0; }
+/* Home by project (T253): each group headed by its project's name and its own count tiles; its cards under its name, each kind a quiet heading. */
+.groups { display: grid; gap: var(--s3); } section.group > h4 { margin: 0 0 var(--s2); }
+main h2.group-title { font-size: var(--large); font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--fg); margin: var(--s4) 0 var(--s2); }
+main section.group h3.kind { font-size: var(--small); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: var(--s3) 0 var(--s2); }
+ul.reports { margin: var(--s1) 0 0; } ul.reports li { margin: var(--s1) 0; } ul.reports code { overflow-wrap: anywhere; } .tag.project { white-space: nowrap; }
+/* The Board's All projects (T253): each project's counts as a card, in aligned columns. */
+.portfolio .projects { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: var(--s3); } .portfolio .projects > .panel { margin: 0; } .portfolio > h2 .chip { text-transform: none; letter-spacing: normal; }
 ol.timeline { list-style: none; padding: 0; margin: var(--s2) 0; border-left: 2px solid var(--line); } ol.timeline li.step { padding: var(--s1) 0 var(--s2) var(--s3); position: relative; overflow-wrap: anywhere; }
 ol.timeline li.step::before { content: ''; position: absolute; left: -6px; top: 10px; width: 10px; height: 10px; border-radius: 50%; background: var(--edge); }
 pre { max-width: 100%; } .answer { white-space: pre-wrap; overflow-wrap: anywhere; margin: var(--s2) 0 0; }
@@ -181,7 +188,8 @@ table.modes select { max-width: 100%; } details.advanced { margin: var(--s2) 0; 
   button, select, input, summary, header nav a, ul.tiles > li > a:first-child, .actions > a, .head > a, dl.glossary dt button.term { min-height: 44px; }
   button { min-width: 44px; } button.copy { min-height: 44px; padding: var(--s1) var(--s2); }
   summary, header nav a, .actions > a, .head > a, ul.tiles > li > a:first-child { display: flex; align-items: center; } summary { gap: var(--s1); } header nav a, .actions > a, .head > a { display: inline-flex; }
-  details.fold.inline > summary { display: inline-flex; } }
+  details.fold.inline > summary { display: inline-flex; }
+  section.group > h4 > a, .portfolio h3 > a { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; } }
 /* The "?" of a word, and of a row of buttons where nothing hovers: a small circle in a target a finger can press. */
 button.why, button.tips { border: 0; background: transparent; padding: 0; min-height: 0; display: inline-block; vertical-align: middle; }
 button.why .q, button.tips .q { display: inline-block; min-width: 1.6em; border: 1px solid var(--edge); border-radius: 999px; font-size: var(--small); line-height: 1.5; color: var(--muted); text-align: center; }
@@ -635,6 +643,16 @@ export const APP_JS = `'use strict'
     card.focus({ preventScroll: true })
     return true
   }
+  // Scroll to an element of the page and give it the focus; else to the first that matches \`fallback\`.
+  const focusOn = (id, fallback) => {
+    const target = document.getElementById(id) || (fallback ? document.querySelector(fallback) : null)
+    if (!target) return false
+    target.scrollIntoView({ block: 'start' })
+    target.focus({ preventScroll: true })
+    return true
+  }
+  // A review's card on Home (T253: in its project's group), else the first Reviews shown.
+  const toReview = (taskId) => focusOn('review-' + taskId, 'main section[aria-label="Reviews"]')
   const decideLink = (requestId, text) => el('a', { href: '/ui/?request=' + encodeURIComponent(requestId), onclick: (e) => { e.preventDefault(); if (!focusCard(requestId)) openRequest(requestId) } }, text)
 
   const VERB = { approved: 'Approved', rejected: 'Denied' }
@@ -754,8 +772,12 @@ export const APP_JS = `'use strict'
     const served = runTask(r.requester.runId)
     const forWhat = task ? taskOf(task[1]) : r.requester.taskId ? taskOf(r.requester.taskId) : served ? 'the task "' + served.title + '"'
       : charter ? 'project ' + name(charter[1]) : call ? 'an agent run' : r.requester.projectId ? 'project ' + name(r.requester.projectId) : r.requester.runId ? 'a run' : null
+    // The project it is for (T253): its requester's, its charter's, its task's, or its run's task's; none for what is in no project.
+    const taskHome = (taskId) => { for (const p of projects.values()) if ((p.tasks || []).some((x) => x.taskId === taskId)) return p.projectId; return undefined }
+    const runHome = (runId) => { if (!runId) return undefined; for (const p of projects.values()) if ((p.tasks || []).some((x) => x.run && x.run.runId === runId)) return p.projectId; return undefined }
+    const home = r.requester.projectId || (charter ? charter[1] : undefined) || (task ? taskHome(task[1]) : undefined) || (r.requester.taskId ? taskHome(r.requester.taskId) : undefined) || runHome(r.requester.runId)
     // yes and no: what approving and denying do, each button's accessible description (its label is Approve or Deny, T191).
-    return Object.assign({ yes: 'lets it go ahead as shown', no: 'refuses it', next: '' }, d, { by, ids, for: forWhat })
+    return Object.assign({ yes: 'lets it go ahead as shown', no: 'refuses it', next: '' }, d, { by, ids, for: forWhat, project: home })
   }
 
   // The approval queue, by batch: each verdict names the exact subject shown (INV-5). Absent when no queue runs.
@@ -860,17 +882,21 @@ export const APP_JS = `'use strict'
           el('div', { class: 'muted' }, 'request ' + r.requestId, copyId('Copy request ID', r.requestId)), el('div', { class: 'muted' }, 'expires ' + absolute(r.expiresAt)),
           d.ids.map(([k, v]) => el('div', { class: 'muted' }, k + ' ' + v))))
     }
-    return { batches, requests, described, card, decide, noteFor, noteOf }
+    return { batches, requests, described, projects, card, decide, noteFor, noteOf }
   }
 
-  async function approvals(q) {
+  // The approval queue's cards: every batch, or, on Home, a project's (T253: a batch stays whole, in its first request's
+  // project). Its section is named by its heading level: a page's own section (h2), or a kind within a project's group (h3).
+  async function approvals(q, shown, id = 'approvals', level = 'h2') {
     if (!q) return null
-    if (q.error) return el('section', { 'aria-label': 'Approval queue' }, el('h2', {}, 'Approvals'),
+    if (q.error) return el('section', { id, tabindex: '-1', 'aria-label': 'Approval queue' }, el(level, {}, 'Approvals'),
       el('p', { class: 'state failed' }, 'The approval queue could not be read: ' + q.error.message + '. Approvals unknown; retrying every 5 s.'))
-    const { batches, requests, card, decide, noteFor, noteOf } = q
+    const { card, decide, noteFor, noteOf } = q
+    const batches = shown || q.batches
+    const requests = batches.flatMap((b) => b.requests)
     const earliest = requests.reduce((min, r) => !min || r.expiresAt < min ? r.expiresAt : min, undefined)
     // Its count is Home's tile; its next expiry, the first card's, or in sight when within the hour (T239).
-    return el('section', { 'aria-label': 'Approval queue' }, el('h2', {}, 'Approvals', whatIs('approval')),
+    return el('section', { id, tabindex: '-1', 'aria-label': 'Approval queue' }, el(level, { class: 'kind' }, 'Approvals', whatIs('approval')),
       !requests.length ? el('p', { class: 'muted' }, 'No approvals needed.')
         : Date.parse(earliest) - Date.now() < 3600000 ? el('p', { class: 'soon' }, 'Next expiry ' + relative(earliest)) : null,
       batches.map((batch) => {
@@ -1051,7 +1077,7 @@ export const APP_JS = `'use strict'
   async function reviews() {
     let listed, accepted
     try { ({ reviews: listed, accepted } = await api('reviews')) } catch (error) {
-      return error.status === 503 ? null : el('section', { id: 'reviews', 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews'), el('p', { class: 'state failed' }, 'The reviews could not be read: ' + error.message + '. The page tries again every 5 seconds.'))
+      return error.status === 503 ? null : { failed: el('section', { id: 'reviews', tabindex: '-1', 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews'), el('p', { class: 'state failed' }, 'The reviews could not be read: ' + error.message + '. The page tries again every 5 seconds.')) }
     }
     const decide = (r, verdict, buttons, clicked) => async () => {
       const labels = buttons.map((b) => b.textContent)
@@ -1100,27 +1126,34 @@ export const APP_JS = `'use strict'
           evidenceRead ? evidenceView(evidence) : null,
           el('div', { class: 'actions' }, el('label', { for: 'note-' + key }, 'Note with your verdict (optional)', input))))
     }
+    // Every card once, its evidence read; Home places each in its project's group (T253).
+    const cards = new Map(await Promise.all(listed.map(async (r) => [r.taskId, card(r, r.run ? await reviewOf(r.run.runId, subjectText(r.subject)) : undefined)])))
     // A review held for the operator expires unseen, and its task then waits for input that nothing revives: say when the first does.
-    const mine = listed.filter((r) => r.heldFor === 'operator' && r.expiresAt)
-    const first = mine.reduce((min, r) => !min || r.expiresAt < min ? r.expiresAt : min, undefined)
-    const section = el('section', { id: 'reviews', 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews', whatIs('review')),
-      // When the first held for the operator expires, and what then: in sight within the hour, else folded (T239).
-      first ? (() => {
-        const said = [mine.length + (mine.length === 1 ? ' review is' : ' reviews are') + ' held for you; the first expires ',
-          el('span', { class: Date.parse(first) - Date.now() < 3600000 ? 'soon' : '' }, relative(first) + ' — ' + absolute(first)), '. Unanswered by then, its task waits for input, which nothing revives.']
-        return Date.parse(first) - Date.now() < 3600000 ? el('p', {}, said) : keptFold('reviews-expiry', 'When they expire', said)
-      })() : null,
-      listed.length ? await Promise.all(listed.map(async (r) => card(r, r.run ? await reviewOf(r.run.runId, subjectText(r.subject)) : undefined))) : el('p', { class: 'muted' }, 'No review waits. When a Worker finishes a task, its result waits here for you to accept it or send it back.'),
-      // A verdict's consequence stays in sight: each accepted result still on its way into the repository.
-      accepted && accepted.length ? el('section', { 'aria-label': 'Accepted, on their way in' }, el('h3', {}, 'Accepted, on their way in', whatIs('landing')),
-        accepted.map((a) => el('article', { class: 'panel request', 'aria-label': 'Accepted: ' + a.title }, el('h4', {}, a.title),
-          el('p', { class: 'meta' }, 'Project ' + (a.project.title || a.project.projectId) + ' · task ' + a.taskId), landingLine(a.landing),
-          a.run ? el('p', {}, el('a', { href: '?run=' + encodeURIComponent(a.run.runId), onclick: (e) => { e.preventDefault(); go(a.run.runId) } }, 'open its run')) : null))) : null)
-    if (first) section.dataset.firstExpires = first
-    section.dataset.count = String(listed.length)
-    // Home's "Waiting for you" names each review held for the operator.
-    section.held = mine
-    return section
+    const heldOf = (list) => list.filter((r) => r.heldFor === 'operator' && r.expiresAt)
+    // A verdict's consequence stays in sight: each accepted result still on its way into the repository.
+    const acceptedView = (list, level) => list && list.length ? el('section', { 'aria-label': 'Accepted, on their way in' }, el(level, { class: 'kind' }, 'Accepted, on their way in', whatIs('landing')),
+      list.map((a) => el('article', { class: 'panel request', 'aria-label': 'Accepted: ' + a.title }, el('h4', {}, a.title),
+        el('p', { class: 'meta' }, 'Project ' + (a.project.title || a.project.projectId) + ' · task ' + a.taskId), landingLine(a.landing),
+        a.run ? el('p', {}, el('a', { href: '?run=' + encodeURIComponent(a.run.runId), onclick: (e) => { e.preventDefault(); go(a.run.runId) } }, 'open its run')) : null))) : null
+    // The Reviews of some of the listed reviews (all of them by default): a page's own section (h2), or a kind within a project's group (h3).
+    const sectionOf = (list = listed, id = 'reviews', level = 'h2', withAccepted = true) => {
+      const mine = heldOf(list)
+      const first = mine.reduce((min, r) => !min || r.expiresAt < min ? r.expiresAt : min, undefined)
+      const section = el('section', { id, tabindex: '-1', 'aria-label': 'Reviews' }, el(level, { class: 'kind' }, 'Reviews', whatIs('review')),
+        // When the first held for the operator expires, and what then: in sight within the hour, else folded (T239).
+        first ? (() => {
+          const said = [mine.length + (mine.length === 1 ? ' review is' : ' reviews are') + ' held for you; the first expires ',
+            el('span', { class: Date.parse(first) - Date.now() < 3600000 ? 'soon' : '' }, relative(first) + ' — ' + absolute(first)), '. Unanswered by then, its task waits for input, which nothing revives.']
+          return Date.parse(first) - Date.now() < 3600000 ? el('p', {}, said) : keptFold(id + '-expiry', 'When they expire', said)
+        })() : null,
+        list.length ? list.map((r) => cards.get(r.taskId)) : el('p', { class: 'muted' }, 'No review waits. When a Worker finishes a task, its result waits here for you to accept it or send it back.'),
+        withAccepted ? acceptedView(accepted, level === 'h2' ? 'h3' : 'h4') : null)
+      if (first) section.dataset.firstExpires = first
+      section.dataset.count = String(list.length)
+      return section
+    }
+    // Home's "Needs your attention" names each review held for the operator.
+    return { listed, accepted: accepted || [], held: heldOf(listed), sectionOf, acceptedView }
   }
 
   // A run's progress in one line: "2/3 steps", then the steps that failed, wait, or run, by name.
@@ -1203,7 +1236,7 @@ export const APP_JS = `'use strict'
             : t.state === 'waiting-for-input' ? 'Waits for input: "' + t.title + '"' + (t.waiting ? ' (' + t.waiting.reason + ')' : '')
               : 'Cancelled: "' + t.title + '"'
       const request = l && l.state === 'asked' && l.requestId ? l.requestId : t.waiting && t.waiting.approvalRequest
-      items.push({ at: t.at, line: el('span', {}, line + ' '), link: request ? decideLink(request, 'decide it') : t.state === 'review' ? el('a', { href: '#reviews', onclick: (e) => { e.preventDefault(); const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } } }, 'review it') : t.run ? runLink({ runId: t.run.runId }, 'open its run') : null })
+      items.push({ at: t.at, line: el('span', {}, line + ' '), link: request ? decideLink(request, 'decide it') : t.state === 'review' ? el('a', { href: '#review-' + t.taskId, onclick: (e) => { e.preventDefault(); toReview(t.taskId) } }, 'review it') : t.run ? runLink({ runId: t.run.runId }, 'open its run') : null })
     }
     if ('value' in activity.expired) for (const x of activity.expired.value) items.push({ at: x.at, line: el('span', { class: 'soon' }, 'Expired unanswered, so counted as denied: ' + (x.summary || 'request ' + x.requestId)), link: null })
     // The Workers whose status moved since then: started resting, back, unavailable, or available again.
@@ -1329,11 +1362,31 @@ export const APP_JS = `'use strict'
         el('span', { class: 'muted' }, ' · ' + (names.get(s.worker) || s.worker) + ' · ' + (STARTED_HOW[s.mode] || s.mode) + ' · ' + relative(s.startedAt))))))
   }
 
-  // Home: what waits for the operator, the Workers at a glance, the decisions themselves, and the latest runs.
+  // A project's weekly report and its maturity metrics (T253), reachable from its group on Home: the commands that print
+  // them, each behind its copy button, under one fold.
+  const reportsOf = (projectId) => {
+    const details = keptFold('reports-' + projectId, 'Reports',
+      el('ul', { class: 'plain reports' },
+        [['Weekly report', 'system report --project ' + projectId], ['Maturity metrics', 'system metrics --project ' + projectId]]
+          .map(([what, command]) => el('li', {}, what + ': ', el('code', {}, command), copyId('Copy command', command)))))
+    details.classList.add('reports')
+    return details
+  }
+  // Home shows every project, or the one the address names (T253: ?project=<id>), until "All projects".
+  let homeProject = (() => { const query = new URLSearchParams(location.search); return !query.get('view') && !query.get('run') ? query.get('project') : null })()
+  function filterHome(projectId) {
+    homeProject = projectId || null
+    current = null
+    view = null
+    history.pushState(null, '', homeProject ? '?project=' + encodeURIComponent(homeProject) : '/ui/')
+    refresh()
+  }
+  const HOUR = 3600000
+
+  // Home: what waits for the operator, by project (T253), the Workers at a glance, the decisions themselves, and the latest runs.
   async function list() {
     const { runs } = await api('runs')
     const q = await queue()
-    const queued = await approvals(q)
     const reviewed = await reviews()
     let roster = null
     try { roster = await api('roster') } catch {}
@@ -1342,12 +1395,16 @@ export const APP_JS = `'use strict'
     const ready = projects ? projects.reduce((n, p) => n + (p.open.ready || 0), 0) : undefined
     // A run's task by its title, from the Board's cards.
     const titles = new Map((projects || []).flatMap((p) => (p.tasks || []).map((t) => [t.taskId, t.title])))
+    // Each board task's project, for the group of a run that serves it; each project's name (T253).
+    const taskProject = new Map((projects || []).flatMap((p) => (p.tasks || []).map((t) => [t.taskId, p.projectId])))
+    const projectTitles = new Map((projects || []).map((p) => [p.projectId, p.title]))
+    if (q && !q.error) for (const [id, p] of q.projects) if (!projectTitles.has(id) && p.title) projectTitles.set(id, p.title)
+    if (reviewed && !reviewed.failed) for (const r of [...reviewed.listed, ...reviewed.accepted]) if (!projectTitles.has(r.project.projectId) && r.project.title) projectTitles.set(r.project.projectId, r.project.title)
+    const projectName = (id) => projectTitles.get(id) || id
     const names = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.name]) : [])
     const dispatch = await dispatchOf()
     waits = await readWaiting()
     const part = (name) => waits.unknown ? { unknown: waits.unknown } : waits[name]
-    const asked = 'value' in part('requests') ? part('requests').value : 0
-    const toReview = 'value' in part('reviews') ? part('reviews').value : 0
     const look = 'value' in part('runs') ? part('runs').value : []
     const unread = ['requests', 'reviews', 'runs'].filter((name) => 'unknown' in part(name))
     const since = await sinceView(roster, titles)
@@ -1357,23 +1414,67 @@ export const APP_JS = `'use strict'
     const expiry = (iso) => el('span', { class: Date.parse(iso) - Date.now() < 3600000 ? 'soon' : 'muted' }, ' · expires ' + relative(iso))
     const nameList = (key, items, total, more) => items.length ? keptFold('names-' + key, 'Names',el('ul', { class: 'named' }, items.slice(0, WAITING_NAMED).map((line) => el('li', {}, line)),
       total > Math.min(items.length, WAITING_NAMED) ? el('li', { class: 'muted' }, 'and ' + (total - Math.min(items.length, WAITING_NAMED)) + ' more: ', more) : null)) : null
-    const requestNames = q && !q.error ? [...q.requests].sort((a, b) => (a.expiresAt < b.expiresAt ? -1 : 1)).map((r) => [el('a', { href: '#request-' + r.requestId, onclick: jump('request-' + r.requestId) }, q.described.get(r.requestId).title), expiry(r.expiresAt)]) : []
-    const reviewNames = reviewed && reviewed.held ? reviewed.held.map((r) => [el('a', { href: '#review-' + r.taskId, onclick: jump('review-' + r.taskId) }, r.title), el('span', { class: 'muted' }, ' · project ' + (r.project.title || r.project.projectId)), expiry(r.expiresAt)]) : []
     // A run by its task's title, else its template.
     const runTitle = (run, article) => (run.task && titles.get(run.task.taskId)) || (article ? (/^[aeiou]/.test(run.template) ? 'an ' : 'a ') : '') + run.template + ' run'
-    const runNames = look.map((run) => [runLink(run, runTitle(run, true)), el('span', { class: 'muted' }, ' · ' + needsLook(run))])
-    // Each group a label and its count (T171: "Approvals · 3"), its names under it.
-    const firstReview = part('reviews').firstExpires
-    const waiting = [
-      asked ? el('li', {}, el('a', { href: '#approvals', onclick: jump('approvals') }, 'Approvals · ' + asked),
-        nameList('requests', requestNames, asked, el('a', { href: '#approvals', onclick: jump('approvals') }, 'See all'))) : null,
-      toReview ? el('li', {}, el('a', { href: '#reviews', onclick: jump('reviews') }, 'Reviews · ' + toReview),
-        firstReview ? el('div', { class: Date.parse(firstReview) - Date.now() < 3600000 ? 'soon' : 'muted' }, 'first expires ' + relative(firstReview)) : null,
-        nameList('reviews', reviewNames, toReview, el('a', { href: '#reviews', onclick: jump('reviews') }, 'See all'))) : null,
-      look.length ? el('li', {}, el('a', { href: '#needs-look', onclick: jump('needs-look') }, 'Runs needing attention · ' + look.length + (part('runs').more ? '+' : '')),
-        nameList('runs', runNames, look.length, el('a', { href: '#needs-look', onclick: jump('needs-look') }, 'See all'))) : null,
-      unread.length ? el('li', { class: 'unknown' }, 'What else needs you is unknown: ' + unread.map((name) => part(name).unknown).join('; ')) : null,
-    ].filter(Boolean)
+    // What needs the operator, by project (T253): each request (a batch whole, in its first request's project), each
+    // review, and each run needing attention in its project's group; what is in no project in a group of its own.
+    const groups = new Map()
+    const groupOf = (key) => {
+      if (!groups.has(key)) groups.set(key, { key, slug: key ? 'p-' + key : 'other', name: key ? projectName(key) : 'Other', batches: [], loose: [], requests: [], reviews: [], held: [], runs: [] })
+      return groups.get(key)
+    }
+    if (q && !q.error) for (const batch of q.batches) {
+      if (batch.batchId) {
+        const g = groupOf(q.described.get(batch.requests[0].requestId).project || '')
+        g.batches.push(batch)
+        g.requests.push(...batch.requests)
+      } else for (const r of batch.requests) {
+        const g = groupOf(q.described.get(r.requestId).project || '')
+        g.loose.push(r)
+        g.requests.push(r)
+      }
+    }
+    if (reviewed && !reviewed.failed) for (const r of reviewed.listed) {
+      const g = groupOf(r.project.projectId)
+      g.reviews.push(r)
+      if (r.heldFor === 'operator' && r.expiresAt) g.held.push(r)
+    }
+    for (const run of look) groupOf((run.task && taskProject.get(run.task.taskId)) || '').runs.push(run)
+    // Every project not closed has its group, whatever waits in it, so its reports stay reachable from it; one with nothing
+    // waiting sorts after those that need you.
+    for (const p of projects || []) if (p.state !== 'closed') groupOf(p.projectId)
+    // The most urgent first: what expires within the hour, then the most that waits, then the earliest deadline, then by name.
+    const deadlines = (g) => [...g.requests, ...g.held].map((x) => x.expiresAt).sort()
+    const total = (g) => g.requests.length + g.held.length + g.runs.length
+    const soonOf = (g) => deadlines(g).filter((d) => Date.parse(d) - Date.now() < HOUR).length
+    const ordered = [...groups.values()].sort((a, b) => soonOf(b) - soonOf(a) || total(b) - total(a)
+      || (deadlines(a)[0] || '~').localeCompare(deadlines(b)[0] || '~') || Number(!a.key) - Number(!b.key) || a.name.localeCompare(b.name))
+    // Filtered to one project (?project=<id>): only its group, said even when nothing of it waits.
+    const shownGroups = homeProject ? [groups.get(homeProject) || groupOf(homeProject)] : ordered
+    // Each group headed by its project's name, which filters Home to it, and its own counts as tiles: a label and its count
+    // (T171: "Approvals · 3"), its names folded under it (T239), each linked to its card.
+    const tilesOf = (g) => {
+      const s = g.slug
+      const link = (id, text) => el('a', { href: '#' + id, onclick: jump(id) }, text)
+      const requestNames = [...g.requests].sort((a, b) => (a.expiresAt < b.expiresAt ? -1 : 1)).map((r) => [link('request-' + r.requestId, q.described.get(r.requestId).title), expiry(r.expiresAt)])
+      const reviewNames = g.held.map((r) => [link('review-' + r.taskId, r.title), expiry(r.expiresAt)])
+      const runNames = g.runs.map((run) => [runLink(run, runTitle(run, true)), el('span', { class: 'muted' }, ' · ' + needsLook(run))])
+      const firstReview = g.held.reduce((min, r) => !min || r.expiresAt < min ? r.expiresAt : min, undefined)
+      return [
+        g.requests.length ? el('li', {}, link('approvals-' + s, 'Approvals · ' + g.requests.length),
+          nameList('requests-' + s, requestNames, g.requests.length, link('approvals-' + s, 'See all'))) : null,
+        g.held.length ? el('li', {}, link('reviews-' + s, 'Reviews · ' + g.held.length),
+          firstReview ? el('div', { class: Date.parse(firstReview) - Date.now() < HOUR ? 'soon' : 'muted' }, 'first expires ' + relative(firstReview)) : null,
+          nameList('reviews-' + s, reviewNames, g.held.length, link('reviews-' + s, 'See all'))) : null,
+        g.runs.length ? el('li', {}, link('needs-look-' + s, 'Runs needing attention · ' + g.runs.length + (part('runs').more ? '+' : '')),
+          nameList('runs-' + s, runNames, g.runs.length, link('needs-look-' + s, 'See all'))) : null,
+      ].filter(Boolean)
+    }
+    const groupTitle = (g) => g.key ? el('a', { href: '/ui/?project=' + encodeURIComponent(g.key), 'aria-label': 'Show only ' + g.name, onclick: (e) => { e.preventDefault(); filterHome(g.key) } }, g.name) : g.name
+    const waiting = shownGroups.filter((g) => total(g) || homeProject).map((g) => el('section', { class: 'group', 'aria-label': 'Needs you in ' + (g.key ? g.name : 'no project') },
+      el('h4', {}, groupTitle(g)),
+      total(g) ? el('ul', { class: 'tiles' }, tilesOf(g)) : el('p', { class: 'muted' }, 'Nothing needs you here.')))
+    const unknownWaits = unread.length ? el('p', { class: 'unknown' }, 'What else needs you is unknown: ' + unread.map((name) => part(name).unknown).join('; ')) : null
     const c = roster && roster.counts
     // A source still describing its Workers for the first time: the counts are incomplete.
     const describing = roster && roster.sources && 'value' in roster.sources ? roster.sources.value.filter((s) => s.describing).map((s) => s.source) : []
@@ -1382,7 +1483,9 @@ export const APP_JS = `'use strict'
     const availability = c ? availabilityChips(roster, describing) : el('p', { class: 'unknown' }, 'Workers unknown: the roster could not be read.')
     // Recent runs: the newest 5 rows, then "Show all N" (T239, as T186's lists).
     const RECENT_HEAD = ['Run', 'Status', 'Progress', 'Started']
-    const [recentBody, recentMore] = capped('recent', el('tbody', { id: 'recent-list' }), runs.slice(0, RECENT), (run) => labelled(RECENT_HEAD, el('tr', {},
+    // Filtered to one project (T253), only the runs of its board tasks.
+    const recent = homeProject ? runs.filter((run) => run.task && taskProject.get(run.task.taskId) === homeProject) : runs
+    const [recentBody, recentMore] = capped('recent', el('tbody', { id: 'recent-list' }), recent.slice(0, RECENT), (run) => labelled(RECENT_HEAD, el('tr', {},
       el('td', {}, runLink(run, runTitle(run))),
       el('td', { class: 'nowrap' }, runChip(run)),
       el('td', {}, el('div', {}, stepsText(run), workerOf(run) ? el('span', { class: 'muted' }, ' · ' + workerOf(run)) : null),
@@ -1395,21 +1498,47 @@ export const APP_JS = `'use strict'
       ? glanceView(roster.now, readyNow(roster.now) !== undefined ? readyNow(roster.now) : ready, roster.workers.value) : null
     // What needs the operator first, as count tiles beside the Workers' availability as chips (T239); then the decisions
     // themselves; then what happened, the Workers in full (their counts said once, in the chips), and the recent runs.
+    // A run that needs attention: its task's title first, the reason as a chip, one action; the run id behind its copy
+    // button (T171). At most 5 a group, then "Show all N" for the rest (T186).
+    const runCard = (run) => el('article', { class: 'panel request', 'aria-label': runTitle(run) },
+      el('div', { class: 'line' }, el('h4', {}, runTitle(run)), chip(lookOf(run)[0], run.status === 'failed' ? 'bad' : 'warn')),
+      el('p', { class: 'meta' }, lookOf(run)[1] ? lookOf(run)[1] + ' · ' : '', 'started ', ago(run.createdAt)),
+      el('div', { class: 'actions' }, runLink(run, 'Open run'), copyId('Copy run ID', run.runId)))
+    // Each group's cards (T253), headed by its project's name: its approvals, its reviews, its runs needing attention, and,
+    // for a project, its weekly report and its metrics, under Reports.
+    const cardGroups = []
+    for (const g of shownGroups) {
+      const calm = !g.requests.length && !g.reviews.length && !g.runs.length
+      // What is in no project has a group only while something of it waits; a project's group stays, its Reports with it.
+      if (calm && !g.key) continue
+      const s = g.slug
+      cardGroups.push(el('section', { class: 'group', id: 'group-' + s, tabindex: '-1', 'aria-label': g.key ? 'Project ' + g.name : 'Not in a project' },
+        el('h2', { class: 'group-title' }, g.name),
+        calm ? el('p', { class: 'muted' }, 'Nothing needs you here.') : null,
+        g.requests.length ? await approvals(q, [...g.batches, ...(g.loose.length ? [{ requests: g.loose }] : [])], 'approvals-' + s, 'h3') : null,
+        g.reviews.length ? reviewed.sectionOf(g.reviews, 'reviews-' + s, 'h3', false) : null,
+        g.runs.length ? el('section', { id: 'needs-look-' + s, tabindex: '-1', 'aria-label': 'Runs needing attention' }, el('h3', { class: 'kind' }, 'Runs needing attention'),
+          capped('needs-look-' + s, el('div', { id: 'needs-look-list-' + s }), g.runs, runCard)) : null,
+        g.key ? reportsOf(g.key) : null))
+    }
+    const shownIn = (kind) => shownGroups.some((g) => g[kind].length)
+    // A kind with nothing in any group shown keeps its own short line (or why it is unknown); filtered to one project, its
+    // group says when nothing of it waits. The accepted results on their way in after the groups.
+    const queueAlone = !q ? null : q.error ? await approvals(q) : shownIn('requests') || homeProject ? null : await approvals(q, [])
+    const accepted = reviewed && !reviewed.failed ? reviewed.accepted.filter((a) => !homeProject || a.project.projectId === homeProject) : []
+    const reviewsAlone = !reviewed ? null : reviewed.failed ? reviewed.failed
+      : shownIn('reviews') || homeProject ? reviewed.acceptedView(accepted, 'h2') : (() => { const s = reviewed.sectionOf([], 'reviews', 'h2', false); const a = reviewed.acceptedView(accepted, 'h3'); if (a) s.append(a); return s })()
     show(pageHead('home'),
       el('div', { class: 'overview' },
-        el('section', { class: 'panel', 'aria-label': 'Needs your attention' }, el('h3', {}, 'Needs your attention'),
-          waiting.length ? el('ul', { class: 'tiles' }, waiting) : el('p', { class: 'muted' }, 'You’re all caught up.')),
+        el('section', { class: 'panel', 'aria-label': 'Needs your attention' },
+          el('div', { class: 'head' }, el('h3', {}, 'Needs your attention'),
+            homeProject ? el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); filterHome(null) } }, 'All projects') : null),
+          waiting.length ? el('div', { class: 'groups' }, waiting) : unknownWaits ? null : el('p', { class: 'muted' }, 'You’re all caught up.'), unknownWaits),
         el('section', { class: 'panel', 'aria-label': 'Workers availability' },
           el('div', { class: 'head' }, el('h3', {}, 'Workers'), pageLink('workers', 'Open Workers')), availability)),
-      queued ? (queued.id = 'approvals', queued.setAttribute('tabindex', '-1'), queued) : null,
-      reviewed ? (reviewed.setAttribute('tabindex', '-1'), reviewed) : null,
-      // Task title first, the reason as a chip, one action; the run id behind its copy button (T171).
-      // At most 5 runs, then "Show all N" for the rest (T186).
-      look.length ? el('section', { id: 'needs-look', tabindex: '-1', 'aria-label': 'Runs needing attention' }, el('h2', {}, 'Runs needing attention'),
-        capped('needs-look', el('div', { id: 'needs-look-list' }), look, (run) => el('article', { class: 'panel request', 'aria-label': runTitle(run) },
-          el('div', { class: 'line' }, el('h3', {}, runTitle(run)), chip(lookOf(run)[0], run.status === 'failed' ? 'bad' : 'warn')),
-          el('p', { class: 'meta' }, lookOf(run)[1] ? lookOf(run)[1] + ' · ' : '', 'started ', ago(run.createdAt)),
-          el('div', { class: 'actions' }, runLink(run, 'Open run'), copyId('Copy run ID', run.runId))))) : null,
+      cardGroups,
+      queueAlone,
+      reviewsAlone,
       goView(dispatch, q, names, jump),
       since,
       startedView(dispatch, names),
@@ -1423,9 +1552,9 @@ export const APP_JS = `'use strict'
         !rightNow && ready !== undefined ? el('p', { 'aria-label': 'Capacity' }, capacityText(c ? c.ready : undefined, ready), ' ', pageLink('board', 'Open Board')) : null),
       // Each run by its task's title (else its template), its state, its progress and current Worker; every step's Worker, its template, and its id folded (T124, T171).
       el('section', { 'aria-label': 'Recent runs' }, el('h2', {}, 'Recent runs'),
-        runs.length ? [el('table', {}, el('thead', {}, el('tr', {}, RECENT_HEAD.map((h) => el('th', {}, h)))), recentBody), recentMore]
+        recent.length ? [el('table', {}, el('thead', {}, el('tr', {}, RECENT_HEAD.map((h) => el('th', {}, h)))), recentBody), recentMore]
           : el('p', { class: 'muted' }, 'No runs yet · ', pageLink('board', 'Open Board')),
-        runs.length > RECENT ? el('p', { class: 'muted' }, qty(runs.length - RECENT, 'older run') + ' not listed; open one by its link, or ask with system status.') : null))
+        recent.length > RECENT ? el('p', { class: 'muted' }, qty(recent.length - RECENT, 'older run') + ' not listed; open one by its link, or ask with system status.') : null))
     if (focusRequest) {
       const id = focusRequest
       focusRequest = null
@@ -1601,8 +1730,9 @@ export const APP_JS = `'use strict'
   // is refused and nothing moves. The page does not refresh while a confirmation is open.
   const OPEN = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval']
   let confirming = false
-  // The project the Board shows, kept in the address (?view=board&project=<id>) so a reload or a link keeps it.
-  let boardProject = new URLSearchParams(location.search).get('project') || 'all'
+  // The project the Board shows (T253), or 'all' for every project's counts; null until chosen: the one project when there
+  // is one, else all. Kept in the address as &project=<id>.
+  let boardProject = (() => { const query = new URLSearchParams(location.search); return query.get('view') === 'board' ? query.get('project') : null })()
   const READY_PREVIEWS = 8
   async function boardView() {
     let projects
@@ -1681,8 +1811,9 @@ export const APP_JS = `'use strict'
       const links = (list) => list.flatMap((r, i) => [i ? ', ' : '', decideLink(r.requestId, q.described.get(r.requestId).title)])
       return el('div', {},
         charter ? el('div', {}, chip(p.state === 'proposed' ? 'Charter approval needed' : 'Amendment approval needed', 'warn'), ' ', decideLink(charter.requestId, 'Review request')) : null,
-        asks.length ? el('div', {}, chip(qty(asks.length, 'task approval'), 'warn'), ' ', links(asks.slice(0, 3)),
-          asks.length > 3 ? fold((asks.length - 3) + ' more', links(asks.slice(3))) : null) : null)
+        // Under All projects only the count (T253); each task approval by name is on the project's own board.
+        asks.length ? el('div', {}, chip(qty(asks.length, 'task approval'), 'warn'), all ? null : [' ', links(asks.slice(0, 3)),
+          asks.length > 3 ? fold((asks.length - 3) + ' more', links(asks.slice(3))) : null]) : null)
     }
     // Who works on a task: the Worker the engine runs its run's step on, by its name, and since when.
     let roster = null
@@ -1690,20 +1821,30 @@ export const APP_JS = `'use strict'
     const moving = await liveOf()
     const working = new Map()
     if (roster && 'value' in roster.workers) for (const w of roster.workers.value) if ('value' in w.work) for (const i of w.work.value.items) working.set(i.runId, { name: w.name, worker: w.worker, since: i.since })
-    if (boardProject !== 'all' && !projects.some((p) => p.projectId === boardProject)) boardProject = 'all'
-    const shownProjects = boardProject === 'all' ? projects : projects.filter((p) => p.projectId === boardProject)
+    // One project at a time (T253), or every project's counts under All projects; a project no longer listed shows the default.
+    const shownId = boardProject === 'all' || projects.some((p) => p.projectId === boardProject) ? boardProject : projects.length === 1 ? projects[0].projectId : 'all'
+    const all = shownId === 'all'
+    const shownProjects = all ? projects : projects.filter((p) => p.projectId === shownId)
+    // The switcher: its choice in the address, so a reload or a link keeps it.
     const pick = el('select', { id: 'board-project', onchange: () => {
       boardProject = pick.value
-      history.replaceState(null, '', '?view=board' + (boardProject === 'all' ? '' : '&project=' + encodeURIComponent(boardProject)))
+      history.replaceState(null, '', '?view=board&project=' + encodeURIComponent(boardProject))
       boardView()
     } },
       el('option', { value: 'all' }, 'All projects (' + projects.length + ')'), projects.map((p) => el('option', { value: p.projectId }, p.title)))
-    pick.value = shownProjects.length === projects.length ? 'all' : boardProject
+    pick.value = shownId
     const ready = shownProjects.reduce((n, p) => n + (p.open.ready || 0), 0)
     // A project's card: its title and its state as a chip; its open tasks; its state as counts; what of it needs you; its
     // moves; its id and charter version folded (T171, T239).
+    // Under All projects (T253) its title opens its own board.
+    const switchTo = (p) => el('a', { href: '/ui/?view=board&project=' + encodeURIComponent(p.projectId), onclick: (e) => {
+      e.preventDefault()
+      boardProject = p.projectId
+      history.pushState(null, '', '?view=board&project=' + encodeURIComponent(p.projectId))
+      boardView()
+    } }, p.title)
     const head = (p) => el('article', { class: 'panel request', 'aria-labelledby': 'project-' + p.projectId },
-      el('div', { class: 'line' }, el('h3', { id: 'project-' + p.projectId }, p.title),
+      el('div', { class: 'line' }, el('h3', { id: 'project-' + p.projectId }, all ? switchTo(p) : p.title),
         chip(p.closure ? 'closed (' + p.closure.outcome + ')' : p.state, p.state === 'active' ? 'ok' : p.state === 'paused' ? 'warn' : 'idle')),
       el('p', { class: 'meta' }, qty(count(p, OPEN), 'open task'), p.amendment ? ' · Amendment awaiting approval' : ''),
       glanceOf(p),
@@ -1741,7 +1882,7 @@ export const APP_JS = `'use strict'
     // Who a ready card's first step would likely go to (T141), from its start's preview, read for the
     // first READY_PREVIEWS ready cards shown; a preview that cannot be read leaves the card as it was.
     const previews = new Map()
-    const readyShown = shownProjects.flatMap((p) => (p.tasks || []).filter((t) => t.state === 'ready' && t.template)).slice(0, READY_PREVIEWS)
+    const readyShown = all ? [] : shownProjects.flatMap((p) => (p.tasks || []).filter((t) => t.state === 'ready' && t.template)).slice(0, READY_PREVIEWS)
     await Promise.all(readyShown.map(async (t) => { try { previews.set(t.taskId, await api('tasks/' + encodeURIComponent(t.taskId) + '/start')) } catch {} }))
     const goesTo = (preview) => {
       const step = preview.steps.find((s) => !s.source)
@@ -1827,7 +1968,7 @@ export const APP_JS = `'use strict'
         // Approve by button where the operator sees it (T141): the request's own verdict buttons, on its exact subject.
         asked ? decideHere(asked, openRun)
           : t.state === 'ready' ? el('div', { class: 'actions' }, el('button', { type: 'button', class: 'primary', onclick: start(t), 'aria-label': 'Start ' + t.title }, 'Start…'))
-            : t.state === 'review' ? el('div', { class: 'actions' }, el('a', { href: '/ui/', 'aria-label': 'Review ' + t.title, onclick: (e) => { e.preventDefault(); go(); setTimeout(() => { const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } }, 300) } }, 'Review'))
+            : t.state === 'review' ? el('div', { class: 'actions' }, el('a', { href: '/ui/', 'aria-label': 'Review ' + t.title, onclick: (e) => { e.preventDefault(); homeProject = null; go(); setTimeout(() => toReview(t.taskId), 300) } }, 'Review'))
               : t.waiting && t.waiting.approvalRequest ? el('div', { class: 'actions' }, decideLink(t.waiting.approvalRequest, 'Review request'), openRun)
                 : openRun ? el('div', { class: 'actions' }, openRun) : null,
         keptFold('task-' + t.taskId, 'Details', el('div', {}, el('span', { class: 'tag' }, t.actionClass), t.template ? [' ', el('span', { class: 'tag' }, t.template + ' template')] : null),
@@ -1871,13 +2012,16 @@ export const APP_JS = `'use strict'
       projects.length ? el('div', { class: 'toolbar' }, el('p', {}, el('label', { for: 'board-project' }, 'Show ', pick)),
         el('p', { 'aria-label': 'Capacity' }, capacityText(idle, ready), whatIs('task'))) : null,
       shown,
-      projects.length ? el('div', { class: 'kanban' },
+      // All projects (T253): each project's counts only, what of it needs you, and its moves; its tasks on its own board.
+      projects.length && all ? el('section', { class: 'portfolio', 'aria-label': 'All projects' }, el('h2', {}, 'All projects', whatIs('project'), charters ? [' ', chip(qty(charters, 'charter approval'), 'warn')] : null),
+        el('div', { class: 'projects' }, projects.map(head))) : null,
+      projects.length && !all ? el('div', { class: 'kanban' },
         column('Proposed', ['proposed'], 'None'),
         column('Ready', ['ready'], 'None', whatIs('start')),
         column('Working', ['claimed', 'running'], 'None'),
         column('Review', ['review'], 'None'),
         column('Needs your attention', ['waiting-for-input', 'waiting-for-approval'], 'Nothing needs you')) : null,
-      projects.length ? el('div', { class: 'folded' }, projectsFold(), folded('Done', ['done']), folded('Cancelled', ['cancelled'])) : null)
+      projects.length && !all ? el('div', { class: 'folded' }, projectsFold(), folded('Done', ['done']), folded('Cancelled', ['cancelled'])) : null)
   }
 
   // A time as its clock time ("14:20"), with the day when it is not today.
@@ -1995,12 +2139,17 @@ export const APP_JS = `'use strict'
   }
   const runOpen = (runId) => el('a', { href: '?run=' + encodeURIComponent(runId), onclick: (e) => { e.preventDefault(); go(runId) }, 'aria-label': 'Open run ' + runId }, 'open run')
   // What it does now, when it does something; its runs whose liveness needs a look (PROP-0013) are never folded.
-  const doingOf = (w) => {
+  // Which project a step's run is for (T253: Workers serve every project): its board task's, by the project's name; a run
+  // outside the board is in no project; a task the roster could not read leaves its project unknown.
+  const projectTag = (i, projectName) => !i.task ? el('span', { class: 'tag project' }, 'no project')
+    : 'value' in i.task.board ? el('span', { class: 'tag project', title: 'project ' + i.task.board.value.projectId }, projectName(i.task.board.value.projectId))
+      : el('span', { class: 'tag project unknown' }, 'project unknown')
+  const doingOf = (w, projectName = (id) => id) => {
     const items = isKnown(w.work) ? w.work.value.items : []
     const live = w.liveness && isKnown(w.liveness) ? w.liveness.value : []
     if (!items.length && !live.length) return null
     return el('div', { class: 'doing' },
-      items.length ? el('ul', { 'aria-label': 'Doing now' }, items.map((i) => el('li', {}, doingText(i), ' ', i.startedBy === 'dispatch' ? [chip('started by itself', 'info'), ' '] : null, runOpen(i.runId)))) : null,
+      items.length ? el('ul', { 'aria-label': 'Doing now' }, items.map((i) => el('li', { 'data-project': i.task && 'value' in i.task.board ? i.task.board.value.projectId : '' }, doingText(i), ' ', projectTag(i, projectName), ' ', i.startedBy === 'dispatch' ? [chip('started by itself', 'info'), ' '] : null, runOpen(i.runId)))) : null,
       isKnown(w.work) && w.work.value.more ? el('div', { class: 'muted' }, w.work.value.more + ' more step(s) not listed') : null,
       live.length ? el('ul', { 'aria-label': 'Runs whose liveness needs a look' }, live.map((r) => el('li', { class: r.state === 'unknown' ? 'state failed' : 'unknown' }, r.summary, r.runId ? [' ', runOpen(r.runId)] : null, whatIs(r.state === 'unknown' ? 'held' : 'stalled')))) : null)
   }
@@ -2069,12 +2218,16 @@ export const APP_JS = `'use strict'
     const now = roster.now
     const counted = readyNow(now)
     const ready = counted !== undefined ? counted : await readyTasks()
+    // Workers serve every project (T253): each step's project by its name, from the board when it can be read, else by its id.
+    let titles = new Map()
+    try { titles = new Map((await api('projects')).projects.map((p) => [p.projectId, p.title])) } catch {}
+    const projectName = (id) => titles.get(id) || id
     // One Worker's card; inside its account's section it is headed by its work (its role or tier).
     const card = (w, inAccount) => el('article', { class: 'panel request worker', 'aria-label': w.name + ' (' + w.worker + ')' },
       el('h4', {}, inAccount ? cut(w.name)[1] : w.name),
       isKnown(w.description) ? el('p', {}, w.description.value) : null,
       el('p', { class: 'status-line' }, chip(statusOf(w), (TONE[w.availability.state] || [w.availability.state, 'idle'])[1]), w.availability.state === 'resting' ? whatIs('resting') : w.availability.state === 'quarantined' ? whatIs('quarantine') : null),
-      doingOf(w),
+      doingOf(w, projectName),
       w.limits.length ? el('div', {}, w.limits.map((l) => el('div', { class: 'state resting' }, l.capability + ' is held off until ' + clockOf(l.until) + ' (' + relative(l.until) + ')'))) : null,
       // The operator's own choice (D58): a chip where they look for the Worker, never folded; what it means is behind its "?".
       w.teams && isKnown(w.teams) ? el('p', { class: 'teams' }, chip('Excluded from teams', 'info'), whatIs('team')) : null,
@@ -2350,12 +2503,14 @@ export const APP_JS = `'use strict'
     current = runId || null
     view = null
     confirming = false
-    history.pushState(null, '', runId ? '?run=' + encodeURIComponent(runId) : '/ui/')
+    // Home keeps the project it was filtered to in its address (T253).
+    history.pushState(null, '', runId ? '?run=' + encodeURIComponent(runId) : homeProject ? '?project=' + encodeURIComponent(homeProject) : '/ui/')
     refresh()
   }
-  // Home, scrolled to one request's card, which takes the focus.
+  // Home, scrolled to one request's card, which takes the focus: every project shown, so the card is there.
   function openRequest(requestId) {
     focusRequest = requestId
+    homeProject = null
     current = null
     view = null
     confirming = false
@@ -2367,7 +2522,8 @@ export const APP_JS = `'use strict'
     current = null
     view = name
     confirming = false
-    history.pushState(null, '', '?view=' + name)
+    // The Board's address names the project it shows (T253), so a reload shows the same board.
+    history.pushState(null, '', '?view=' + name + (name === 'board' && boardProject ? '&project=' + encodeURIComponent(boardProject) : ''))
     refresh()
   })
   document.getElementById('home-link').addEventListener('click', (e) => { e.preventDefault(); go() })
@@ -2375,7 +2531,16 @@ export const APP_JS = `'use strict'
   nav('workers-link', 'workers')
   nav('policy-link', 'policy')
   nav('help-link', 'help')
-  window.addEventListener('popstate', () => { const query = new URLSearchParams(location.search); current = query.get('run'); view = query.get('view'); confirming = false; refresh() })
+  window.addEventListener('popstate', () => {
+    const query = new URLSearchParams(location.search)
+    current = query.get('run')
+    view = query.get('view')
+    // The project each page shows is in its address (T253): Home's filter, the Board's project.
+    if (view === 'board') boardProject = query.get('project')
+    else if (!view && !current) homeProject = query.get('project')
+    confirming = false
+    refresh()
+  })
   // The page shown is marked in the navigation and named in the window's title.
   const mark = () => {
     const page = view === 'policy' || view === 'board' || view === 'workers' || view === 'help' ? view : current ? 'run' : 'home'

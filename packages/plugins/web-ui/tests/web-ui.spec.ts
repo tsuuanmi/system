@@ -733,8 +733,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await look.getByRole('link', { name: 'Open run' }).click()
     await expect.poll(() => page.locator('h2.page[data-page="run:run_abc"]').count()).toBe(1)
     await page.goBack()
+    // Each count leads to its kind's cards in its project's group (T253).
     await waiting.getByRole('link', { name: 'Approvals · 3' }).click()
-    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('approvals')
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('approvals-p-p1')
     expect(await page.getByRole('heading', { name: 'Recent runs' }).count()).toBe(1)
     // A recent run: its title, its state as a chip (a word and a symbol, never colour alone), its progress; its steps' Workers and id folded.
     const row = page.locator('table tr', { hasText: 'investigate run' })

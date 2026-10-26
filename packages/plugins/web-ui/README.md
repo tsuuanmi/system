@@ -15,6 +15,15 @@ does (`aria-describedby`, shown as its tooltip). Production states: a *Loading�
 with **Try again** when a page never loaded, a confirmation only before a destructive move, and
 **Skip to content** first in the keyboard order.
 
+- **Every project in one UI** (T253, D88): Home's *Needs your attention* and its cards are grouped
+  by project, each group headed by the project's name and its own count tiles, the most urgent
+  first (what expires within the hour, then the most that waits, then the earliest deadline), what
+  is in no project under *Other*, a batch whole in its first request's project; a project's name
+  filters Home to it, its recent runs too (`/ui/?project=<id>`, until **All projects**); each project's group holds its
+  weekly report and its metrics under **Reports**, as the commands that print them (`system report
+  --project <id>`, `system metrics --project <id>`) with copy buttons. The Board shows one project
+  at a time, or **All projects** as each project's counts only; the Workers page stays shared, each
+  step a Worker runs naming its run's project.
 - **Home**, a dashboard: what needs the operator's attention and they can act on (open approval
   requests, reviews held for them, runs that wait for their own move or failed outside the board
   since they last looked, each a tile with its label and its count, *Approvals · 3*, linked, then named one by one
@@ -121,8 +130,10 @@ with **Try again** when a page never loaded, a confirmation only before a destru
   line, when the first review held for the operator expires (marked within the hour), since an
   unanswered one expires and its task waits for input that nothing revives (T99 D6). Without it
   the reviews routes answer `503`;
-- when `ctx.board` is present, the **board** page (`?view=board`), a Kanban: a project filter (all
-  by default, kept in the address as `&project=<id>`); each project's header with its state as a
+- when `ctx.board` is present, the **board** page (`?view=board`), a Kanban of one project at a
+  time: a project switcher (kept in the address as `&project=<id>`; the one project by default, or,
+  with several, **All projects**, `&project=all`: each project's header card only, its counts, what
+  of it needs you, and its moves, its name opening its board, T253); the project's header with its state as a
   chip and its open tasks (its id and charter version folded), its state as counts (*Needs you 3 ·
   Working 1 · Ready 1 · Proposed 0*, what needs you by kind folded), what of it needs the operator
   (*Charter approval needed*, *2 task approvals*, linked), and the moves, all under one **Projects**
@@ -178,8 +189,9 @@ with **Try again** when a page never loaded, a confirmation only before a destru
   *unavailable*, with its reason); the Workers of no account last. Each Worker's card is calm: its
   work (role or tier), what it is for, its status in the cross-page words (*Free*, *Working · 1/2
   slots · 1 slot free*, *Resting until 02:16*, *Unavailable — why*, *Quarantined — what its reading
-  found*), what it does now (its task by title and for how long, or a team member's answer, and
-  each run whose liveness needs a look, each a link to its run), the capabilities held off, and an
+  found*), what it does now (its task by title and for how long, or a team member's answer, the
+  project its run is for, T253, and each run whose liveness needs a look, each a link to its run),
+  the capabilities held off, and an
   **Excluded from teams** chip when the engine's `teams.excludeWorkers` leaves it out of teams
   (D58, the roster's `teams`); an account with no quota tracked says *Quota not tracked*; every unknown (`unknown (why)`),
   derived, or technical fact (its id, its derived line, its account's id, kind, and state, what it
@@ -298,7 +310,7 @@ row's tooltips opened by a tap of its **?** and closed by a second tap, a tap ou
 home indicator). Without a browser, these tests are reported as not run, with why. With `SYSTEM_UI_SHOTS`, both suites write the screenshots of
 the [design note](../../../docs/design/web-ui.md).
 [`tests/store-backed.ts`](tests/store-backed.ts) boots the UI over the store-backed board,
-approval queue, and engine under the bundle's own default studio policy, for three suites.
+approval queue, and engine under the bundle's own default studio policy, for its suites.
 [`tests/policy.spec.ts`](tests/policy.spec.ts): a proposed version asked in the queue on its
 exact hash and applied only on approval, with its `policy-change` decision, a waiting board task
 re-gated by the board's next sweep; a rejection that changes nothing; a restart that keeps the
@@ -309,6 +321,13 @@ the policy page's diff, a proposal, its queue entry, and its approval, the polic
 form (each mode, the classes that always ask fixed, commands, expiry, batch, the JSON following,
 the queue's refusal shown), and a queue entry that says
 the queue proposed the change, and why.
+[`tests/portfolio.spec.ts`](tests/portfolio.spec.ts) (T253), with a browser, over the same
+composition with two active projects: Home's groups headed by each project's name with its own
+counts, the more urgent first, its cards in the same groups, each project's Reports; the filter by
+a project's name in the address through a reload and Back, and All projects; the Board's All
+projects as counts only, a project's board by its name and by the switcher, in the address; the
+Workers page naming each running step's project; Home, the Board, and Workers within T239's word
+bound at 1280×800; and no page scrolling sideways, every target at least 44 px, at 402 px.
 [`tests/reviews.spec.ts`](tests/reviews.spec.ts) runs the UI over the same composition: a run's
 change, verdicts, and report served to the operator only (a source that cannot read its own named),
 and, with a browser, a review card led by its chips (the change, each check, the verdict), its

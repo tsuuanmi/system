@@ -36,8 +36,11 @@ function boardDecision(booted: Booted, ref: string): { candidates: Array<{ optio
 
 /** The Board's projects, their state and moves, are under one fold below the columns (T239): open it. */
 async function openProjects(page: Page): Promise<void> {
+  // Under All projects (T253) the projects' cards are the page; on one project's board, under its Projects fold.
   const fold = page.locator('main details.column', { hasText: 'Projects (' })
-  await expect.poll(() => fold.count()).toBe(1)
+  const all = page.getByRole('region', { name: 'All projects', exact: true })
+  await expect.poll(async () => (await fold.count()) + (await all.count())).toBe(1)
+  if (await all.count()) return
   if (await fold.getAttribute('open') === null) await fold.locator('summary').first().click()
 }
 
@@ -223,8 +226,17 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
     const column = (name: string) => page.getByRole('region', { name, exact: true })
+    // Several projects: All projects by default, each project's counts only, no task's card (T253).
+    await expect.poll(() => column('All projects').count()).toBe(1)
+    expect(await column('Ready').count()).toBe(0)
+    expect(await page.getByLabel('State of project p1').innerText()).toBe('Needs you 2 · Working 1 · Ready 1 · Proposed 0')
+    expect(await page.getByLabel('State of Handbook rewrite').innerText()).toBe('Needs you 0 · Working 0 · Ready 1 · Proposed 0')
+    expect(await page.locator('main').innerText()).not.toContain('Write the release notes')
+    // One project at a time: the switcher shows its board, the choice in the address.
+    await page.getByLabel('Show').selectOption('p1')
     await expect.poll(() => column('Ready').innerText()).toContain('Write the release notes')
-    expect(await column('Ready').innerText()).toContain('Outline the chapters')
+    expect(new URL(page.url()).search).toBe('?view=board&project=p1')
+    expect(await column('Ready').innerText()).not.toContain('Outline the chapters')
     expect(await column('Review').innerText()).toContain('Fix the slow image build')
     expect(await column('Needs your attention').innerText()).toContain('Merge the login fix')
     const card = column('Working').getByRole('article', { name: 'Research the hosting options' })
@@ -238,17 +250,18 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await page.getByText('Technical details', { exact: true }).click()
     expect(await page.getByRole('button', { name: 'Copy run ID' }).getAttribute('data-copy')).toBe(run.runId)
     await page.goBack()
-    // Several projects: all by default, each card naming its project; the filter shows one.
-    await expect.poll(() => column('Ready').innerText()).toContain('Handbook rewrite')
+    // Back on the project's board: one project, so no card names its project.
+    await expect.poll(() => column('Ready').innerText()).toContain('Write the release notes')
+    expect(await column('Ready').innerText()).not.toContain('project p1 ·')
     // Capacity in numbers; how a ready task starts behind the Ready column's "?" (T171, T239).
-    expect(await page.getByLabel('Capacity').innerText()).toMatch(/Workers? free · 2 tasks ready/)
+    expect(await page.getByLabel('Capacity').innerText()).toMatch(/Workers? free · 1 task ready/)
     expect(await page.getByLabel('Capacity').innerText()).not.toContain('A ready task starts')
     const how = column('Ready').getByRole('button', { name: 'What is ready task?' })
     expect(await how.getAttribute('title')).toContain('A ready task starts when you press Start on its card or the lead runs it')
-    // Each project's state as counts (T141, T171), what needs you by kind on demand, under the Projects fold (T239).
+    // Its state as counts (T141, T171), what needs you by kind on demand, under the Projects fold (T239).
     await openProjects(page)
     expect(await page.getByLabel('State of project p1').innerText()).toBe('Needs you 2 · Working 1 · Ready 1 · Proposed 0')
-    expect(await page.getByLabel('State of Handbook rewrite').innerText()).toBe('Needs you 0 · Working 0 · Ready 1 · Proposed 0')
+    expect(await page.getByLabel('State of Handbook rewrite').count()).toBe(0)
     expect(await page.getByRole('article', { name: 'project p1', exact: true }).locator('details', { hasText: 'What needs you' }).textContent()).toContain('1 review, 1 approval')
     await page.getByLabel('Show').selectOption('p2')
     await expect.poll(() => column('Ready').innerText()).not.toContain('Write the release notes')
@@ -263,6 +276,11 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await page.getByRole('button', { name: 'Pause p2' }).count()).toBe(1)
     // Done and Cancelled are folded.
     expect(await page.locator('details', { hasText: 'Done (' }).getAttribute('open')).toBeNull()
+    // All projects again, by the switcher, kept in the address too (T253).
+    await page.getByLabel('Show').selectOption('all')
+    await expect.poll(() => column('All projects').count()).toBe(1)
+    expect(new URL(page.url()).search).toBe('?view=board&project=all')
+    expect(await column('Ready').count()).toBe(0)
   }, 90_000)
 
   headlessIt('links each pending decision on the Board to its card: a charter, and a task waiting for approval (T97)', async () => {
@@ -286,7 +304,12 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await page.getByRole('link', { name: 'Review request', exact: true }).click()
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${approvalRequest}`)
     expect(new URL(page.url()).search).toBe(`?request=${approvalRequest}`)
+    // Under All projects a project's task approvals are a count only; by name, on the project's own board (T253).
     await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
+    await openProjects(page)
+    await expect.poll(() => page.locator('main').innerText()).toContain('1 task approval')
+    expect(await page.getByRole('link', { name: 'Allow a merge step: Merge the login fix' }).count()).toBe(0)
+    await page.goto(`${origin}/ui/?view=board&project=p1`)
     await openProjects(page)
     await expect.poll(() => page.locator('main').innerText()).toContain('1 task approval')
     await page.getByRole('link', { name: 'Allow a merge step: Merge the login fix' }).click()

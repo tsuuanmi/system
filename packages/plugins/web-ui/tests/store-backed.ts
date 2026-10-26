@@ -106,9 +106,9 @@ export async function boot(options: { dir?: string; approvals?: Partial<Approval
   return { ctx, workers, dir, ...(refused ? { refused } : {}), call, client: CLIENT, stop }
 }
 
-/** A workspace-write task of project p1 run to completion: under the bundle's policy, its run reports neither tests nor lint, so it waits in review for the operator. */
-export async function reviewed(ctx: Context, title: string): Promise<{ task: BoardTask; run: RunView }> {
-  const task = await readyTask(ctx, title, { actionClass: 'workspace-write', maxAttempts: 2 })
+/** A workspace-write task of project p1 (or another) run to completion: under the bundle's policy, its run reports neither tests nor lint, so it waits in review for the operator. */
+export async function reviewed(ctx: Context, title: string, projectId = 'p1'): Promise<{ task: BoardTask; run: RunView }> {
+  const task = await readyTask(ctx, title, { actionClass: 'workspace-write', maxAttempts: 2, projectId })
   const run = await ctx.workflow.start({ template: 'solo', input: `change ${title}`, classification: 'public', task: { taskId: task.taskId } })
   const deadline = Date.now() + 60_000
   while (ctx.workflow.get(run.runId)?.task?.phase !== 'reported') {
