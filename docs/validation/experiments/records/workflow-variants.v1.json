@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "variants": [
+    {
+      "id": "current",
+      "state": "ready",
+      "template": "algorithm-development",
+      "description": "The algorithm-development template as the install runs it: develop:1, review:1 with remediation cycles on another session, validate:1, then the run's required checks.",
+      "configuration": null
+    },
+    {
+      "id": "fix-in-author-session",
+      "state": "planned",
+      "template": "algorithm-development",
+      "description": "A review's fix continues the writing step's own session on its Worker, the findings sent as its next message (T232). Ready once T232 lands and can be turned on by configuration alone.",
+      "configuration": null
+    },
+    {
+      "id": "no-validate-step",
+      "state": "planned",
+      "template": "algorithm-development",
+      "description": "The template without validate:1: the run's required checks at acceptance are the only checks. Ready once a configuration can leave the step out.",
+      "configuration": null
+    }
+  ]
+}

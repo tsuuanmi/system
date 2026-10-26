@@ -1,0 +1,114 @@
+{
+  "setId": "workflow-golden-set",
+  "version": 1,
+  "repository": "https://github.com/tsuuanmi/system",
+  "setup": [
+    "corepack pnpm install --frozen-lockfile --offline"
+  ],
+  "tasks": [
+    {
+      "caseId": "T184",
+      "taskId": "task-6755c1d17c2d",
+      "title": "PROP-0014 D2: dispatch starts by itself under auto (no request), notify records a notice; hourly bound, per-project pause, Started by itself",
+      "template": "algorithm-development",
+      "templateVariant": null,
+      "base": "b15f170d25ac9929261eda69eb3726de179e2b07",
+      "accepted": {
+        "runId": "run_8be85ccb0f3ca08b",
+        "attempts": 1,
+        "tree": "f1b7db39dc2bb478430766afd2e18bbdbbc43eb22879792912972fb1223421e7",
+        "acceptedBy": "sha256:458bf70dd5778280dd1b99c53a5a440b981132e99dfc2e116179f74fcdd19d55",
+        "landed": null
+      },
+      "goal": "PROP-0014 increment D2 for the system repository (operator D70, 2026-10-25: using idle quota must be automatic). Read docs/proposals/0014-dispatch-by-quota.md (the D2 row of Increments), ADR-0064 and packages/plugins/workflow/src/dispatch.ts first. Under a project policy whose dispatch mode is auto, the dispatch pass starts the chosen ready task's attempt WITHOUT opening an approval request (no queue entry): it records the dispatch decision (the score, every candidate with its reason) and starts within the bounds; notify starts and records a notice; ask keeps today's request; forbid starts nothing. This needs no change to the approval queue's seam: dispatch simply does not ask when the policy's verdict is auto or notify. Add the hourly start bound and per-project pause from the D2 row, startedBy on the roster and Home's \"Started by itself\" list (keep it short: one line per start with a chip). Tests (auto starts with no request; notify records a notice; ask unchanged; bounds; a restart mid-start starts once), docs (PROP-0014 Implementation, ADR-0064 consequences, workflow-engine.md, the runbook: set dispatch to auto for a project), a changeset. Run exactly these commands at the end (no other, no probes) and do not stop until they pass: corepack pnpm gen:manifests, corepack pnpm gen:reference, corepack pnpm gen:traceability, corepack pnpm check, corepack pnpm test:affected. Do not commit.",
+      "acceptance": [
+        { "id": "lint", "statement": "corepack pnpm lint passes", "check": "lint" }
+      ],
+      "grader": [
+        {
+          "id": "changes",
+          "changed": [
+            "packages/plugins/workflow/src/dispatch.ts",
+            "packages/plugins/workflow/tests/",
+            "docs/proposals/0014-dispatch-by-quota.md",
+            "docs/decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md",
+            "docs/design/workflow-engine.md",
+            "docs/operations/runbooks.md",
+            ".changeset/"
+          ]
+        },
+        { "id": "runbook-auto", "path": "docs/operations/runbooks.md", "matches": "^#{2,4} .*[Dd]ispatch.* auto" },
+        { "id": "check", "command": "corepack pnpm check" },
+        { "id": "tests", "command": "node --import tsx scripts/test-groups.ts affected --base {base}" }
+      ],
+      "hidden": null
+    },
+    {
+      "caseId": "T187",
+      "taskId": "task-da15b20376c1",
+      "title": "Gate: echo, pwd, true, false are reads (no more attempts stalled on a probe)",
+      "template": "algorithm-development",
+      "templateVariant": null,
+      "base": "b15f170d25ac9929261eda69eb3726de179e2b07",
+      "accepted": {
+        "runId": "run_718ebe46e27fe8d5",
+        "attempts": 1,
+        "tree": "5f720a64f0ee6fdca57e716cdddf135d66a1666c5ecb0888bcea1bfe5bc78729",
+        "acceptedBy": "sha256:2f0eba877223b712f614211eaea845f6747b8c30a3eddf0b95ad40bd24411e56",
+        "landed": null
+      },
+      "goal": "Gate for the system repository (packages/plugins/agent-workers/src/gate.ts classify): a Worker's shell probe that can do nothing waits on the operator today and stalls the whole attempt (seen 2026-10-25: echo, echo noop, pwd waited up to 80 minutes). Classify exactly these argv forms as read (no metacharacter, as today): echo with zero or more plain words (no option word starting with -e or -n handled specially: any word allowed except a metacharacter, since echo only prints), pwd with no argument, true, and false. Everything else stays as today. Tests in the gate spec (each form is read; echo with a metacharacter stays refused; pwd with an argument stays a command), docs (the classify doc comment, docs/design/approvals.md \"how a call is classified\", the threat model's tool-gate row: why they are safe), a changeset. Run exactly these commands at the end (no other, no probes) and do not stop until they pass: corepack pnpm gen:manifests, corepack pnpm gen:reference, corepack pnpm gen:traceability, corepack pnpm check, corepack pnpm test:affected. Do not commit.",
+      "acceptance": [
+        { "id": "lint", "statement": "corepack pnpm lint passes", "check": "lint" }
+      ],
+      "grader": [
+        {
+          "id": "changes",
+          "changed": [
+            "packages/plugins/agent-workers/src/gate.ts",
+            "packages/plugins/agent-workers/tests/gate.spec.ts",
+            "docs/design/approvals.md",
+            "docs/security/threat-model.md",
+            ".changeset/"
+          ]
+        },
+        { "id": "check", "command": "corepack pnpm check" },
+        { "id": "gate-spec", "command": "corepack pnpm exec vitest run packages/plugins/agent-workers/tests/gate.spec.ts" },
+        { "id": "tests", "command": "node --import tsx scripts/test-groups.ts affected --base {base}" }
+      ],
+      "hidden": null
+    },
+    {
+      "caseId": "T188",
+      "taskId": "task-65f0b327d164",
+      "title": "Docs: Claude accounts judged by the five-hour window only (D70)",
+      "template": "algorithm-development",
+      "templateVariant": null,
+      "base": "bbda431ffe1bf7a7a4b1b485595b32a06a2ebd14",
+      "accepted": {
+        "runId": "run_1f2e75645e22f8dd",
+        "attempts": 1,
+        "tree": "8a2ed886b1dc27bcaa0839d3a15c047b84450083de11e4e74d8f14ed758c7598",
+        "acceptedBy": "sha256:edf02cfc1b519b2ea8123950516f02050b959e63f25f53a876c6b6e270a09938",
+        "landed": null
+      },
+      "goal": "Docs for the system repository: Claude Code accounts are judged by their five-hour window only (operator D70, 2026-10-25): the account's usage report gives no seven-day reading (null server-side), a spent seven-day quota would show as an unusable five-hour one, and an unread window is never headroom, so a pool template that declared seven-day made dispatch never pick a Claude account (fixed in the live patch on 2026-10-25). Update docs/design/resources.md (readings from an account's usage report), docs/operations/runbooks.md (Read each account's quota: the Claude pool template and windows mapping with five-hour only), the example patches that declare a seven-day window for claude-code.agents (schemas/examples or docs examples; rg -n \"seven-day\" and change only Claude ones), and ADR-0059's consequences (one dated line). Run exactly these commands at the end (no other, no probes) and do not stop until they pass: corepack pnpm gen:traceability, corepack pnpm check, corepack pnpm test:affected. Do not commit.",
+      "acceptance": [
+        { "id": "lint", "statement": "corepack pnpm lint passes", "check": "lint" }
+      ],
+      "grader": [
+        {
+          "id": "changes",
+          "changed": [
+            "docs/design/resources.md",
+            "docs/operations/runbooks.md",
+            "docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md"
+          ]
+        },
+        { "id": "check", "command": "corepack pnpm check" },
+        { "id": "tests", "command": "node --import tsx scripts/test-groups.ts affected --base {base}" }
+      ],
+      "hidden": null
+    }
+  ]
+}
