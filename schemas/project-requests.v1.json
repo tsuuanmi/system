@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:project-requests:v1",
+  "title": "Project creation requests",
+  "description": "The ledger `system project new` keeps as `requests.json` in a new project's coordination directory (design/packaging.md): which of the creation's requests on the approval queue were filed, the charter's and the one policy change's, each recorded as soon as it is filed. The command run again files only the requests not filed yet; a ledger that does not validate, or of an unknown major version, is refused before anything is filed. It records requests, never their verdicts, and carries no authority.",
+  "type": "object",
+  "required": ["schema", "projectId", "charter", "policy"],
+  "properties": {
+    "schema": { "const": "project-requests@1.0" },
+    "projectId": {
+      "description": "The project being created: the `--id` the command was run with.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "charter": {
+      "description": "The `board_charter` request of the charter in `charter.json`.",
+      "type": "object",
+      "required": ["filed"],
+      "properties": {
+        "filed": { "type": "boolean" },
+        "approvalRequest": {
+          "description": "The approval request the board answered with, once filed.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "description": "The one `approvals_policy_propose` request: the policy record `policy-change.json` marks as filed.",
+      "type": "object",
+      "required": ["id", "note", "filed"],
+      "properties": {
+        "id": {
+          "description": "The id of the policy record proposed: the studio policy's, or the project policy's.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "note": { "description": "The note shown with the request.", "type": "string", "minLength": 1, "maxLength": 2000 },
+        "filed": { "type": "boolean" },
+        "requestId": {
+          "description": "The policy-change approval request the queue answered with, once filed.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

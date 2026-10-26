@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
 import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostCapacity, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, type DispatchView, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseMetrics, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
+import { bundlePlugins, bundleStudioPolicy, parseProjectNew, profileHost, type ProjectHost, projectNew } from './project.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -48,6 +49,13 @@ const USAGE = `Usage: system <command>
   dispatch pause [reason...] | dispatch resume
                             pause dispatch entirely (nothing more is asked or started by itself; its open asks are
                             withdrawn), or resume it; each recorded as your decision and kept across restarts
+  project new --kind <kind> --id <id> --repository <path> [--target-branch <b>] [--coordination <dir>] [--dry-run]
+                            a project from a template by kind (software-repository): its charter and the policy
+                            change its commands need, filed on the approval queue; its profile patch fragment,
+                            printed and written, never applied; its coordination directory (LEAD.md, lessons,
+                            decisions), default ~/workspaces/<id>-coordination, the only directory written.
+                            Refuses an unknown kind, a repository that is not a git checkout, an id in use;
+                            --dry-run prints all of it and writes and asks nothing
   continue <runId> [nodeId] reopen a failed run's failed node as a new attempt
   delete <runId> [--yes]    preview, then delete a finished run (artifacts stay)
   supersede <runId> <nodeId> (<text...> | -)
@@ -339,6 +347,20 @@ async function main(argv: string[]): Promise<number> {
       const outcome = await callTool('stop', { runId: rest[0], ...(rest[1] ? { reason: rest.slice(1).join(' ') } : {}) })
       if (outcome.isError) throw new Error(outcome.text)
       console.log(`stopped: ${rest[0]}`)
+      return 0
+    }
+    case 'project': {
+      const args = rest[0] === 'new' ? parseProjectNew(rest.slice(1)) : undefined
+      if (!args) break
+      // A profile that does not answer is no host: a dry run renders without it, a real run is refused.
+      let host: ProjectHost | undefined = profileHost((name, input) => callTool(name, input))
+      try {
+        await host.projectIds()
+      } catch {
+        host = undefined
+      }
+      const outcome = await projectNew(args, { host, plugins: bundlePlugins, bundleStudio: () => bundleStudioPolicy() })
+      console.log(outcome.lines.join('\n'))
       return 0
     }
     case 'continue': {

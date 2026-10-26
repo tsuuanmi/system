@@ -1,0 +1,53 @@
+{
+  "kind": "software-repository",
+  "version": 1,
+  "description": "A git repository System develops: one writing role with a worktree per run, its offline setup and checks, its commands on the policy, a charter, and the lead's coordination directory",
+  "workflowTemplate": "algorithm-development",
+  "toolchains": [
+    {
+      "id": "pnpm",
+      "marker": "pnpm-lock.yaml",
+      "setup": ["corepack pnpm install --frozen-lockfile --offline --store-dir={{pnpmStore}} --package-import-method=copy"],
+      "views": [{ "path": "{{pnpmStore}}", "copy": ["index.db", "index.db-wal"], "readOnly": ["files"] }],
+      "checks": { "tests": "corepack pnpm test", "lint": "corepack pnpm lint" },
+      "checkScratch": ["node_modules/.vite"]
+    },
+    {
+      "id": "npm",
+      "marker": "package-lock.json",
+      "setup": ["npm ci --offline --no-audit --no-fund"],
+      "checks": { "tests": "npm test", "lint": "npm run lint" },
+      "dependencyFiles": ["package.json", "package-lock.json", ".npmrc"]
+    },
+    {
+      "id": "cargo",
+      "marker": "Cargo.lock",
+      "setup": ["cargo fetch --locked --offline"],
+      "checks": { "tests": "cargo test --workspace --locked --offline", "lint": "cargo clippy --workspace --locked --offline --all-targets -- -D warnings" },
+      "dependencyFiles": ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rust-toolchain"],
+      "checkScratch": ["target"]
+    },
+    {
+      "id": "uv",
+      "marker": "uv.lock",
+      "setup": ["uv sync --frozen --offline"],
+      "checks": { "tests": "uv run --frozen --offline pytest", "lint": "uv run --frozen --offline ruff check" },
+      "dependencyFiles": ["pyproject.toml", "uv.lock"]
+    }
+  ],
+  "role": {
+    "id": "{{id}}-develop",
+    "sandbox": "workspace-write",
+    "tier": "standard",
+    "worktreePerRun": true,
+    "description": "Writes the {{id}} project's changes in a worktree of its repository"
+  },
+  "policy": {
+    "rules": [
+      { "actionClass": "merge", "mode": "ask", "note": "an accepted result lands on the operator's merge approval (ADR-0060), or by auto-accept on a listed branch once the operator turns it on (ADR-0067)" }
+    ],
+    "default": "ask",
+    "expiry": { "defaultSeconds": 86400, "maxSeconds": 1209600 }
+  },
+  "autoAccept": { "enabled": false }
+}

@@ -920,6 +920,21 @@ guesses.
 - `classification` is a floor for its tasks and briefs. Example:
   [`project.active.json`](../../schemas/examples/project.active.json).
 
+### `project-requests`
+
+- The ledger `system project new` keeps as `requests.json` in a new project's coordination
+  directory ([packaging](../design/packaging.md)): the charter's `board_charter` request and the
+  one `approvals_policy_propose` request of its creation, each `filed` or not, with the approval
+  request each was answered with. Only the command writes it: created with both unfiled before
+  anything is filed, and rewritten as each request is filed. Each write is validated first.
+- The command run again reads it, validated against its schema tag, before anything is filed: a
+  ledger that does not validate, has no tag, or names a major version this install does not know
+  is refused, and nothing is filed (fail closed). A ledger of another project id, or with every
+  request filed, is an id in use. The requests filed on a retry are the records stored beside it
+  (`charter.json`, `policy-change.json`), the policy the one whose id `policy.id` names.
+- It records requests, never verdicts: whether the operator approved one is the queue's.
+  Example: [`project-requests.partial.json`](../../schemas/examples/project-requests.partial.json).
+
 ### `board-task`
 
 - `dependsOn` names tasks of the same project that exist when it is proposed, so it is acyclic. While a task is not terminal, no

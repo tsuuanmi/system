@@ -2,7 +2,9 @@
 
 The checklist a project's `LEAD.md` holds, copied from this file, for a new lead session of that
 project (D88). The [lead's playbook](../lead-playbook.md) is the home of every rule it names;
-nothing here adds one. Copying it is by hand until the project template lands (PROP-0016 I5).
+nothing here adds one. `system project new` copies it into a new project's `LEAD.md` (the
+`software-repository` template's [LEAD.md](../../../packages/cli/templates/software-repository/LEAD.md),
+[packaging](../../design/packaging.md)); `packages/cli/tests/project.spec.ts` keeps the two the same.
 
 At the start of every session:
 

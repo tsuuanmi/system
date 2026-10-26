@@ -2286,6 +2286,57 @@ board:
 4. To turn it off, remove the setting (or empty a list) and restart: every result is held for you
    again.
 
+## Start a new project
+
+A new project on a git repository starts from a template by kind
+([packaging](../design/packaging.md)); today the kind is `software-repository`. Every effect is a
+request for you or a file: nothing applies until you approve it, and the repository is never
+touched.
+
+1. **Preview.** With the repository checked out on the branch results should land on:
+
+   ```sh
+   system project new --kind software-repository --id dna --repository /home/me/src/dna --dry-run
+   ```
+
+   It prints what it would write (only in `~/workspaces/dna-coordination`, or `--coordination
+   <dir>`), what it would file, and every file in full. It refuses an unknown kind, a path that is
+   not a git checkout's top level, a detached HEAD or a `--target-branch` other than the
+   checked-out branch (a landing merges into the checked-out branch, so that is the project's
+   target), an id in use, a repository with no toolchain the template knows
+   (it looks for `pnpm-lock.yaml`, `package-lock.json`, `Cargo.lock`, `uv.lock`), and anything it renders that does
+   not validate. Read the charter (`charter.json`: objective, scope, non-goals, done-when, the
+   budget's pool `dna` in runs) and the commands (`policy-change.json`). The setup command must run
+   offline with what the host holds ([set up a run's worktree](#set-up-a-runs-worktree)); for pnpm,
+   the store path in it is `~/.local/share/pnpm/store/v11`, which `corepack pnpm store path` confirms;
+   for cargo, every crate of `Cargo.lock` must already be in `~/.cargo/registry` (`cargo fetch
+   --locked` once on the host, with the Rust toolchain its `rust-toolchain.toml` names installed),
+   and each check builds into a fresh `target` of its own.
+2. **Create.** With the profile running, the same command without `--dry-run`. It writes the
+   coordination directory and files two requests on the approval queue: the charter (the project
+   starts only once you approve it) and one policy change (the studio policy with the project's
+   commands added; or, when the studio already lists them, the project policy).
+3. **Decide** both in the queue (`system ui`). Once the policy change is decided, the lead proposes
+   the other policy record from `policy-change.json` (both rest on the set in force, so they are
+   asked one at a time).
+4. **Apply the profile patch.** `profile-patch.yml` in the coordination directory holds the role
+   `dna-develop` and the repository's `worktreeSetup`, with the account assignment, the generated
+   files, and auto-accept as comments. A patch that targets a row replaces its whole config: merge
+   each part into the `agent-workers` row your patch has, add the assignment, then `system check`
+   and a live update ([update the live install automatically](#update-the-live-install-automatically)).
+   The command never applies it.
+5. **Hand over to the project's lead.** Its own lead session (D88) starts from `LEAD.md` in the
+   coordination directory: the lead's playbook, the onboarding checklist, and what the template
+   could not know. Commit `lessons.md` into the repository as `docs/engineering/lessons.md`. A
+   first small task proves the setup, the checks, and a landing.
+
+Auto-accept stays off for the new project until you list it
+([let System accept a branch's results](#let-system-accept-a-branchs-results)). If filing a request
+fails, the command names what it filed before it, and `requests.json` in the coordination
+directory records it: run the same command again, and it files only the outstanding requests (with
+`--dry-run`, it names them first). Do not remove the coordination directory: the board already
+holds a charter it filed, and a fresh run would refuse the id as in use.
+
 ## Pause, resume, or close a project
 
 A project's state is yours alone to move: no Lead or Worker pauses, resumes, or closes it

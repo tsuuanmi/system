@@ -428,3 +428,8 @@ Accepted by the operator on 2026-10-26, each open question answered as this prop
   version in the brief: [handbook](../design/handbook.md),
   [ADR-0072](../decisions/adr/0072-the-handbook-in-five-layers-and-a-bounded-slice-per-worker.md)
   (proposed).
+- **I5, part 0** (T251), brought forward by the operator (D87) to pilot on the DNA repository, each
+  project with its own lead session (D88): `system project new --kind software-repository`, a
+  template that renders the charter, the policy change, the profile patch fragment (never applied),
+  and the project's coordination directory: [packaging](../design/packaging.md). The attention
+  budget, portfolio scheduling, reporting up, and global ids are I5's later parts.

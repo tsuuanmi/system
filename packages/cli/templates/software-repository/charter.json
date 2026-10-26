@@ -1,0 +1,29 @@
+{
+  "title": "{{id}}: the {{repositoryName}} repository",
+  "objective": "Develop the software in the git repository {{repository}} through System: each change a board task, written in a worktree of its own, reviewed, checked on its exact tree, and landed on {{targetBranch}}.",
+  "scope": [
+    "the repository {{repository}} and its branch {{targetBranch}}, nothing else on this host",
+    "the commands its setup and checks need, as the policy lists them (this project's policy-change request)",
+    "board tasks of the algorithm-development template, started by the project's own lead session (D88)"
+  ],
+  "nonGoals": [
+    "no push, release, or deploy: a landing merges into the local branch on the operator's approval",
+    "no change to System itself, its policy, or another project's repository",
+    "no egress beyond what each Worker already declares"
+  ],
+  "doneWhen": [
+    { "id": "first-landing", "statement": "A first task's result is reviewed, checked, and landed on {{targetBranch}}", "measure": { "kind": "accepted-results", "target": 1, "comparison": "at-least" } },
+    { "id": "checks-pass", "statement": "The repository's required checks pass on every landed result", "measure": { "kind": "tests" } },
+    { "id": "operator-close", "statement": "The operator closes the project as achieved", "measure": { "kind": "operator" } }
+  ],
+  "budget": [
+    { "pool": "{{id}}", "unit": "runs", "amount": 100 }
+  ],
+  "stopRules": [
+    { "id": "no-landing", "condition": "No result landed after 10 attempts across the project's tasks", "action": "pivot" },
+    { "id": "budget-spent", "condition": "The budget's runs are spent", "action": "pause" }
+  ],
+  "milestones": [
+    { "id": "m1", "title": "Setup and checks run in a worktree; a first task lands on {{targetBranch}}", "criteria": ["first-landing", "checks-pass"], "state": "planned" }
+  ]
+}

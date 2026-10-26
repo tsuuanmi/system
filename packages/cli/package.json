@@ -16,7 +16,8 @@
     }
   },
   "files": [
-    "lib"
+    "lib",
+    "templates"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && chmod +x lib/bin.js && git rev-parse HEAD > lib/build-commit"

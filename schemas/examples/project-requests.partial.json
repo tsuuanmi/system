@@ -1,0 +1,10 @@
+{
+  "schema": "project-requests@1.0",
+  "projectId": "dna",
+  "charter": { "filed": true, "approvalRequest": "apr-0001" },
+  "policy": {
+    "id": "studio-default",
+    "note": "system project new: software-repository v1 for project dna (/home/me/src/dna): the commands its setup and checks run",
+    "filed": false
+  }
+}
