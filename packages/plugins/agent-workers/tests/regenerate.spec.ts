@@ -134,9 +134,10 @@ async function boot(repo: string, commands: string[], setup: string[] = SETUP) {
    * One writing run of `agent:dev` in workflow run `runId`, its result committed on its branch as a
    * landing commits it; then the base moves on `main` (`main.js` added, `generated.txt` made again),
    * and the merge of the branch, approved on the base as it is then, is asked of the source;
-   * `meddle`, when given, acts on the worktree just before that.
+   * `meddle`, when given, acts on the worktree just before that; `moves`, when given, changes more of
+   * the base in the same commit.
    */
-  const land = async (runId: string, prompt = 'write', meddle?: (workspace: string, base: { branch: string; sha: string }) => void) => {
+  const land = async (runId: string, prompt = 'write', meddle?: (workspace: string, base: { branch: string; sha: string }) => void, moves?: () => void) => {
     const source = ctx.workers.source('agents')!
     const started = source.start({ key: `${runId}-${Math.random()}`, worker: 'agent:dev', prompt, sessionId: `ses_${runId}`, runId, requirement, decisions: { tier: 'sha256:0', route: 'sha256:0' } as never })
     const done = await source.wait(started.id, 30_000)
@@ -147,6 +148,7 @@ async function boot(repo: string, commands: string[], setup: string[] = SETUP) {
     if (committed?.outcome !== 'committed') throw new Error(`not committed: ${JSON.stringify(committed)}`)
     writeFileSync(join(repo, 'main.js'), 'export const main = 1\n')
     writeFileSync(join(repo, 'generated.txt'), listing('dep.js', 'main.js'))
+    moves?.()
     git(repo, 'add', '.')
     git(repo, 'commit', '-q', '-m', 'main moves')
     const base = { branch: 'main', sha: git(repo, 'rev-parse', 'HEAD') }
@@ -190,6 +192,41 @@ describe('a landing\'s conflict confined to generated files (worktreeSetup gener
       const { merged } = await (await boot(repo, ['node pnpm-like.mjs'])).land('run_pnpm')
       expect(merged).toMatchObject({ outcome: 'merged', regenerated: { files: ['generated.txt'], commands: ['node pnpm-like.mjs'] } })
       expect(readFileSync(join(repo, 'generated.txt'), 'utf8')).toBe(listing('dep.js', 'main.js', 'used.js'))
+    })
+
+    it('sets the worktree up again before the generated files\' commands when the moved base changed a dependency file, so they run on what the merged tree names, never on stale dependencies; refuses when it cannot (T263)', async () => {
+      /** A repository whose generator reads a dependency the setup installs from package.json's `genDep`. */
+      const versioned = (): string => {
+        const repo = repository()
+        writeFileSync(join(repo, 'package.json'), '{"genDep": "1"}\n')
+        writeFileSync(join(repo, 'install.mjs'), [
+          "import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'",
+          "const { genDep } = JSON.parse(readFileSync('package.json', 'utf8'))",
+          "if (genDep === 'unavailable') { console.error('install: gen-dep@unavailable is not in the store'); process.exit(1) }",
+          "mkdirSync('node_modules', { recursive: true })",
+          "writeFileSync('node_modules/gen-dep.txt', `${genDep}\\n`)",
+          '',
+        ].join('\n'))
+        writeFileSync(join(repo, 'gen-dep.mjs'), [
+          "import { readdirSync, readFileSync, writeFileSync } from 'node:fs'",
+          "writeFileSync('generated.txt', readdirSync('.').filter((n) => n.endsWith('.js')).sort().join('\\n') + '\\n' + `gen-dep ${readFileSync('node_modules/gen-dep.txt', 'utf8')}`)",
+          '',
+        ].join('\n'))
+        git(repo, 'add', '.')
+        git(repo, 'commit', '-q', '-m', 'a generator with a dependency')
+        return repo
+      }
+      const repo = versioned()
+      const { merged } = await (await boot(repo, ['node gen-dep.mjs'], ['node install.mjs'])).land('run_dep', 'write', undefined, () => writeFileSync(join(repo, 'package.json'), '{"genDep": "2"}\n'))
+      expect(merged).toMatchObject({ outcome: 'merged', regenerated: { files: ['generated.txt'] } })
+      expect(readFileSync(join(repo, 'generated.txt'), 'utf8')).toBe(`${listing('dep.js', 'main.js', 'used.js')}gen-dep 2\n`)
+      expect(git(repo, 'status', '--porcelain')).toBe('')
+
+      const other = versioned()
+      const { merged: refused, base } = await (await boot(other, ['node gen-dep.mjs'], ['node install.mjs'])).land('run_nodep', 'write', undefined, () => writeFileSync(join(other, 'package.json'), '{"genDep": "unavailable"}\n'))
+      expect(refused).toMatchObject({ outcome: 'refused', cause: 'conflict', reason: expect.stringMatching(/the worktree's setup did not run again for the dependency files of landing:merge:.*gen-dep@unavailable is not in the store/) })
+      expect(git(other, 'rev-parse', 'HEAD')).toBe(base.sha)
+      expect(git(other, 'status', '--porcelain')).toBe('')
     })
 
     it('refuses a merge that also conflicts in a source file: nothing is run, and the repository is as it was (INV-2)', async () => {

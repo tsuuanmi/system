@@ -574,7 +574,7 @@ export class AgentWorkers extends Service {
     if (config.worktreeRoot !== undefined && !isAbsolute(config.worktreeRoot)) throw new ProviderError('config_error', 'agent Workers: worktreeRoot must be an absolute path')
     const worktreeRoot = config.worktreeRoot ?? join(dshHome(), 'system', 'worktrees')
     // A landing whose merge conflicts only in a repository's declared generated files makes them again, in the setup's confinement (T166).
-    this.worktrees = new Worktrees(ctx, worktreeRoot, (repository, setupHash) => regenerationOf(ctx, this.setups, join(worktreeRoot, '.setup'), repository, setupHash))
+    this.worktrees = new Worktrees(ctx, worktreeRoot, (repository, setupHash) => regenerationOf(ctx, this.setups, join(worktreeRoot, '.setup'), repository, setupHash, this.worktreeSetups))
     // A setup is for the worktrees of a repository a worktreePerRun Worker works in; any other is refused at load.
     this.setups = loadSetups(config.worktreeSetup, [...this.workers.values()].filter((w) => w.worktreePerRun).map((w) => w.workspace))
     // Its private views are made beside the worktrees (a name no repository's directory there takes).

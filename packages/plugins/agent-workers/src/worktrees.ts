@@ -1574,6 +1574,9 @@ export class Worktrees {
     }
     if (zPaths(await inside(['diff', '--name-only', '-z', '--diff-filter=U'])).length) return 'conflicts were left after a side of each was taken'
     const index = (await inside(['write-tree'])).trim()
+    // The commands never install: the setup runs again first when the merge changed what it installs.
+    const ready = await regeneration.prepare(row.path, row.workflow_run_id, `landing:merge:${step.base.sha}:${step.head}`)
+    if (!ready.ok) return ready.reason
     // The files git ignores, as they are before the commands: a command must not change them either.
     const ignored = await this.ignoredFiles(row)
     // The worktree's .git file, which git lists neither as changed nor as ignored: a command must not change it either.
@@ -1600,7 +1603,7 @@ export class Worktrees {
     if (changed.length) return `a repeat of the commands changed ${named(changed)} again, so they do not build the same tree`
     const changedIgnored = await this.ignoredChanged(row, ignored)
     if (changedIgnored.length) return `a repeat of the commands changed ${named(changedIgnored)}, which git ignores, so ${changedIgnored.length === 1 ? 'it is' : 'they are'} not among the generated files of the merge`
-    return { commit, files: [...new Set([...conflicts, ...touched])].sort(), autonomy: [...new Set([...ran.autonomy, ...again.autonomy])] }
+    return { commit, files: [...new Set([...conflicts, ...touched])].sort(), autonomy: [...new Set([...ready.autonomy, ...ran.autonomy, ...again.autonomy])] }
   }
 
   /** The files of a worktree that differ from its index, and the untracked ones it does not ignore. */
@@ -1803,6 +1806,9 @@ export class Worktrees {
     await inside(['add', '--all'])
     let regenerated: Regenerated | undefined
     if (regeneration) {
+      // The commands never install: the setup runs again first when the rebase changed what it installs.
+      const ready = await regeneration.prepare(row.path, row.workflow_run_id, `landing:rebase:${step.base.sha}:${step.head}`)
+      if (!ready.ok) return this.giveUp(row, step, inside, `the declared generated files were not made again: ${ready.reason}`)
       const ignored = await this.ignoredFiles(row)
       const control = controlFile(row.path)
       const ran = await regeneration.run(row.path)
@@ -1814,7 +1820,7 @@ export class Worktrees {
       const strayIgnored = await this.ignoredChanged(row, ignored)
       if (strayIgnored.length) return this.giveUp(row, step, inside, `the generated files' commands (${regeneration.lines.join('; ')}) changed ${named(strayIgnored)}, which git ignores`)
       if (touched.length) await inside(['add', '--all', '--', ...touched])
-      regenerated = { files: [...new Set([...generatedConflicts, ...touched])].sort(), commands: [...regeneration.lines], autonomy: ran.autonomy }
+      regenerated = { files: [...new Set([...generatedConflicts, ...touched])].sort(), commands: [...regeneration.lines], autonomy: [...new Set([...ready.autonomy, ...ran.autonomy])] }
     }
     const message = (await inside(['log', '-1', '--format=%B', step.head])).trimEnd().split('\n')
     // The head's trailers stay last, the rebase's after them; the step's line goes before them.
