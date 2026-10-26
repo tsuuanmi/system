@@ -593,6 +593,12 @@ export interface CheckResult {
    * those tests, and a review is told so (T247).
    */
   notRun?: string
+  /**
+   * A `failed` check's failing lines, read from its output by the source that ran it: the names of
+   * its failing tests and their assertion lines, at most 200 lines of 240 characters, so the Worker
+   * that must fix it reads them in the task's dossier (T270). Absent for a check that did not fail.
+   */
+  failures?: string[]
 }
 
 /**

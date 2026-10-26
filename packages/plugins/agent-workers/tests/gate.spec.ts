@@ -879,6 +879,24 @@ describe('classify: a tool call as the action the policy judges', () => {
     expect(classify({ tool: 'Bash', input: { command: '' } }, ws)).toMatchObject({ refused: expect.any(String), reason: 'invalid-input' })
   })
 
+  it('admits `corepack pnpm vitest run <one test file>` inside the worktree, as a write of it, and refuses it outside (T270)', () => {
+    const bash = (command: string) => ({ tool: 'Bash', input: { command } })
+    const inside = join(ws, 'packages', 'x', 'tests', 'x.spec.ts')
+    for (const options of [{}, { shellReads: true }] as const) {
+      expect(classify(bash(`corepack pnpm vitest run ${inside}`), ws, options)).toMatchObject({ class: 'workspace-write', summary: `corepack pnpm vitest run ${inside}` })
+    }
+    // Outside the worktree: beside it, climbing out of it, through a link out of it, elsewhere, or relative (the gate does not see where it runs).
+    symlinkSync(outside, join(ws, 'link-tests'))
+    writeFileSync(join(outside, 'y.spec.ts'), 'x')
+    for (const path of [join(outside, 'x.spec.ts'), `${ws}/../outside/x.spec.ts`, join(ws, 'link-tests', 'y.spec.ts'), '/etc/x.test.ts', 'packages/x/tests/x.spec.ts']) {
+      expect(classify(bash(`corepack pnpm vitest run ${path}`), ws), path).toMatchObject({ refused: expect.stringContaining('not a test file inside the workspace'), reason: 'outside-workspace' })
+    }
+    // Only exactly one test file: any other form stays the exact-argv command it was, for the policy's list.
+    for (const command of [`corepack pnpm vitest run ${inside} ${inside}`, `corepack pnpm vitest run --watch ${inside}`, `corepack pnpm vitest ${inside}`, `pnpm vitest run ${inside}`, `corepack pnpm vitest run ${join(ws, 'package.json')}`]) {
+      expect(classify(bash(command), ws), command).toMatchObject({ class: 'command' })
+    }
+  })
+
   it('gives each refusal its stable reason code (T207)', () => {
     const patchOf = (...lines: string[]) => ({ tool: 'apply_patch', input: { command: ['*** Begin Patch', ...lines, '*** End Patch', ''].join('\n') } })
     const cases: Array<[ToolCall, string]> = [
@@ -1368,8 +1386,10 @@ describe('a Claude Code Worker under the bundle\'s default policy, end to end (d
     const { ctx, run } = await boot(claude(calls, outputs, optionsSeen), bundlePolicies()[0]!)
     const done = await run()
     // The run's commands would run in the SDK's sandbox, yet the policy still decides each one.
-    // Besides the workspace, what a browser test writes: the confinement's private /dev/shm and the run's report file (T265).
-    expect(optionsSeen[0]).toMatchObject({ sandbox: { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, filesystem: { allowWrite: [WORKSPACE, '/dev/shm', expect.stringMatching(/\/worktrees\/\.setup\/run-report-[^/]+\/report$/)] }, network: { allowedDomains: [] } } })
+    // Besides the workspace, what a browser test writes: the confinement's private /dev/shm and the run's report file (T265);
+    // and the shells' tool-state directories, where a tool keeps its state (T270).
+    const state = ['.local/share', '.local/state', '.cache', '.config'].map((name) => expect.stringMatching(new RegExp(`/agent-home-[^/]+/${name.replaceAll('.', '\\.')}$`)))
+    expect(optionsSeen[0]).toMatchObject({ sandbox: { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, filesystem: { allowWrite: [WORKSPACE, '/dev/shm', expect.stringMatching(/\/worktrees\/\.setup\/run-report-[^/]+\/report$/), ...state] }, network: { allowedDomains: [] } } })
     const decision = (output: Record<string, unknown>) => (output.hookSpecificOutput as { permissionDecision?: string; permissionDecisionReason?: string }).permissionDecision
     expect(outputs.map(decision)).toEqual(['deny', 'defer'])
     expect(decisionOf(ctx, (outputs[0]!.hookSpecificOutput as { permissionDecisionReason: string }).permissionDecisionReason)).toMatchObject({ decisionType: 'gate', outcome: { option: 'deny' } })

@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { agentRuntimeIdentityConformance } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
-import type { Confinement } from '@tsuuanmi/system-agent-runtime-core'
+import { type Confinement, HOME_STARTUP_DIRECTORIES, HOME_STATE_DIRECTORIES } from '@tsuuanmi/system-agent-runtime-core'
 import { ClaudeAgentRuntime, IDENTITY_READER, type QueryFn, type RuntimeOptions, VERIFIED_IDENTITY_VERSIONS } from '../src/index.ts'
 
 const STATE = readFileSync(new URL('./fixtures/claude.json', import.meta.url), 'utf8')
@@ -170,7 +170,12 @@ describe('claude-agent-sdk identity reader (ADR-0051, REQ-ACC-11)', () => {
     const result = await r.run({ prompt: 'x', workspace: root, sandbox: 'read-only', home: at }, new AbortController().signal)
     expect(result.text).toBe('echo: x')
     // The named home bound back writable; the run's private shell home (T198) read-only.
-    expect(binds.at(-1)).toEqual({ writable: [at], readOnly: [root, expect.stringMatching(new RegExp(`^${RUN_DIR}/agent-home-`))] })
+    // Its tool-state directories writable over that home, fish's startup directories in them read-only again (T270).
+    const inHome = (name: string) => expect.stringMatching(new RegExp(`^${RUN_DIR}/agent-home-[^/]+/${name.replaceAll('.', '\\.')}$`))
+    expect(binds.at(-1)).toEqual({
+      writable: [at, ...HOME_STATE_DIRECTORIES.map(inHome)],
+      readOnly: [root, expect.stringMatching(new RegExp(`^${RUN_DIR}/agent-home-[^/]+$`)), ...HOME_STARTUP_DIRECTORIES.map(inHome)],
+    })
     await expect(r.run({ prompt: 'x', workspace: root, sandbox: 'read-only', home: join(root, 'nowhere') }, new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })
     expect(existsSync(join(root, 'nowhere'))).toBe(false)
     expect(r.home).toBe(join(root, 'own-home'))

@@ -1,14 +1,15 @@
 // An agent's shells run no startup code from the daemon's environment, the worktree, or a tool call
 // (T198): the environment holds no variable a shell runs code from, and each run's HOME is a fresh
 // private directory outside its workspace, bound back read-only, so no call can plant a startup file
-// for a later one. Neither earns `cleanShells`, which also needs the shell program pinned.
+// for a later one; only its tool-state directories are writable, fish's startup directories in them
+// read-only again (T270). Neither earns `cleanShells`, which also needs the shell program pinned.
 import { execFile } from 'node:child_process'
 import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
-import { type Confinement, SHELL_CONFIG_DIRECTORIES, SHELL_STARTUP_VARIABLES, agentHome, agentShellEnvironment, childEnvironment, confinedCommand, isShellStartupVariable } from '../src/index.ts'
+import { type AgentHome, type Confinement, HOME_STARTUP_DIRECTORIES, HOME_STATE_DIRECTORIES, SHELL_CONFIG_DIRECTORIES, SHELL_STARTUP_VARIABLES, agentHome, agentShellEnvironment, childEnvironment, confinedCommand, isShellStartupVariable } from '../src/index.ts'
 import { BWRAP, needsBubblewrap } from './host.ts'
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), 'system-shells-')))
@@ -21,6 +22,9 @@ const worktree = join(root, 'worktree')
 mkdirSync(worktree)
 const HOSTILE = 'echo() { builtin printf "pwned\\n"; }; cat() { builtin printf "pwned\\n"; }; alias ls="printf pwned"\n'
 for (const file of ['.bashrc', '.bash_profile', '.bash_login', '.profile', '.zshenv', '.zshrc', '.zprofile', 'bash_env']) writeFileSync(join(worktree, file), HOSTILE)
+
+/** Every file (never a directory) under `dir`, relative to it. */
+const filesIn = (dir: string): string[] => readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => !e.isDirectory()).map((e) => join(e.parentPath, e.name).slice(dir.length + 1))
 
 /** `bash` on PATH, if any. */
 const bash = (process.env.PATH ?? '').split(delimiter).map((dir) => join(dir, 'bash')).find((path) => {
@@ -60,12 +64,19 @@ describe('the environment an agent starts with names no startup code (T198)', ()
 })
 
 describe('each run\'s shells get a fresh, private HOME outside the worktree (T198)', () => {
-  it('makes an empty owner-only directory in the parent, a new one each time, and removes it whole', () => {
+  it('makes an owner-only directory with no file in the parent, a new one each time, and removes it whole', () => {
     const a = agentHome(runDir, worktree)
     const b = agentHome(runDir, worktree)
     for (const home of [a, b]) {
       expect(home.path.startsWith(join(runDir, 'agent-home-'))).toBe(true)
-      expect(readdirSync(home.path)).toEqual([])
+      // No file: only the empty tool-state directories, and fish's startup directories in them (T270).
+      expect(filesIn(home.path)).toEqual([])
+      expect(readdirSync(home.path).sort()).toEqual(['.cache', '.config', '.local'])
+      expect(home.writable).toEqual(HOME_STATE_DIRECTORIES.map((name) => join(home.path, name)))
+      expect(home.startup).toEqual(HOME_STARTUP_DIRECTORIES.map((name) => join(home.path, name)))
+      for (const dir of [...home.writable, ...home.startup]) expect(statSync(dir).isDirectory(), dir).toBe(true)
+      // Each startup directory lies in a writable one, so a runtime binds it read-only over that one.
+      for (const dir of home.startup) expect(home.writable.some((w) => dir.startsWith(`${w}/`)), dir).toBe(true)
       expect(statSync(home.path).mode & 0o777).toBe(0o700)
       // Not in the worktree: git does not see it, and the Worker's file tools do not write it.
       expect(home.path.startsWith(worktree)).toBe(false)
@@ -137,22 +148,25 @@ describe.runIf(bash !== undefined)('under the real confinement, a startup functi
     )
   }
 
+  /** A run's confinement, bound as both runtimes bind it: the run directory hidden, the shells' home read-only, its tool-state directories writable, fish's startup directories in them read-only again (T270), the worktree writable. */
+  const runConfinement = (home: AgentHome): Confinement => ({ bwrap: BWRAP!, hide: [runDir], readOnly: [home.path, ...home.startup], writable: [worktree, ...home.writable] })
+
   it('binds the private home back read-only, as both runtimes do: every startup file a call tries to write there is refused, and the next call\'s echo and cat, in every mode, are the real ones', async () => {
     const home = agentHome(runDir, worktree)
     try {
-      // As a run's: the run directory hidden, the shells' home bound back read-only, the worktree writable.
-      const confinement: Confinement = { bwrap: BWRAP!, hide: [runDir], readOnly: [home.path], writable: [worktree] }
+      const confinement = runConfinement(home)
       const env = agentShellEnvironment(childEnvironment(), home.path)
       const file = join(worktree, 'gated-read')
       writeFileSync(file, 'the file\n')
-      // A tool call, in each mode, plants a function named echo and cat in every startup file of its HOME (bash, sh, zsh, fish).
+      // A tool call, in each mode, plants a function named echo and cat in every startup file of its HOME (bash, sh, zsh, fish's config, conf.d, and vendor_conf.d).
+      const startupFiles = ['.bashrc', '.bash_profile', '.bash_login', '.profile', '.zshenv', '.zprofile', '.zshrc', '.config/fish/config.fish', '.config/fish/conf.d/x.fish', '.local/share/fish/vendor_conf.d/x.fish', '.local/bashrc']
       for (const mode of MODES) {
-        for (const name of ['.bashrc', '.bash_profile', '.bash_login', '.profile', '.zshenv', '.zprofile', '.zshrc', '.config/fish/config.fish']) {
+        for (const name of startupFiles) {
           const planted = await call(confinement, env, mode, `mkdir -p "$(dirname "$HOME/${name}")" && printf '%s' '${HOSTILE.replaceAll("'", "'\\''")}' > "$HOME/${name}"`)
           expect(planted.code, `${mode.join(' ')} ${name}`).not.toBe(0)
         }
       }
-      expect(readdirSync(home.path)).toEqual([])
+      expect(filesIn(home.path)).toEqual([])
       // The next call the gate passed as a read runs the builtin echo and the real cat, in every mode a call may ask for.
       for (const mode of MODES) {
         expect(await call(confinement, env, mode, `echo plain; cat ${file}; command -V echo; command -V cat`), mode.join(' ')).toEqual({
@@ -163,6 +177,27 @@ describe.runIf(bash !== undefined)('under the real confinement, a startup functi
       const writable: Confinement = { ...confinement, readOnly: [], writable: [worktree, home.path] }
       expect((await call(writable, env, ['-c'], `printf '%s' '${HOSTILE.replaceAll("'", "'\\''")}' > "$HOME/.bashrc"`)).code).toBe(0)
       expect((await call(writable, env, ['-i', '-c'], 'echo plain')).stdout).toBe('pwned')
+    } finally {
+      home.remove()
+    }
+  })
+
+  it('lets a tool call make and write its state under ~/.local, ~/.cache and ~/.config quietly, its HOME the private one (T270)', async () => {
+    const home = agentHome(runDir, worktree)
+    try {
+      const env = agentShellEnvironment(childEnvironment(), home.path)
+      // What a tool does on its first run (the noise each test file printed): its data, state, cache, and configuration under ~.
+      const script = [
+        'mkdir -p "$HOME/.local"', 'mkdir -p "$HOME/.local/share/applications"', 'touch "$HOME/.local/share/applications/mimeapps.list"',
+        'mkdir -p "$HOME/.local/state/tool" "$HOME/.cache/tool" "$HOME/.config/tool"', 'printf x > "$HOME/.config/tool/settings"', 'printf y > "$HOME/.cache/tool/blob"',
+      ].join(' && ')
+      const c = confinedCommand(bash!, ['-c', script], runConfinement(home), { chdir: worktree })
+      expect(await promisify(execFile)(c.command, c.args, { env, timeout: 15_000 })).toEqual({ stdout: '', stderr: '' })
+      expect(filesIn(home.path).sort()).toEqual(['.cache/tool/blob', '.config/tool/settings', '.local/share/applications/mimeapps.list'])
+      // Control: under the home bound read-only alone, as before, the same call fails on its first mkdir, and says so.
+      const before = confinedCommand(bash!, ['-c', 'mkdir -p "$HOME/.local/share/x"'], { bwrap: BWRAP!, hide: [runDir], readOnly: [home.path], writable: [worktree] }, { chdir: worktree })
+      const failed = await promisify(execFile)(before.command, before.args, { env, timeout: 15_000 }).then(() => undefined, (error: { stderr?: string }) => String(error.stderr ?? ''))
+      expect(failed).toMatch(/Read-only file system/)
     } finally {
       home.remove()
     }

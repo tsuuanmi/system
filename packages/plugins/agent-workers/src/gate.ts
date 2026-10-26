@@ -526,6 +526,20 @@ function noopCommand(argv: string[]): boolean {
   return program === 'echo' || ((program === 'pwd' || program === 'true' || program === 'false') && args.length === 0)
 }
 
+/** The words that run one test file (T270), before its path: `corepack pnpm vitest run <path>`. */
+const ONE_TEST_RUN: readonly string[] = ['corepack', 'pnpm', 'vitest', 'run']
+/** A test file's name, as the repository's test runner takes one (`*.spec.ts`, `*.test.mjs`, …). */
+const TEST_FILE = /\.(spec|test|e2e)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/
+
+/**
+ * Whether `argv` is exactly `corepack pnpm vitest run <path>`, its path a test file's name (T270):
+ * one test file run with its output readable, where the policy's whole-suite command cuts it. Where
+ * the path is is the caller's to judge: inside the workspace, or refused.
+ */
+function isOneTestRun(argv: readonly string[]): boolean {
+  return argv.length === ONE_TEST_RUN.length + 1 && ONE_TEST_RUN.every((word, i) => argv[i] === word) && TEST_FILE.test(argv[ONE_TEST_RUN.length]!)
+}
+
 /** Whether `argv` is a read-only inspection command inside the workspace (`READ_COMMANDS`). */
 function readCommand(argv: string[], workspace: string): boolean {
   const [program, ...args] = argv
@@ -877,7 +891,12 @@ function classifyGitView(tool: string, input: Record<string, unknown>, workspace
  *   `Glob` or `list_dir` for `ls`, `find`), recognised by its first word whatever its other words,
  *   it is refused (`use-read-tool`), naming the tool, and opens no request; a `sed` other than
  *   `sed -n <a>[,<b>]p <path>…` (an in-place edit, a `-e` or `-f` script, a script that writes
- *   or runs a command) or a `find` with an action is no inspection, and stays a `command`;
+ *   or runs a command) or a `find` with an action is no inspection, and stays a `command`.
+ *   Exactly `corepack pnpm vitest run <path>`, its path a test file's name (`*.spec.ts`,
+ *   `*.test.mjs`, …), is one test file run with readable output (T270): a `workspace-write`, under
+ *   any runtime, when the path is absolute, with no `..`, and inside the workspace on disk (so it
+ *   runs wherever the policy lets a write of the workspace run); refused (`outside-workspace`) when it
+ *   is not. Any other word, option, or a second path leaves it a `command`;
  * - `WebFetch`, `WebSearch`: `external-send`;
  * - the host tools its source gave the run (`options.hostTools`, ADR-0070), as `mcp__system__<name>`:
  *   `dossier_read`, a `read`; `dossier_append`, a `workspace-write` (System's own record of the work,
@@ -978,6 +997,13 @@ export function classify(call: ToolCall, workspace: string, options: ClassifyOpt
     if (gitHistory(argv, workspace)) {
       if (options.shellReads === true) return { class: 'read', summary: clamp(command), consequences: `Reads the git history of the run's workspace: ${clamp(command)}. ${ANSWER}` }
       return { class: 'command', command: argv, historyRead: true, summary: clamp(`${tool}: ${command}`), consequences: `Runs this read-only git command in the run's workspace: it reads its history and changes nothing. ${ANSWER}` }
+    }
+    // One test file, run with its output readable (T270): a write of the workspace (the runner's caches
+    // there), only for a test file inside it; outside it, refused before the policy is asked.
+    if (isOneTestRun(argv)) {
+      const file = argv[ONE_TEST_RUN.length]!
+      if (!pathWord(workspace, file)) return { refused: `${tool}: ${clamp(file)} is not a test file inside the workspace (an absolute path, with no "..", that stays inside it on disk): one test file runs only inside the run's worktree`, reason: 'outside-workspace' }
+      return { class: 'workspace-write', summary: clamp(command), consequences: `Runs the one test file ${clamp(file)} inside the run's workspace, its output readable; it writes only the test runner's caches there. ${ANSWER}` }
     }
     // An inspection command the agent has a reading tool for is denied at once, naming it, never asked (T222).
     const inspection = inspectionRefusal(argv, options.readTools)

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentRuntimeProviderConformance, expectConsistentMetering } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
-import { type Confinement, meteringOf, type ToolCall, type ToolGate, WORKSPACE_READS_SCRIPT } from '@tsuuanmi/system-agent-runtime-core'
+import { type Confinement, HOME_STARTUP_DIRECTORIES, HOME_STATE_DIRECTORIES, meteringOf, type ToolCall, type ToolGate, WORKSPACE_READS_SCRIPT } from '@tsuuanmi/system-agent-runtime-core'
 import { childTimeZone, CodexRuntime, FEATURES_OFF, limitFromMessage, VERIFIED_LIMIT_VERSIONS } from '../src/index.ts'
 import { hookOverrides } from '../src/gate.ts'
 import { type ProbeBehaviour, type Step, probeExec, scripted } from './fake-codex.ts'
@@ -15,6 +15,9 @@ const root = mkdtempSync(join(tmpdir(), 'cx-'))
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 const runDir = join(root, 'run')
 const workspace = mkdtempSync(join(root, 'w-'))
+
+/** Every file (never a directory) under `dir`, relative to it. */
+const filesIn = (dir: string): string[] => readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => !e.isDirectory()).map((e) => join(e.parentPath, e.name).slice(dir.length + 1))
 
 /** A path's real path on this host, as the confinement resolves it; undefined when it does not exist. */
 const real = (path: string): string | undefined => existsSync(path) ? realpathSync(path) : undefined
@@ -29,7 +32,15 @@ const confined = {
   launcher: (c: { command: string; args: string[] }) => `launcher:${[c.command, ...c.args].join(' ')}`,
 }
 /** A run's private shell home (T198): made in the run directory. */
-const SHELL_HOME = expect.stringMatching(new RegExp(`^${runDir}/agent-home-`))
+const SHELL_HOME = expect.stringMatching(new RegExp(`^${runDir}/agent-home-[^/]+$`))
+const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/** A directory of that home, as a pattern. */
+const inShellHome = (name: string): string => `${escape(runDir)}/agent-home-[^/"]+/${escape(name)}`
+/** Its tool-state directories, bound back writable, and fish's startup directories in them, read-only again (T270). */
+const SHELL_STATE = HOME_STATE_DIRECTORIES.map((name) => expect.stringMatching(new RegExp(`^${inShellHome(name)}$`)))
+const SHELL_STARTUP = HOME_STARTUP_DIRECTORIES.map((name) => expect.stringMatching(new RegExp(`^${inShellHome(name)}$`)))
+/** Codex's writable roots for a writing run: `before`, then the shells' tool-state directories (T270). */
+const writableRoots = (...before: string[]) => expect.stringMatching(new RegExp(`^sandbox_workspace_write\\.writable_roots=\\[${[...before.map((root) => escape(JSON.stringify(root))), ...HOME_STATE_DIRECTORIES.map((name) => `"${inShellHome(name)}"`)].join(', ')}\\]$`))
 const runtime = (s = scripted(), extra: Partial<ConstructorParameters<typeof CodexRuntime>[0]> = {}) =>
   new CodexRuntime({ executable: '/usr/bin/codex', home: '/codex-home', runDir, hook: HOOK, client: s.client, version: async () => '0.164.0', mcpServers: async () => [], exec: probeExec(), ...confined, ...extra })
 
@@ -62,8 +73,9 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
       ...FEATURES_OFF.map((f) => `features.${f}=false`), 'features.hooks=true', 'shell_environment_policy.exclude=["SYSTEM_CODEX_GATE_SOCKET", "SYSTEM_CODEX_GATE_KEY"]',
       // The workspace reads server, confined by its own bubblewrap (T200b).
       expect.stringMatching(/^mcp_servers\.workspace=\{command = "\/usr\/bin\/bwrap", args = \[/),
-      // A writing run's commands may write the confinement's private /dev/shm, which a headless Chrome writes (T265).
-      'sandbox_workspace_write.writable_roots=["/dev/shm"]',
+      // A writing run's commands may write the confinement's private /dev/shm, which a headless Chrome writes (T265),
+      // and the shells' tool-state directories, where a tool keeps its state (T270).
+      writableRoots('/dev/shm'),
     ])
     expect(s.lastClient.env).toMatchObject({ SYSTEM_MCP_TOKEN: 't', PATH: process.env.PATH })
   })
@@ -76,7 +88,7 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
     const launched: string[] = []
     await runtime(s, { config: { sandbox_workspace_write: { writable_roots: ['/opt/cache'] } }, launcher: (c) => (launched.push([c.command, ...c.args].join(' ')), 'launcher') })
       .run({ prompt: 'run the browser tests', workspace, sandbox: 'workspace-write', reportFile: report }, new AbortController().signal)
-    expect(s.lastClient.overrides!.at(-1)).toBe(`sandbox_workspace_write.writable_roots=["/opt/cache", "/dev/shm", ${JSON.stringify(dir)}]`)
+    expect(s.lastClient.overrides!.at(-1)).toEqual(writableRoots('/opt/cache', '/dev/shm', dir))
     expect(launched[0]).toContain(`--bind ${realpathSync(report)} ${realpathSync(report)}`)
     expect(launched[0]).toContain(`--setenv SYSTEM_CHECK_REPORT_PATH ${report}`)
     const reading = scripted()
@@ -134,7 +146,7 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
         const client = s.client
         // What Codex is started with, as it starts: its environment, and what its HOME holds then.
         await runtime(s, {
-          env: { ZDOTDIR: workspace }, client: (options) => (seen.push({ env: options.env as Record<string, string>, entries: readdirSync((options.env as Record<string, string>).HOME!) }), client(options)),
+          env: { ZDOTDIR: workspace }, client: (options) => (seen.push({ env: options.env as Record<string, string>, entries: filesIn((options.env as Record<string, string>).HOME!) }), client(options)),
         }).run({ prompt: 'x', workspace, sandbox }, new AbortController().signal)
       }
       expect(seen).toHaveLength(2)
@@ -142,6 +154,7 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
         for (const name of ['BASH_ENV', 'ENV', 'ZDOTDIR', 'BASH_FUNC_cat%%', 'XDG_CONFIG_HOME']) expect(env, name).not.toHaveProperty(name)
         expect(env.HOME).toEqual(SHELL_HOME)
         expect(env.HOME!.startsWith(workspace)).toBe(false)
+        // No file in it: only its empty tool-state and startup directories (T270).
         expect(entries).toEqual([])
         expect(existsSync(env.HOME!)).toBe(false)
       }
@@ -185,9 +198,10 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
     else expect(s.lastClient.program).not.toContain('--ro-bind /dev/null /dev/')
     // Its home is bound back writable; its shells' private home read-only (T198), so no startup file can be written there; a read-only Worker's workspace read-only.
     // The workspace reads server's script and node are bound back read-only, for Codex to start it (T200b).
-    expect(binds.at(-1)).toEqual({ writable: ['/codex-home'], readOnly: ['/w', SHELL_HOME, WORKSPACE_READS_SCRIPT, process.execPath] })
+    // Its shells' tool-state directories are writable over that home, fish's startup directories in them read-only again (T270).
+    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', ...SHELL_STATE], readOnly: ['/w', SHELL_HOME, ...SHELL_STARTUP, WORKSPACE_READS_SCRIPT, process.execPath] })
     await runtime(s).run({ prompt: 'x', workspace: '/w', sandbox: 'workspace-write' }, new AbortController().signal)
-    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', '/w'], readOnly: [SHELL_HOME, WORKSPACE_READS_SCRIPT, process.execPath] })
+    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', '/w', ...SHELL_STATE], readOnly: [SHELL_HOME, ...SHELL_STARTUP, WORKSPACE_READS_SCRIPT, process.execPath] })
   })
 
   it('offers no Worker, and runs nothing, when reads cannot be confined (ADR-0024, REQ-WRK-6)', async () => {
@@ -310,7 +324,7 @@ describe('codex-sdk: the run\'s tool gate is a PreToolUse hook on every tool (do
     expect(hookOverrides(process.execPath, HOOK)).toEqual(hooks)
     // The channel reaches the hook through Codex's environment, kept from its commands; its directory, the hook, and node are bound back read-only.
     expect(Object.keys(s.lastClient.env!)).toEqual(expect.arrayContaining(['SYSTEM_CODEX_GATE_SOCKET', 'SYSTEM_CODEX_GATE_KEY']))
-    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', workspace], readOnly: [SHELL_HOME, expect.stringContaining(join(runDir, 'codex-gate-')), HOOK, process.execPath, WORKSPACE_READS_SCRIPT] })
+    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', workspace, ...SHELL_STATE], readOnly: [SHELL_HOME, ...SHELL_STARTUP, expect.stringContaining(join(runDir, 'codex-gate-')), HOOK, process.execPath, WORKSPACE_READS_SCRIPT] })
     // Closed with the run: nothing of the channel is left.
     expect(readdirSync(runDir).filter((f) => f.startsWith('codex-gate-'))).toEqual([])
     const ungated = scripted()

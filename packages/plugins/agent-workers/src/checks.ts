@@ -35,6 +35,7 @@ import { captureGitSubject, subjectId } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type { Checked, CheckResult, CheckStep, RunCheck } from '@tsuuanmi/system-workers-core'
+import { failureLines } from './failures.ts'
 import { CHECKS } from './gate.ts'
 import { BROWSER_TESTS_NOT_RUN, confineIn, type Confined, NESTED_REFUSED, noInstallEnvironment, runBounded, type Setup, WorktreeSetups } from './setup.ts'
 import type { Worktrees } from './worktrees.ts'
@@ -83,6 +84,12 @@ interface CheckRecord {
   output?: { tail: string; bytes: number; sha256: string }
   /** What the command reported it did not run (its browser tests, with why); kept in the store, said in `reason` in the evidence. */
   notRun?: string
+  /**
+   * A failed check's failing lines, its tests' names and assertions (T270, ./failures.ts): kept in the
+   * store and told in the answer, which the workflow puts in the task's dossier; not in
+   * `check-run@1.0`, whose output tail holds the end of what it printed.
+   */
+  failures?: string[]
   /** A stop killed its command before its end in this daemon (its instance): a later daemon reads that as the host's cut (T269). The store's only. */
   cutIn?: string
   /** How many times the host cut it on this subject so far (T269). The store's only. */
@@ -111,6 +118,7 @@ interface Cut { cuts: number; why: string }
 const evidenceOf = (record: CheckRecord): CheckRecord => {
   const copy: CheckRecord = { ...record }
   delete copy.notRun
+  delete copy.failures
   delete copy.cutIn
   delete copy.cuts
   return copy
@@ -227,7 +235,7 @@ export class RunChecks {
     const reruns = allowed.length ? await this.execute(found, setup!, step, allowed, records, signal) : []
     const results: CheckResult[] = names.map((check) => {
       const r = records.get(check)!
-      return { check, outcome: r.outcome, ...(r.exitCode !== undefined ? { exitCode: r.exitCode } : {}), reason: r.reason, ...(r.notRun ? { notRun: r.notRun } : {}) }
+      return { check, outcome: r.outcome, ...(r.exitCode !== undefined ? { exitCode: r.exitCode } : {}), reason: r.reason, ...(r.notRun ? { notRun: r.notRun } : {}), ...(r.outcome === 'failed' && r.failures?.length ? { failures: r.failures } : {}) }
     })
     if (!allowed.length) return { outcome: 'checked', results }
     const evidence = this.ctx.artifacts.put({
@@ -494,7 +502,8 @@ export class RunChecks {
     if (refused !== undefined) {
       return { record: { ...ran, outcome: 'error', reason: `its command (${a.line}) exited with code ${ended.code} on ${tree} and reported a nested bubblewrap refused${refused ? ` (${refused})` : ''}: an infrastructure failure, neither passed nor failed` } }
     }
-    return { record: { ...ran, outcome: 'failed', reason: `its command (${a.line}) exited with code ${ended.code} on ${tree}${unrun}`, ...notRun } }
+    // What failed, read here from the output it kept: the Worker that fixes it cannot open the evidence artifact (T270).
+    return { record: { ...ran, outcome: 'failed', reason: `its command (${a.line}) exited with code ${ended.code} on ${tree}${unrun}`, ...notRun, failures: failureLines(ended.output) } }
   }
 }
 

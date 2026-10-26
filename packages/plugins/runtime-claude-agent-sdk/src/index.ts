@@ -25,13 +25,16 @@
  *   reports `executes`; without either proof nothing writes or runs a command;
  * - Claude Code starts without the daemon's credentials: only the variables the operator
  *   forwards by name (`forwardEnv`) or sets (`env`) reach it (INV-8);
- * - its shells run no startup code its agent wrote (T198): each run's `HOME` is a fresh, empty,
- *   owner-only directory in the run directory, outside the workspace, bound back read-only (so no
- *   startup file is there, and none can be written) and removed with the run; no variable a shell
- *   runs code from (`BASH_ENV`, `ENV`, an exported function) or that moves its startup files
- *   (`ZDOTDIR`, `XDG_CONFIG_HOME`) reaches it; and its commands' sandbox denies writes to its home,
- *   where Claude Code keeps the shell snapshot it sources before each command, and to that `HOME`
- *   (`commandSandbox`), as its file tools reach the workspace only. Claude Code still starts its
+ * - its shells run no startup code its agent wrote (T198): each run's `HOME` is a fresh owner-only
+ *   directory with no file in the run directory, outside the workspace, bound back read-only (so no
+ *   startup file is there, and none can be written) and removed with the run; only its tool-state
+ *   directories (`~/.local/share`, `~/.local/state`, `~/.cache`, `~/.config`) are writable over it,
+ *   and fish's startup directories in them read-only again (T270); no variable a shell runs code
+ *   from (`BASH_ENV`, `ENV`, an exported function) or that moves its startup files (`ZDOTDIR`,
+ *   `XDG_CONFIG_HOME`) reaches it; and its commands' sandbox denies writes to its home, where Claude
+ *   Code keeps the shell snapshot it sources before each command, and to fish's startup directories,
+ *   allowing them to the workspace and those tool-state directories (`commandSandbox`), as its file
+ *   tools reach the workspace only. Claude Code still starts its
  *   Bash tool's shells its own way, so it never reports `cleanShells`, and a gate takes none of its
  *   shell commands for a read;
  * - a run or probe may name another home (one account's, ADR-0051), an owner-only directory that
@@ -103,10 +106,13 @@ const rule = (tool: string): string => (tool === COMMAND_TOOL || WEB_RUN_TOOLS.i
  * The SDK's sandbox for the commands of a `workspace-write` run (ADR-0038): on, and a run whose
  * sandbox cannot start fails instead of running a command unconfined (`failIfUnavailable`); no
  * command runs outside it, whatever the model asks (`allowUnsandboxedCommands: false`); writes
- * reach the run's workspace only, and never `startup` (T198): Claude Code's home, where it keeps
- * the shell snapshot it sources before each command, and the shells' private `HOME`, each denied
- * by name too (`denyWrite` wins over `allowWrite`), so no command writes startup code a later
- * command's shell would run; and no network: no domain is allowed, and `strictAllowlist` makes any
+ * reach the run's workspace and `allow.write` only (with the shells' tool-state directories,
+ * {@link withHomeState}, T270), and never `startup` (T198): Claude Code's home, where it keeps the
+ * shell snapshot it sources before each command, and the shells' startup directories among their
+ * tool-state ones (fish's), each denied by name (`denyWrite` wins over `allowWrite`, so the shells'
+ * private `HOME` itself is not named there: that would deny its tool-state directories too; the rest
+ * of it is in no `allowWrite`, so it stays read-only under the read-only root and the run's
+ * confinement), so no command writes startup code a later command's shell would run; and no network: no domain is allowed, and `strictAllowlist` makes any
  * other host a refusal by the sandbox itself, never a question for a permission flow.
  * `allow` is what a browser test needs there, as in a check's confinement (T265,
  * `toolSandboxAllowances`): the managed Chrome readable (`read`), the confinement's private
@@ -128,6 +134,17 @@ export function commandSandbox(workspace: string, startup: readonly string[] = [
     },
     network: { allowedDomains: [], strictAllowlist: true, ...(allow.unixSockets ? { allowAllUnixSockets: true } : {}) },
   }
+}
+
+/**
+ * `allow` with the shells' tool-state directories writable too (T270, `AgentHome.writable`:
+ * `~/.local/share`, `~/.local/state`, `~/.cache`, `~/.config` of the private home), so a tool's first
+ * run writes its state there instead of printing `EROFS`. Fish's startup directories in them stay in
+ * {@link commandSandbox}'s `startup`, denied, and the rest of the shells' home is in no allow, so it
+ * stays read-only under the sandbox's read-only root, as under the run's confinement.
+ */
+export function withHomeState(allow: { read: string[]; write: string[] }, shell: Pick<AgentHome, 'writable'>): { read: string[]; write: string[] } {
+  return { ...allow, write: [...allow.write, ...shell.writable] }
 }
 
 /**
@@ -312,20 +329,26 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     // A fresh private home for its shells, outside the workspace, removed with the run (T198).
     const shell = this.shellHome(spec.workspace)
     try {
-      return await this.drive(spec, signal, home, tools, executable, shell.path, onHandle, observer)
+      return await this.drive(spec, signal, home, tools, executable, shell, onHandle, observer)
     } finally {
       shell.remove()
     }
   }
 
-  /** A run, its checks passed, in its shell home `shellHome`. */
-  private async drive(spec: RunSpec, signal: AbortSignal, home: string, tools: string[], executable: string, shellHome: string, onHandle?: (handle: string) => void, observer?: RunObserver): Promise<RunResult> {
+  /** A run, its checks passed, in its shell home `shell`. */
+  private async drive(spec: RunSpec, signal: AbortSignal, home: string, tools: string[], executable: string, shell: AgentHome, onHandle?: (handle: string) => void, observer?: RunObserver): Promise<RunResult> {
     const writes = spec.sandbox === 'workspace-write'
-    // The shells' home is bound back read-only (T198): it stays empty, so no shell finds a startup file there.
+    const shellHome = shell.path
+    // The shells' home is bound back read-only (T198): no shell finds a startup file there, and none can
+    // be written. Its tool-state directories are writable over it, and fish's startup directories in them
+    // read-only again (T270), so a tool's state under ~ is written, never a shell's startup code.
     // A writing run's report file is bound back writable and named to its commands, and its commands
     // may make unix sockets, which Chrome needs, only with every socket of the host they could
     // connect to masked (T265).
-    const plain = this.reporting(this.confinement(home, writes ? { writable: [home, spec.workspace], readOnly: [shellHome] } : { writable: [home], readOnly: [spec.workspace, shellHome] }), writes ? spec.reportFile : undefined)
+    const homeReadOnly = [shellHome, ...shell.startup]
+    const plain = this.reporting(this.confinement(home, writes
+      ? { writable: [home, spec.workspace, ...shell.writable], readOnly: homeReadOnly }
+      : { writable: [home, ...shell.writable], readOnly: [spec.workspace, ...homeReadOnly] }), writes ? spec.reportFile : undefined)
     const env = this.environment(home, shellHome)
     let confinement = plain
     let unixSockets = false
@@ -377,7 +400,9 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
           env,
           // Every command in the SDK's sandbox: the workspace, no network, no way out (ADR-0038).
           // A browser test runs there as in a check's confinement (T265).
-          ...(writes ? { sandbox: commandSandbox(spec.workspace, [home, shellHome], { ...toolSandboxAllowances(confinement, spec.reportFile), unixSockets, socketDirectories: deniedDirectories }) } : {}),
+          // Its commands write the shells' tool-state directories too, never fish's startup directories in
+          // them; the shells' home is not denied whole, which would deny those too (a deny wins, T270).
+          ...(writes ? { sandbox: commandSandbox(spec.workspace, [home, ...shell.startup], { ...withHomeState(toolSandboxAllowances(confinement, spec.reportFile), shell), unixSockets, socketDirectories: deniedDirectories }) } : {}),
           ...(spec.model ? { model: spec.model } : {}), ...(spec.maxTurns ? { maxTurns: spec.maxTurns } : {}), ...(spec.resume ? { resume: spec.resume } : {}),
           // No matcher: every tool call, subagents' included, passes the gate before it runs.
           ...(spec.toolGate ? { hooks: { PreToolUse: [{ hooks: [gateHook(spec.toolGate, deferral)], timeout: HOOK_TIMEOUT_S }] } } : {}),
@@ -574,8 +599,9 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
   }
 
   /**
-   * A fresh, empty, owner-only `HOME` for one run's shells (T198), in the run directory (hidden by
-   * the confinement, the home bound back read-only), never in `workspace`: Claude Code's Bash tool
+   * A fresh owner-only `HOME` with no file for one run's shells (T198), in the run directory (hidden
+   * by the confinement, the home bound back read-only, its tool-state directories writable over it,
+   * T270), never in `workspace`: Claude Code's Bash tool
    * sources the startup files of its `HOME` (`~/.bashrc` into its shell snapshot, `~/.bash_profile`
    * for a login shell); there are none, and none can be written. The shell and its snapshot are
    * still Claude Code's own, so no gated shell command is taken for a read.

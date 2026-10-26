@@ -234,10 +234,21 @@ What it does with a hook was established live on the host, and the bridge is bui
   ([below](#an-agents-shells-read-no-startup-code), `cleanShells`), so each word runs the program
   it names. Codex is not one: `exec_command` takes a `shell` and a `login` argument the hook does
   not see, so a call may run its words in a login shell, or in any executable the Worker names (a
-  workspace script among them). Under Codex every `Bash` call is therefore a `command`, judged by
+  workspace script among them). Under Codex every `Bash` call is therefore a `command` (but for one
+  test file, below), judged by
   its exact argv; its Workers read through the [workspace reads server](#the-workspace-reads-server)
   instead, whose three tools are reads. No tool that writes a file may write git's own data (`.git` anywhere in the path, as
   written or on disk): it changes only by a command the operator approved, or by the operator.
+- **One test file, with readable output (T270).** The policy's whole-suite command
+  (`corepack pnpm test:affected`) prints more than a Worker's tool result keeps, so its summary was
+  cut and a Worker could not see which test failed. Under any runtime, the gate classifies exactly
+  `corepack pnpm vitest run <path>`, its path a test file's name (`*.spec.ts`, `*.test.mjs`, …),
+  as a `workspace-write` when the path is absolute, holds no `..`, and is inside the run's worktree
+  on disk (links followed): it runs unasked wherever the policy lets a write of the workspace run
+  (the runner writes only its caches there, under the run's sandbox), with no line on the commands
+  list. The same command on a path outside the worktree, or a relative one, is refused
+  (`outside-workspace`); any other word, option, or a second path leaves it a `command`, judged by
+  its exact argv.
 - **A tool that ran past the gate.** Codex reports each tool's work as an item (a command, a file
   change, an MCP call, a web search). Every item a tool produces must be accounted for by a call
   the gate allowed; one that is not (a hook that failed and let the tool run) stops the run, which
@@ -1223,21 +1234,37 @@ login, and interactive, are the real ones):
   `XDG_CONFIG_HOME`, `XDG_CONFIG_DIRS`, where fish reads its). Codex refuses a
   `shell_environment_policy.set` that names one, or that sets `HOME`, which would replace the
   private home for its commands.
-- **A private, read-only home.** Each run's `HOME` is a fresh, empty, owner-only directory
-  (`agentHome`) in the runtime's run directory (`<DSH_HOME>/system/run`, hidden by the read
-  confinement), bound back **read-only**, never in the worktree, so git never sees it. It stays
-  empty for the whole run: a login or interactive shell finds no `~/.bash_profile`, `~/.profile`,
-  `~/.bashrc`, `~/.zshenv`, or `~/.config/fish/config.fish` there, and no tool call can write one
-  for a later call's shell (`EROFS`). The only startup files left are the system's (`/etc/profile`,
-  `/etc/bash.bashrc`), which no agent writes. It is removed with the run. `XDG_CACHE_HOME` keeps
-  naming the operator's cache, where tools find what they already downloaded and no shell reads
-  startup code; Claude Code's and Codex's own state stay in their homes (`CLAUDE_CONFIG_DIR`,
-  `CODEX_HOME`).
+- **A private home: read-only, but for a tool's own state.** Each run's `HOME` is a fresh
+  owner-only directory (`agentHome`) in the runtime's run directory (`<DSH_HOME>/system/run`,
+  hidden by the read confinement), never in the worktree, so git never sees it; the real `HOME` is
+  never mounted. It holds no file, only empty directories made with it: the places a tool keeps
+  its state (`HOME_STATE_DIRECTORIES`: `~/.local/share`, `~/.local/state`, `~/.cache`, `~/.config`,
+  the XDG defaults) and, inside them, the only ones where a shell reads startup code
+  (`HOME_STARTUP_DIRECTORIES`: fish's `~/.config/fish` and `~/.local/share/fish`). Both runtimes
+  bind the home back **read-only**, each state directory **writable** over it, and each startup
+  directory **read-only** again over the state directory it lies in (T270). So a tool's first run
+  (`mkdir -p ~/.local/share/<tool>`, a file in `~/.cache/<tool>` or `~/.config/<tool>`) writes
+  quietly instead of printing `EROFS` on every test file, while a login or interactive shell still
+  finds no `~/.bash_profile`, `~/.profile`, `~/.bashrc`, `~/.zshenv`, `~/.config/fish/config.fish`,
+  or fish `conf.d`/`vendor_conf.d` file there, and no tool call can write one for a later call's
+  shell (`EROFS`): the home's top, `~/.local` itself, and fish's directories stay read-only. What a
+  tool writes to its state lasts for the run only: the home is removed with it, so nothing of it
+  reaches the next run. The only startup files left are the system's (`/etc/profile`,
+  `/etc/bash.bashrc`), which no agent writes. `XDG_CACHE_HOME` keeps naming the operator's cache,
+  where tools find what they already downloaded and no shell reads startup code; Claude Code's and
+  Codex's own state stay in their homes (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`).
 - **No write where a shell reads startup code.** Claude Code's command sandbox
-  (`commandSandbox`) denies writes to its home, which holds the shell snapshot it sources before
-  each command, and to the shells' `HOME` (`filesystem.denyWrite`, which wins over `allowWrite`);
-  its file tools reach the workspace only. Codex's commands and patches write the workspace only
-  (its `workspace-write` sandbox), and its home holds no shell startup code.
+  (`commandSandbox`) allows writes to the workspace, what a browser test writes (T265), and the
+  shells' state directories (`withHomeState`) only, and denies them to its home, which holds the
+  shell snapshot it sources before each command, and to fish's startup directories
+  (`filesystem.denyWrite`, which wins over `allowWrite`: so the shells' `HOME` itself is not named
+  there, which would deny its state directories too; the rest of it is in no `allowWrite`, so it
+  stays read-only under the sandbox's read-only root, as under the run's confinement); its file
+  tools reach the workspace only. Codex's commands and patches write the workspace, what a browser
+  test writes, and the shells' state directories only (its `workspace-write` sandbox, with
+  `sandbox_workspace_write.writable_roots` naming them), and its home holds no shell startup code.
+  Either sandbox runs inside the run's confinement, whose read-only binds of fish's directories no
+  sandbox inside can make writable.
 
 ### The workspace reads server
 
