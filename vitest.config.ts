@@ -7,6 +7,12 @@ import { durationKey, order, readDurations } from './scripts/test-durations.ts'
 
 const src = (path: string): string => fileURLToPath(new URL(path, import.meta.url))
 
+/** The worker count an acceptance check gives its run (SYSTEM_CHECK_MAX_WORKERS, a positive integer); undefined when none. */
+function checkWorkers(): number | undefined {
+  const given = Number(process.env.SYSTEM_CHECK_MAX_WORKERS)
+  return Number.isInteger(given) && given >= 1 ? given : undefined
+}
+
 /**
  * Starts the test files by the committed duration table (scripts/test-durations.ts): the files it
  * does not hold first, in vitest's own order, then the rest longest first. vitest's own order
@@ -95,7 +101,9 @@ export default defineConfig({
     // was 255: every file, its imports served by the one main process, its stores and processes at
     // once, and in-process tests of 1 to 2 s passed their 5 s bound (two copies of the suite: 9
     // failures, none capped, in the same 3.6 minutes). A 4-vCPU runner keeps its 3.
-    maxWorkers: Math.max(1, Math.min(32, availableParallelism() - 1)),
+    // An acceptance check (agent-workers, T292) sets SYSTEM_CHECK_MAX_WORKERS: its share of the host's
+    // cores, so that the checks the host runs at once, each with that many workers, fit its cores.
+    maxWorkers: checkWorkers() ?? Math.max(1, Math.min(32, availableParallelism() - 1)),
     // Longest first by scripts/test-durations.json (`pnpm gen:test-durations`), cache or none.
     sequence: { sequencer: DurationSequencer },
   },

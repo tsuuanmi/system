@@ -1546,6 +1546,31 @@ check never installs.
   when it last printed); a stall past its check's deadline is over, so one a restart cut, which never
   told its `ended`, is not shown after it. The web UI's run page shows it under **Checks**. The check
   goes on to its deadline; one stopped there says since when it printed nothing.
+- **Checks run under a bounded load (T292).** With several runs at once, full test suites started
+  together slowed each other until tests that pass alone ran past their 5 s bound. Three rules bound it:
+  (1) at most `checks.maxConcurrent` check commands (default 2) run at once on the host, across every
+  workflow run: the one queue of the daemon, first come first served. A check that waits is told by an
+  `agent-workers.check.queue` event (`queued`, with how many wait ahead) and keeps its waits in its
+  stored record (`queuedMs`; its reason says them past 1 s); its deadline starts when its command
+  does, so it never fails for the wait. (2) Each check command gets `SYSTEM_CHECK_MAX_WORKERS`, the
+  host's cores less one divided by `maxConcurrent` (at least 1, at most 32; `checks.maxWorkers` sets
+  it), which the repository's vitest config reads as its `maxWorkers`, so the checks that run together
+  fit the cores. (3) A check that failed only on tests that timed out is run once more alone. Its
+  whole output is read as it is printed, in bounded state, never only the 64 KiB end the source keeps,
+  and in the format of vitest 4's report. Its `Failed Suites` and `Failed Tests` sections hold groups
+  of identical errors, each one or more `FAIL` headings followed by their shared error once and a
+  divider. The run qualifies when every group's error is the header `Error: Test timed out in Nms`
+  or `Error: Hook timed out in Nms`, at the start of its line (the same words in an assertion's
+  message, its diff, or a log line are no timeout), and no other error (the code frame under it is the test's source, not read for errors), nothing was
+  unhandled, and the summary `Tests N failed` counts exactly the test headings read. A `gate` decision
+  of rule `agent-workers.check-timeout-rerun` is recorded before the second command starts. It names
+  the first run's exit code, timed-out tests and output hash, and the check-run evidence lists it
+  among its inputs (INV-13). The re-run waits for the host to be free of other checks, runs with
+  `SYSTEM_CHECK_ALONE=1` and the full worker count, and its second result counts, passed or failed.
+  The record's reason names the decision, and the `retried` event carries it. A stop while it waits
+  stores the first result as what the check came to, marked cut only by the host's own stop, as a stop
+  of its command is (INV-4). A failure of any other kind is never run again, and nothing is run a
+  third time.
 
 ## Process tiered by risk
 

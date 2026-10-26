@@ -69,7 +69,7 @@ import {
 } from './roles.ts'
 import { researchProblem, withResearchDefaults } from './research.ts'
 import { type WebProof, WebProbes } from './web-probe.ts'
-import { CHECKS_MIGRATION, RunChecks } from './checks.ts'
+import { CHECKS_MIGRATION, DEFAULT_MAX_CONCURRENT_CHECKS, RunChecks } from './checks.ts'
 import { type RunReport, type RunReported, runReport } from './run-report.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
 import { registerAccountTools, registerRunTools } from './tools.ts'
@@ -245,6 +245,12 @@ export interface Config {
    * run (`RunSpec.workspaceReads`).
    */
   workspaceReads?: Partial<WorkspaceReadBounds>
+  /**
+   * The load acceptance checks put on the host (T292): at most `maxConcurrent` check runs at once across
+   * every run (default 2), the rest queued in order; each runs its tests with `maxWorkers` workers
+   * (default the host's cores shared among `maxConcurrent`).
+   */
+  checks?: { maxConcurrent?: number; maxWorkers?: number }
 }
 
 interface RunRow {
@@ -446,6 +452,19 @@ function readBoundsOf(bounds: Partial<WorkspaceReadBounds> | undefined): Workspa
   }
 }
 
+/** The checks' bounds (T292): `maxConcurrent` 1 to 32 and `maxWorkers` 1 to 256 when given; `config_error` otherwise (INV-9). */
+function checkBoundsOf(checks: Config['checks']): { maxConcurrent?: number; maxWorkers?: number } {
+  const bounded = (name: 'maxConcurrent' | 'maxWorkers', max: number): number | undefined => {
+    const value = checks?.[name]
+    if (value === undefined) return undefined
+    if (!Number.isInteger(value) || value < 1 || value > max) throw new ProviderError('config_error', `agent Workers: checks.${name} is 1 to ${max}`)
+    return value
+  }
+  const maxConcurrent = bounded('maxConcurrent', 32)
+  const maxWorkers = bounded('maxWorkers', 256)
+  return { ...maxConcurrent !== undefined ? { maxConcurrent } : {}, ...maxWorkers !== undefined ? { maxWorkers } : {} }
+}
+
 /**
  * What the load would refuse in this row's Workers and their worktree setups, before a host starts
  * on it (`system check`): the first problem {@link configuredWorkers} or {@link loadSetups} finds, or
@@ -457,6 +476,7 @@ export function checkConfig(config: Partial<Config> = {}): string[] {
     const { workers } = configuredWorkers(config)
     loadSetups(config.worktreeSetup, [...workers.values()].filter((w) => w.worktreePerRun).map((w) => w.workspace))
     readBoundsOf(config.workspaceReads)
+    checkBoundsOf(config.checks)
     return []
   } catch (error) {
     return [(error as Error).message]
@@ -565,6 +585,10 @@ export class AgentWorkers extends Service {
         commands: z.array(z.string()).description('1 to 16 commands that regenerate them, run in order, each its words split on single spaces (no shell), each judged by the autonomy policy as a command with that exact argv and run only when it allows it unasked'),
       }).description('The repository\'s generated files: a landing whose merge conflicts only in them takes either side, runs the commands in the run\'s worktree in this setup\'s confinement, and merges only when they exit 0, change no other file, and change nothing on a repeat (T166)'),
     })).default([]).description('Per repository, the setup of a workflow run\'s new worktree: commands the autonomy policy allows, run confined (the host read-only but the worktree, no network) before any agent run works in it; one not allowed, or that fails, fails the run at start (ADR-0058)'),
+    checks: z.object({
+      maxConcurrent: z.natural().min(1).max(32).default(2).description('How many acceptance check runs the host runs at once, across every workflow run; the rest wait their turn, in order, and never fail for the wait (T292)'),
+      maxWorkers: z.natural().min(1).max(256).description('The test workers each check run gets (the vitest config reads SYSTEM_CHECK_MAX_WORKERS); default the host\'s cores less one, shared among maxConcurrent checks, at most 32 each (T292)'),
+    }).description('The load acceptance checks put on the host (T292)'),
     workspaceReads: z.object(Object.fromEntries(Object.entries(WORKSPACE_READ_BOUNDS).map(([name, bound]) => [
       name, z.natural().min(bound.min).max(bound.max).default(bound.default).description(`${bound.description} (${bound.min} to ${bound.max})`),
     ]))).description('The bounds of the workspace reads server a runtime gives its agent to read its workspace without a shell (read_file, list_dir, search; T200b), each within its range'),
@@ -638,7 +662,7 @@ export class AgentWorkers extends Service {
     this.worktreeSetups = new WorktreeSetups(ctx, join(worktreeRoot, '.setup'))
     // Each writing run's report file is made there too, outside every worktree (T265).
     this.reportDir = join(worktreeRoot, '.setup')
-    this.runChecks = new RunChecks(ctx, this.worktrees, this.setups, join(worktreeRoot, '.setup'), { setups: this.worktreeSetups, hostStopped: this.stopped.signal })
+    this.runChecks = new RunChecks(ctx, this.worktrees, this.setups, join(worktreeRoot, '.setup'), { setups: this.worktreeSetups, hostStopped: this.stopped.signal, ...checkBoundsOf(config.checks) })
     if (config.accountHomes !== undefined && !isAbsolute(config.accountHomes)) throw new ProviderError('config_error', 'agent Workers: accountHomes must be an absolute path')
     this.readBounds = readBoundsOf(config.workspaceReads)
     const slots = new Map<string, number>()
@@ -1136,11 +1160,13 @@ export class AgentWorkers extends Service {
   private rowOf(plan: MigrationPlan): Record<string, unknown> {
     const { workers: _, providers: __, roles: ___, assignments: ____, ...settings } = this.config
     // A setting at its default (an empty worktreeSetup among them) is left out.
-    const { workspaceReads, ...rest } = settings
+    const { workspaceReads, checks, ...rest } = settings
     const kept = Object.fromEntries(Object.entries(rest).filter(([key, value]) => value !== undefined && value !== SETTING_DEFAULTS[key] && !(Array.isArray(value) && !value.length)))
     // So is each workspace reads bound at its default, and the setting when all are (T200b).
     const reads = Object.fromEntries(Object.entries(workspaceReads ?? {}).filter(([name, value]) => value !== WORKSPACE_READ_BOUNDS[name as keyof WorkspaceReadBounds]?.default))
-    return { ...kept, ...(Object.keys(reads).length ? { workspaceReads: reads } : {}), providers: plan.providers, roles: plan.roles, assignments: plan.assignments }
+    // And each checks bound at its default (or unset), and the setting when all are (T292).
+    const bounds = Object.fromEntries(Object.entries(checks ?? {}).filter(([name, value]) => value !== undefined && !(name === 'maxConcurrent' && value === DEFAULT_MAX_CONCURRENT_CHECKS)))
+    return { ...kept, ...(Object.keys(reads).length ? { workspaceReads: reads } : {}), ...(Object.keys(bounds).length ? { checks: bounds } : {}), providers: plan.providers, roles: plan.roles, assignments: plan.assignments }
   }
 
   /** The ledger a metered Worker's runs go through, or undefined for a Worker with no pool. */

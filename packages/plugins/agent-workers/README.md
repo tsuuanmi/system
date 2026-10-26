@@ -474,7 +474,15 @@ The **`agents` Worker source**: agent runtimes as Workers
       each under its `pnpm_config_` and `npm_config_` names (pnpm 11 and later
       read only the first); a check quiet for `checkStallSeconds` (default
       300) is told by `agent-workers.check` events (`stalled` with its deadline,
-      `resumed`, `ended`);
+      `resumed`, `ended`). Checks run under a bounded load (T292): at most
+      `checks.maxConcurrent` (default 2) at once on the host, the rest queued in
+      order and told by `agent-workers.check.queue` events (`queued`, with how
+      many wait ahead; `retried`); each command gets `SYSTEM_CHECK_MAX_WORKERS`,
+      its share of the host's cores (`checks.maxWorkers` sets it), which the
+      repository's vitest config reads; one that failed only on tests that timed
+      out runs once more alone, with `SYSTEM_CHECK_ALONE=1`, on a `gate`
+      decision of rule `agent-workers.check-timeout-rerun`, and that second
+      result counts;
   - an agent can write the worktree's `.git` file, so git never follows it: a
     run whose worktree's `.git` file no longer points to the worktree's own
     directory fails as `reconciliation_failed`, and the worktree is left for
