@@ -524,7 +524,9 @@ The **`agents` Worker source**: agent runtimes as Workers
     commands run in order, each only when the policy lets its argv run unasked, in the setup's
     confinement and views (`confineIn`), within the setup's deadline, with pnpm's
     verify-deps-before-run off and offline as a check's (`noInstallEnvironment`), in a worktree set
-    up under the setup loaded now. They must exit 0, change only declared files, and leave the index; the
+    up under the setup loaded now; before them, when the merge (or a rebase) changed the setup's
+    `dependencyFiles`, the setup runs again on that tree as for a check (`refresh`, its decision
+    among the autonomy decisions), and a setup that cannot refuses (T263). They must exit 0, change only declared files, and leave the index; the
     merge is committed (parents the base and the head), the commands run again and must change
     nothing, and the base, checked again, is fast-forwarded to that commit (`merged` with
     `regenerated`: the files, the commands, their autonomy decisions). The worktree goes back on
