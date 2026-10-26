@@ -269,6 +269,12 @@
 | `timeoutMs` | number (1000…) | `900000` |  |
 | `pingMs` | number (100…) | `10000` |  |
 
+## `landing-local`
+
+[@tsuuanmi/system-landing-local](../../packages/plugins/landing-local/README.md)
+
+No options.
+
 ## `leases`
 
 [@tsuuanmi/system-leases](../../packages/plugins/leases/README.md)

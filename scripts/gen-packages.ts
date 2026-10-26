@@ -70,6 +70,8 @@ export const LAYER_OF: Record<string, Layer> = {
   'board': 'orchestration',
   'digest-core': 'orchestration',
   'decision-core': 'orchestration',
+  'landing-core': 'orchestration',
+  'landing-local': 'orchestration',
   'digest': 'orchestration',
   'digest-extractive': 'orchestration',
   'experiments-core': 'orchestration',

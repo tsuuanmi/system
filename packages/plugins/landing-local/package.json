@@ -1,0 +1,23 @@
+{
+  "name": "@tsuuanmi/system-landing-local",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ctx.landing, local: an accepted result merged into the repository's checked-out branch by the source that holds its worktree (workers.land), on the operator's merge approval of landing:merge:<base>:<head>; never a force or a push (ADR-0060)",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib", "plugin-manifest.json"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": {
+    "@tsuuanmi/system-landing-core": "workspace:*",
+    "@tsuuanmi/system-workers-core": "workspace:*"
+  },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-store": "workspace:*",
+    "@tsuuanmi/system-workers": "workspace:*"
+  }
+}

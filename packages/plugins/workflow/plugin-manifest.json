@@ -68,6 +68,11 @@
       "optional": true
     },
     {
+      "seam": "landing",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
       "seam": "mcp",
       "range": "^1.0.0",
       "optional": true

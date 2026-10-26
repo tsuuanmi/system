@@ -388,6 +388,12 @@ importers:
         specifier: 4.0.5-alpha.1
         version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
 
+  packages/landing-core:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+
   packages/libs:
     dependencies:
       '@deepseek-ai/dsh-home-paths':
@@ -885,6 +891,28 @@ importers:
       '@deepseek-ai/schemastery':
         specifier: 3.18.5-alpha.1
         version: 3.18.5-alpha.1
+
+  packages/plugins/landing-local:
+    dependencies:
+      '@tsuuanmi/system-landing-core':
+        specifier: workspace:*
+        version: link:../../landing-core
+      '@tsuuanmi/system-workers-core':
+        specifier: workspace:*
+        version: link:../../workers-core
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@tsuuanmi/system-artifacts':
+        specifier: workspace:*
+        version: link:../artifacts
+      '@tsuuanmi/system-store':
+        specifier: workspace:*
+        version: link:../store
+      '@tsuuanmi/system-workers':
+        specifier: workspace:*
+        version: link:../workers
 
   packages/plugins/leases:
     dependencies:
@@ -1664,6 +1692,9 @@ importers:
       '@tsuuanmi/system-gateway-core':
         specifier: workspace:*
         version: link:../../gateway-core
+      '@tsuuanmi/system-landing-core':
+        specifier: workspace:*
+        version: link:../../landing-core
       '@tsuuanmi/system-leases':
         specifier: workspace:*
         version: link:../leases
@@ -1716,6 +1747,9 @@ importers:
       '@tsuuanmi/system-display-virtual':
         specifier: workspace:*
         version: link:../display-virtual
+      '@tsuuanmi/system-landing-local':
+        specifier: workspace:*
+        version: link:../landing-local
       '@tsuuanmi/system-login':
         specifier: workspace:*
         version: link:../login
@@ -1831,6 +1865,9 @@ importers:
       '@tsuuanmi/system-gateway-responses':
         specifier: workspace:*
         version: link:../plugins/gateway-responses
+      '@tsuuanmi/system-landing-local':
+        specifier: workspace:*
+        version: link:../plugins/landing-local
       '@tsuuanmi/system-leases':
         specifier: workspace:*
         version: link:../plugins/leases

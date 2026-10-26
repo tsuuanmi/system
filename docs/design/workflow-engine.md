@@ -1203,6 +1203,32 @@ stateDiagram-v2
   a merge already made instead of making it twice.
 - A run reported before landing existed lands nothing: merge its branch by hand.
 
+#### The landing seam
+
+> Decision: [PROP-0017](../proposals/0017-github-front-door.md#one-landing-seam-two-providers) L0
+> (accepted, D84); the seam's shape by [ADR-0037](../decisions/adr/0037-schema-and-protocol-first.md).
+
+What happens after the commit, and after a rebase and its checks run again, goes through one seam,
+`ctx.landing` (`Landing` in `landing-core`, contract 1.0). The commit, the rebase, the conflict's
+resolution, and the checks are the same whichever provider lands, so they stay in the engine over
+`workers.land`, the one writer of the worktree (INV-15). The seam starts where providers differ:
+
+| Call | What the engine does with it | `landing-local` (today's landing) |
+|---|---|---|
+| `prepare(target)` | at `ask`: the request's subject and the consequences of approving and denying it, then the D56 line, the rebase note, and the `git diff --stat`, as before; at `approved`: the request must be on this subject; at `merge`: the merge commit's `System-Landing` trailer | `{ git-head, system/run/<runId>, landing:merge:<base>:<head> }`; refused when that version is longer than a request's subject holds (128) |
+| `land(request)` | at `merge`, on the approval: the subject the approved request names, read from the queue, and only while the provider in force prepares that same subject (else a `refuse` decision, `unbound`, and the merge is asked again on the provider's own subject: a provider changed after the approval lands nothing on it); the target's new head (`merged`, with `already` and any generated files made again), or a typed refusal: `base-moved` or `dirty` ask again on the base as it is, any other cause refuses | `workers.land`'s merge step, on an approval of exactly that subject (else `unbound`, nothing asked of the source); no source holds the worktree: `gone`; no `land`: `failed` |
+| `status(target)` | not read yet: a restart relies on `land` finding its own work done | `unknown`: the merge step reads it, and does nothing again when it is done |
+
+The provider is the one the composition registers at `ctx.landing` (the `landing-local` row, on). The
+engine depends on the definition only and never picks a provider itself: while none is registered (the
+row off, or its provider gone mid-landing), a landing waits where it is, saying why, asking nothing
+and merging nothing (INV-2), and goes on once one is. Every provider, the seam's fake `FakeLanding` included, passes
+`landing-core/conformance/landing.ts`: `prepare` binds the exact head and target and changes
+nothing; `land` lands only on that subject, reports the target's new head that holds the result, and
+never lands twice; a moved target or head, or another subject, is a typed refusal that changes
+nothing; `status` never says landed before it is. A code host's provider, which pushes and opens a
+pull request (PROP-0017 G2), is a later increment, and amends ADR-0060 by its own ADR.
+
 #### A target that moved: rebase, then check again
 
 > Decision: [ADR-0068](../decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)

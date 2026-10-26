@@ -52,6 +52,12 @@ and the `system` plugins, and it does not use `dsh-base`
   config, so it carries the policies too; `system check` names a missing or invalid one. The
   [`board`](../plugins/board/README.md) row asks for every approval through it and is mounted
   only with it; with the board off, runs work as before.
+- **The landing seam (PROP-0017 L0):** the [`landing-local`](../plugins/landing-local/README.md)
+  row is on and provides `ctx.landing`, so an accepted result is merged into the checked-out
+  branch on the operator's approval as before
+  ([ADR-0060](../../docs/decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md)).
+  With the row off, nothing is merged: a landing waits at its merge, saying why, until a provider
+  is registered ([the landing seam](../../docs/design/workflow-engine.md#the-landing-seam)).
 - **Presets:** [`presets/`](presets/) holds named bundle layers that `system init
   --preset <name>` adds right after this bundle. [`api-first`](presets/api-first/cordis.patch.yml)
   disables every row that drives a website and both model gateways, turns every agent

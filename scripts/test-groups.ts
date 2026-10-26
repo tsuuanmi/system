@@ -38,8 +38,8 @@ export const GROUPS: Readonly<Record<string, Group>> = {
     packages: ['store', 'artifacts', 'event-log', 'leases', 'credentials-vault', 'turn-receipts', 'egress', 'plugin-host-core', 'plugin-host'],
   },
   workflow: {
-    about: 'the workflow engine, the board, approvals, resources, digests, worker sessions, the feedback-loop seams, and the profiles that contribute templates',
-    packages: ['workflow', 'board-core', 'board', 'approvals-core', 'approvals', 'resources-core', 'resources', 'digest-core', 'digest', 'digest-extractive', 'decision-core', 'worker-sessions', 'experiments-core', 'evaluations-core', 'profile-software-development', 'profile-scientific-research'],
+    about: 'the workflow engine, the board, approvals, resources, digests, landing, worker sessions, the feedback-loop seams, and the profiles that contribute templates',
+    packages: ['workflow', 'board-core', 'board', 'approvals-core', 'approvals', 'resources-core', 'resources', 'digest-core', 'digest', 'digest-extractive', 'decision-core', 'landing-core', 'landing-local', 'worker-sessions', 'experiments-core', 'evaluations-core', 'profile-software-development', 'profile-scientific-research'],
   },
   workers: {
     about: 'routing and the Worker sources behind it: agent runtimes and agent Workers, and model Workers',

@@ -60,6 +60,8 @@ export default defineConfig({
       '@tsuuanmi/system-approvals': src('./packages/plugins/approvals/src/index.ts'),
       '@tsuuanmi/system-digest-core': src('./packages/digest-core/src/index.ts'),
       '@tsuuanmi/system-decision-core': src('./packages/decision-core/src/index.ts'),
+      '@tsuuanmi/system-landing-core': src('./packages/landing-core/src/index.ts'),
+      '@tsuuanmi/system-landing-local': src('./packages/plugins/landing-local/src/index.ts'),
       '@tsuuanmi/system-digest': src('./packages/plugins/digest/src/index.ts'),
       '@tsuuanmi/system-digest-extractive': src('./packages/plugins/digest-extractive/src/index.ts'),
       '@tsuuanmi/system-report': src('./packages/plugins/report/src/index.ts'),

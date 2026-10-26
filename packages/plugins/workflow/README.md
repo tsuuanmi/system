@@ -468,6 +468,14 @@ second execution path (INV-1).
     each change of state a `workflow.task.landing` event; the view's `task.landing` and
     `ctx.workflow.landing(runId)` tell where it stands. At most 32 looked at each
     `approvalPollSeconds`. No source holding the tree: nothing lands (`none`).
+  - **The landing seam** ([design](../../../docs/design/workflow-engine.md#the-landing-seam),
+    PROP-0017 L0): the request's subject and the consequences of approving it come from the landing
+    provider's `prepare`, the approved request must be on that subject, and the merge is its `land`,
+    given the subject the approved request names, only while the provider in force prepares that
+    same subject (else `unbound`, asked again): the provider of `ctx.landing` (optional; the
+    `landing-local` row, the merge above, unchanged). The engine depends on `landing-core` only:
+    with no provider, a landing waits, asking and merging nothing. A `base-moved` or `dirty`
+    refusal is asked again, any other refuses.
   - **A target that moved** ([design](../../../docs/design/workflow-engine.md#a-target-that-moved-rebase-then-check-again),
     [ADR-0068](../../../docs/decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)):
     when the commit's `fork` is not the base's head, the landing goes `rebase` (the source replays
@@ -1057,7 +1065,7 @@ in `engine.ts`:
 | `digests.ts` | the digest of a task run's result: asked for after the report, bounded per hour, set on the task through the board's `attachDigest`, failing open |
 | `carries.ts` | whether a task's run starts from the work its previous attempt left: decided at admission within its bounds, carried through the workers seam's `carry` before the run's first step, recorded, and pointed at by every brief of the run |
 | `dossiers.ts` | a board task's dossier (ADR-0070): its append-only chain of `task-dossier-entry@1.0` entries across attempts (`workflow_dossiers`), the engine's evidence and a settled step's entry, a Worker's gated append and read bound to its step's execution, `dossier_read`, and the bounded slice and `.system/DOSSIER.md` every brief of a task's run is given |
-| `landings.ts` | the landing of a task run's accepted result: watched after the report, committed on the run's branch once the task is done, its `merge` put to the policy and asked on the queue, merged on the approval, through the workers seam's `land` |
+| `landings.ts` | the landing of a task run's accepted result: watched after the report, committed on the run's branch once the task is done (and rebased, its checks run again, when its target moved), through the workers seam's `land`; then its `merge` put to the policy and asked on the queue on the subject the landing seam's provider prepares, and landed on the approval through that provider, on the approved request's subject: `ctx.landing` (the `landing-local` row); with none registered, it waits (PROP-0017 L0, [the landing seam](../../../docs/design/workflow-engine.md#the-landing-seam)) |
 | `dispatch.ts` | the dispatch pass: its settings, the ready tasks it looks at and why each is not taken, the writing step's Worker chosen by the quota score among the router's candidates, the policy, the decisions, the ask and its request, its verdict, the start on that Worker, the bounds from its rows, the pause, and the status |
 | `views.ts` | run views, `usage`, `explain` |
 | `tools.ts` | the MCP tools |

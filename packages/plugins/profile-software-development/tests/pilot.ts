@@ -20,6 +20,7 @@ import type { ArtifactRef, BoardTask, Charter, TaskInput } from '@tsuuanmi/syste
 import StoreDigests from '@tsuuanmi/system-digest'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
+import LocalLanding from '@tsuuanmi/system-landing-local'
 import Leases from '@tsuuanmi/system-leases'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import StoreResources from '@tsuuanmi/system-resources'
@@ -222,6 +223,8 @@ export async function bootPilot(script: Script = {}, extra: Plugin[] = []): Prom
       ...(script.checks ? { worktreeSetup: [{ repository: repo, commands: [SETUP_COMMAND], checks: script.checks }] } : {}),
     }),
     ctx.plugin(StoreBoard, { sweepSeconds: 0 }), ctx.plugin(StoreDigests, {}),
+    // The landing seam's provider, as the bundle's `landing-local` row mounts it (PROP-0017 L0).
+    ctx.plugin(LocalLanding),
     ctx.plugin(Workflow, { retryDelayMs: 50, maxAttempts: 2, approvalPollSeconds: 1 }),
   ]
   await Promise.all(fibers)

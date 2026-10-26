@@ -385,4 +385,10 @@ Projects mirror:
 
 ## Implementation
 
-None yet.
+- **L0** (T238): the landing seam `ctx.landing` (`landing-core`, contract 1.0, with its conformance
+  suite and the fake `FakeLanding`) and its local provider `landing-local`, which wraps ADR-0060's
+  merge through `workers.land` unchanged; the workflow engine asks its merge request and merges through
+  the seam only, on the subject the approved request names, and waits while no provider is registered
+  ([the landing seam](../design/workflow-engine.md#the-landing-seam)). The commit and ADR-0068's
+  rebase and checks stay in the engine. `status` is not read yet; the local provider answers
+  `unknown`.

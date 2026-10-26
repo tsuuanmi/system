@@ -35,11 +35,13 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [digest-extractive](../../packages/plugins/digest-extractive/README.md) | orchestration | `digests` | `digest-extractive` | `store`, `artifacts`, `leases`, `workers`, `eventLog` (optional), `mcp` (optional) | `digest-core`, `gateway-core`, `leases`, `libs`, `workers-core` |
 | [evaluations-core](../../packages/evaluations-core/README.md) | orchestration | defines `evaluations` | — | — | `experiments-core`, `libs` |
 | [experiments-core](../../packages/experiments-core/README.md) | orchestration | defines `experiments` | — | — | `libs` |
+| [landing-core](../../packages/landing-core/README.md) | orchestration | defines `landing` | — | — | — |
+| [landing-local](../../packages/plugins/landing-local/README.md) | orchestration | `landing` | `landing-local` | `workers` | `landing-core`, `workers-core` |
 | [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md) | orchestration | — | `profile-scientific-research` | `workflow`, `workers`, `artifacts`, `eventLog` | `libs` |
 | [profile-software-development](../../packages/plugins/profile-software-development/README.md) | orchestration | — | `profile-software-development` | `workflow` | `workers-core` |
 | [statistics](../../packages/statistics/README.md) | orchestration | — | — | — | — |
 | [worker-sessions](../../packages/plugins/worker-sessions/README.md) | orchestration | `workerSessions` | `worker-sessions` | `store`, `artifacts`, `mcp` (optional) | `gateway-core`, `libs` |
-| [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `agentWorkers` (optional), `approvals` (optional), `board` (optional), `digests` (optional), `dispatchAdvisor` (optional), `mcp` (optional), `resources` (optional) | `approvals-core`, `board-core`, `decision-core`, `digest-core`, `gateway-core`, `leases`, `libs`, `provider-core`, `resources-core`, `worker-sessions`, `workers-core` |
+| [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `agentWorkers` (optional), `approvals` (optional), `board` (optional), `digests` (optional), `dispatchAdvisor` (optional), `landing` (optional), `mcp` (optional), `resources` (optional) | `approvals-core`, `board-core`, `decision-core`, `digest-core`, `gateway-core`, `landing-core`, `leases`, `libs`, `provider-core`, `resources-core`, `worker-sessions`, `workers-core` |
 | [approvals](../../packages/plugins/approvals/README.md) | routing | `approvals` | `approvals` | `store`, `artifacts`, `eventLog` (optional), `mcp` (optional) | `approvals-core`, `gateway-core`, `libs` |
 | [approvals-core](../../packages/approvals-core/README.md) | routing | defines `approvals` | — | — | — |
 | [egress](../../packages/plugins/egress/README.md) | routing | `egress` | `egress` | `artifacts` | `libs`, `provider-core` |
@@ -104,6 +106,7 @@ flowchart TB
     decision_core["decision-core<br/>defines dispatchAdvisor"]
     digest["digest<br/>ctx.digests"]
     digest_extractive["digest-extractive<br/>ctx.digests"]
+    landing_local["landing-local<br/>ctx.landing"]
     profile_scientific_research["profile-scientific-research"]
     profile_software_development["profile-software-development"]
     worker_sessions["worker-sessions<br/>ctx.workerSessions"]
@@ -193,6 +196,7 @@ flowchart TB
   gateway_responses --> webserver
   gateway_responses --> workflow
   gateway_responses --> store
+  landing_local --> workers
   leases --> store
   login --> accounts
   login --> browser_patchright
@@ -297,6 +301,7 @@ flowchart TB
   workflow -.-> board
   workflow -.-> digest
   workflow -.-> decision_core
+  workflow -.-> landing_local
   workflow -.-> mcp_server
   workflow -.-> resources
 ```
@@ -356,6 +361,8 @@ flowchart TB
     digest_extractive["digest-extractive<br/>ctx.digests"]
     evaluations_core["evaluations-core<br/>defines evaluations"]
     experiments_core["experiments-core<br/>defines experiments"]
+    landing_core["landing-core<br/>defines landing"]
+    landing_local["landing-local<br/>ctx.landing"]
     profile_software_development["profile-software-development"]
     worker_sessions["worker-sessions<br/>ctx.workerSessions"]
     workflow["workflow<br/>ctx.workflow"]
@@ -437,6 +444,8 @@ flowchart TB
   gateway_responses --> gateway_core
   gateway_responses --> gateway_turns
   gateway_turns --> gateway_core
+  landing_local --> landing_core
+  landing_local --> workers_core
   login --> display_virtual
   login --> gateway_core
   login --> provider_core
@@ -489,6 +498,7 @@ flowchart TB
   workflow --> decision_core
   workflow --> digest_core
   workflow --> gateway_core
+  workflow --> landing_core
   workflow --> leases
   workflow --> provider_core
   workflow --> resources_core

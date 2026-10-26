@@ -1,0 +1,14 @@
+{
+  "name": "@tsuuanmi/system-landing-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Gate seam definition: ctx.landing, an accepted result put on its target on an approval of its exact head and target, reporting the landed commit or a typed refusal; with its conformance suite",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib", "plugin-manifest.json"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" },
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" }
+}

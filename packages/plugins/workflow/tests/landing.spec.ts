@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Context, type Fiber } from '@deepseek-ai/cordis'
+import { Context, type Fiber, type Plugin } from '@deepseek-ai/cordis'
 import StoreApprovals, { checkConfig } from '@tsuuanmi/system-approvals'
 import type { AutonomyPolicy, Check, Mode } from '@tsuuanmi/system-approvals-core'
 import Artifacts from '@tsuuanmi/system-artifacts'
@@ -10,6 +10,8 @@ import StoreBoard from '@tsuuanmi/system-board'
 import type { ArtifactRef } from '@tsuuanmi/system-board-core'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
+import { Landing, type LandingStatus, type LandingTarget, type Prepared } from '@tsuuanmi/system-landing-core'
+import LocalLanding from '@tsuuanmi/system-landing-local'
 import Leases from '@tsuuanmi/system-leases'
 import { captureGitSubject, sha256 } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
@@ -145,7 +147,31 @@ const LANDING_TEMPLATES: Record<string, NodeTemplate[]> = {
   ],
 }
 
-async function boot(merge: Mode, lander: Lander | undefined, requires: Check[] = [], template = 'solo') {
+/**
+ * A landing provider other than the local one (PROP-0017 L0): its own subject for the merge request,
+ * and a `land` that fails, as one that went away before it landed would, so the landing stays
+ * `merging` on its approval.
+ */
+class FirstLanding extends Landing {
+  static lands = 0
+  readonly id = 'first'
+
+  async prepare(t: LandingTarget): Promise<Prepared> {
+    return { outcome: 'prepared', provider: this.id, subject: { type: 'git-head', ref: t.branch, version: `landing:first:${t.base.sha}:${t.head}` }, consequences: ['Approved: the first provider lands it.', 'Denied: nothing lands.'] }
+  }
+
+  async land(): Promise<never> {
+    FirstLanding.lands++
+    throw new Error('the first provider went away before it landed')
+  }
+
+  async status(): Promise<LandingStatus> {
+    return { state: 'unknown', provider: this.id, reason: 'not read' }
+  }
+}
+
+/** The landing provider the composition mounts, as the bundle's `landing-local` row does; `swap` puts another in its place. */
+async function boot(merge: Mode, lander: Lander | undefined, requires: Check[] = [], template = 'solo', landingProvider: Plugin = LocalLanding) {
   const dir = mkdtempSync(join(tmpdir(), 'system-workflow-landing-db-'))
   const workspace = tree()
   const ctx = new Context()
@@ -161,10 +187,13 @@ async function boot(merge: Mode, lander: Lander | undefined, requires: Check[] =
     ctx.plugin(StoreApprovals, { policies: [policy(merge, requires)], sweepSeconds: 3600 }), ctx.plugin(StoreBoard, { sweepSeconds: 0 }),
   ]
   await Promise.all(fibers)
+  let landing = ctx.plugin(landingProvider)
+  await landing
   let engine = ctx.plugin(Workflow, config)
   await engine
   onTestFinished(async () => {
     await engine.dispose()
+    await landing.dispose()
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
     rmSync(dir, { recursive: true, force: true })
   })
@@ -179,6 +208,12 @@ async function boot(merge: Mode, lander: Lander | undefined, requires: Check[] =
       await engine.dispose()
       engine = ctx.plugin(Workflow, config)
       await engine
+    },
+    /** Put another landing provider in place of the one mounted. */
+    swap: async (next: Plugin) => {
+      await landing.dispose()
+      landing = ctx.plugin(next)
+      await landing
     },
   }
 }
@@ -273,6 +308,53 @@ describe('ctx.workflow lands an accepted result through the source that holds it
     expect(landingOf(busy.ctx, busy.runId)?.decisions).toBeUndefined()
     lander.answer = answer
     await until(busy.ctx, busy.runId, 'asked')
+  })
+
+  it('lands only on the subject the approved request names: a provider that changed after the approval, before the merge, lands nothing on it, and the merge is asked again on its own subject (PROP-0017 L0, INV-4, INV-5)', async () => {
+    FirstLanding.lands = 0
+    const lander = new Lander()
+    const { ctx, runId, swap } = await boot('ask', lander, [], 'solo', FirstLanding)
+    const asked = await until(ctx, runId, 'asked')
+    const [request] = await merges(ctx)
+    expect(request!.subject).toEqual({ type: 'git-head', ref: `system/run/${runId}`, version: `landing:first:${BASE.sha}:${HEAD}` })
+    await ctx.approvals.decide([{ requestId: asked.requestId!, subject: request!.subject, verdict: 'approved' }])
+    // Approved, and the first provider went away before it landed: the landing stays `merging` on that approval.
+    await vi.waitFor(() => expect(FirstLanding.lands).toBeGreaterThan(0), { timeout: 30_000 })
+    expect(landingOf(ctx, runId)?.state).toBe('merging')
+    // Another provider in its place: its subject is not the approved one, so nothing lands on that approval.
+    await swap(LocalLanding)
+    const again = await vi.waitFor(() => {
+      const l = landingOf(ctx, runId)
+      if (l?.state !== 'asked' || l.requestId === asked.requestId) throw new Error(`the landing is ${l?.state}, not asked again`)
+      return l
+    }, { timeout: 30_000, interval: 25 })
+    expect(lander.steps.map((s) => s.step)).not.toContain('merge')
+    const refusal = (again.decisions ?? []).map((d) => bodyOf(ctx, d)).find((b) => b.outcome.option === 'refuse')
+    expect(refusal?.outcome.detail).toMatchObject({ step: 'merge', cause: 'unbound' })
+    expect(refusal?.candidates[0]!.reasons[0]).toMatch(/approved system\/run\/\S+ at landing:first:.*but the landing provider in force \(local\) lands .* at landing:merge:/)
+    expect((await merges(ctx)).map((r) => [r.state, r.subject.version])).toEqual(expect.arrayContaining([
+      ['approved', `landing:first:${BASE.sha}:${HEAD}`], ['open', `landing:merge:${BASE.sha}:${HEAD}`],
+    ]))
+  })
+
+  it('waits, asking nothing and merging nothing, while no provider of ctx.landing is registered; never lands some other way (INV-2)', async () => {
+    const lander = new Lander()
+    const { ctx, runId, swap } = await boot('ask', lander)
+    const asked = await until(ctx, runId, 'asked')
+    const [request] = await merges(ctx)
+    await swap({ name: 'no-landing', apply: () => undefined })
+    await ctx.approvals.decide([{ requestId: asked.requestId!, subject: request!.subject, verdict: 'approved' }])
+    const held = await vi.waitFor(() => {
+      const l = landingOf(ctx, runId)
+      if (!l?.reason?.includes('no landing provider (ctx.landing) is registered')) throw new Error(`the landing is ${l?.state}${l?.reason ? ` (${l.reason})` : ''}`)
+      return l
+    }, { timeout: 30_000, interval: 25 })
+    expect(held.state).toBe('asked')
+    expect(lander.steps.map((s) => s.step)).toEqual(['commit'])
+    // The provider back: the approval is read, and the merge lands on it.
+    await swap(LocalLanding)
+    const merged = await until(ctx, runId, 'merged')
+    expect(merged.commit).toBe('d'.repeat(40))
   })
 })
 

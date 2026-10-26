@@ -34,6 +34,7 @@
     "@tsuuanmi/system-runtime-acp": "workspace:*",
     "@tsuuanmi/system-runtime-antigravity-cli": "workspace:*",
     "@tsuuanmi/system-worker-sessions": "workspace:*",
+    "@tsuuanmi/system-landing-local": "workspace:*",
     "@tsuuanmi/system-workflow": "workspace:*",
     "@tsuuanmi/system-gateway-anthropic": "workspace:*",
     "@tsuuanmi/system-profile-scientific-research": "workspace:*",

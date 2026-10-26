@@ -22,7 +22,7 @@ let server: FakeOpenAi
 let initOutput = ''
 
 /** The rows the api-first composition mounts: no display, browser, website driver, login, account, turn, or gateway row. */
-const API_FIRST_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'plugin-host', 'resources', 'approvals', 'egress', 'workers', 'agent-runtimes', 'runtime-claude-agent-sdk', 'runtime-codex-sdk', 'runtime-acp', 'runtime-antigravity-cli', 'agent-workers', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'board', 'digest', 'report', 'profile-software-development', 'profile-scientific-research', 'web-ui', 'mcp-server']
+const API_FIRST_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'plugin-host', 'resources', 'approvals', 'egress', 'workers', 'agent-runtimes', 'runtime-claude-agent-sdk', 'runtime-codex-sdk', 'runtime-acp', 'runtime-antigravity-cli', 'agent-workers', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'landing-local', 'workflow', 'board', 'digest', 'report', 'profile-software-development', 'profile-scientific-research', 'web-ui', 'mcp-server']
 
 async function waitFor(path: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs

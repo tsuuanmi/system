@@ -29,6 +29,8 @@ describe('architecture rules', () => {
     const governed = [
       join(packages, 'workers-core', 'src'), join(plugins, 'workers', 'src'), join(plugins, 'workflow', 'src'), join(packages, 'gateway-turns', 'src'),
       join(packages, 'models-core', 'src'), join(plugins, 'models', 'src'), join(packages, 'decision-core', 'src'),
+      // The landing seam and its local provider name no code host; a host's provider is its own plugin (PROP-0017).
+      join(packages, 'landing-core', 'src'), join(plugins, 'landing-local', 'src'),
       // The feedback loop's seams compare provider families for independence; they never name one.
       join(packages, 'experiments-core', 'src'), join(packages, 'evaluations-core', 'src'),
       // The client edge and the other control-plane plugins: one MCP interface for every client (ADR-0011).
@@ -123,6 +125,7 @@ describe('architecture rules', () => {
     }
     expect(existsSync(join(plugins, 'workflow', 'conformance', 'profiles.ts'))).toBe(true)
     expect(existsSync(join(packages, 'decision-core', 'conformance', 'dispatch-advisor.ts'))).toBe(true)
+    expect(existsSync(join(packages, 'landing-core', 'conformance', 'landing.ts'))).toBe(true)
   })
 
   it('holds every guarantee seam to a conformance suite at a pinned contract, so a worse provider cannot pass unnoticed (ADR-0036, ADR-0037)', () => {
@@ -132,7 +135,7 @@ describe('architecture rules', () => {
       workerSessions: 'plugins/worker-sessions/conformance/worker-sessions.ts', workflow: 'plugins/workflow/conformance/workflow.ts', workers: 'workers-core/conformance/workers.ts',
       board: 'board-core/conformance/board.ts', approvals: 'approvals-core/conformance/approvals.ts', resources: 'resources-core/conformance/resources.ts',
       pluginHost: 'plugin-host-core/conformance/plugin-host.ts', experiments: 'experiments-core/conformance/experiments.ts',
-      evaluations: 'evaluations-core/conformance/evaluations.ts',
+      evaluations: 'evaluations-core/conformance/evaluations.ts', landing: 'landing-core/conformance/landing.ts',
     }
     for (const [seam, file] of Object.entries(suites)) {
       const source = readFileSync(join(packages, file), 'utf8')

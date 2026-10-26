@@ -23,6 +23,14 @@
  * The workers seam's `land` is optional: with no source that holds the tree, nothing lands, and the
  * task is done as before.
  *
+ * **One landing seam** (PROP-0017 L0): what happens after the commit and a rebase, the subject the
+ * merge request binds and what an approval does (`prepare`), and the landing itself on that approval
+ * (`land`, on the subject the approved request names), go through the landing seam `ctx.landing`,
+ * which the composition provides (the `landing-local` row: today's local merge, ADR-0060, unchanged).
+ * The engine depends on the definition only: with no provider registered, the landing waits as it
+ * is, never landing some other way (INV-2). The commit, the rebase, and the checks run again stay
+ * here, the same for every provider.
+ *
  * **A target that moved** (ADR-0068, D82): when the base branch moved since the result's work started
  * (the commit's `fork` is not the base's head), the result is rebased onto it before the merge is
  * asked, in the run's worktree, by the source that holds it: replayed, the declared generated files made
@@ -34,6 +42,7 @@
  */
 import type { ApprovalRequest, Approvals } from '@tsuuanmi/system-approvals-core'
 import { type ArtifactRef, type Board, BoardError, type BoardTask, REOPEN_REASON_MAX, type Subject } from '@tsuuanmi/system-board-core'
+import { type Landed as LandedOn, type LandingProvider, type LandingTarget, sameSubject } from '@tsuuanmi/system-landing-core'
 import { BRIEF_LIMITS, subjectId } from '@tsuuanmi/system-libs'
 import { AdmissionFailure, type Landed, type LandStep, type RebasePhase, RUN_CHECKS, type RunCheck, type WorkerSource, type WorkRequirement } from '@tsuuanmi/system-workers-core'
 import { type Draft, recordBrief, renderedChars } from './briefs.ts'
@@ -62,9 +71,6 @@ const PRODUCER = { producer: { type: 'system' as const, ref: 'workflow' } }
 
 type Result = { artifacts: ArtifactRef[]; subject: Subject }
 
-/** The landing version a `merge` request binds to: the base branch's head and the run branch's head. */
-export const landingVersion = (base: string, head: string): string => `landing:merge:${base}:${head}`
-
 /** What a merge request says of a landing rebased onto its target (ADR-0068); empty when its head is not a rebase. */
 const rebasedNote = (landing: TaskLanding): string => {
   const r = landing.rebase
@@ -79,6 +85,26 @@ export class TaskLandings {
   private sweeping: Promise<void> | undefined
 
   constructor(private readonly e: Engine) {}
+
+  /**
+   * The provider a landing goes through after its commit (PROP-0017 L0): the provider of the seam
+   * `ctx.landing` (the `landing-local` row, or another), or undefined while none is registered. The
+   * engine never picks one itself: with none, a landing waits as it is (INV-2).
+   */
+  provider(): LandingProvider | undefined {
+    return this.e.ctx.get('landing') ?? undefined
+  }
+
+  /** A landing that waits for a provider of `ctx.landing`: it stays as it is, saying why. */
+  private noProvider(row: TaskRow, landing: TaskLanding, what: string): TaskLanding {
+    const why = `no landing provider (ctx.landing) is registered: ${what} waits for one (the landing-local row provides it); nothing is merged meanwhile`
+    return landing.reason === why ? this.touch(row, landing) : { ...landing, reason: why, at: now() }
+  }
+
+  /** What a committed landing would land: its run's branch at its head, on its base as it was read. */
+  private targetOf(row: TaskRow, landing: TaskLanding): LandingTarget {
+    return { runId: row.run_id, workspace: landing.workspace!, repository: landing.repository!, branch: landing.branch!, head: landing.head!, base: landing.base! }
+  }
 
   /**
    * In the transaction that reports a run: a completed run whose result reached its task, on a git
@@ -190,7 +216,7 @@ export class TaskLandings {
     }
     // Asked again (a base that moved): what the earlier ask left is not this one's.
     for (const key of ['reason', 'cause', 'requestId', 'expiresAt', 'approval'] as const) delete committed[key]
-    if (landed.contained) return this.merged(row, committed, { ...landed, outcome: 'merged', commit: landed.base.sha, already: true, source: landed.source }, [decision], `${landed.base.branch} at ${landed.base.sha} already holds ${landed.head}: nothing is left to merge`)
+    if (landed.contained) return this.merged(row, committed, { commit: landed.base.sha, already: true, source: landed.source }, [decision], `${landed.base.branch} at ${landed.base.sha} already holds ${landed.head}: nothing is left to merge`)
     if (landed.fork) committed.fork = landed.fork
     // The base moved since the result's work started: it is rebased there before the merge is asked (ADR-0068).
     if (landed.fork && landed.fork !== landed.base.sha) {
@@ -568,6 +594,9 @@ export class TaskLandings {
   private async ask(row: TaskRow, board: Board, landing: TaskLanding): Promise<TaskLanding | undefined> {
     const approvals = queueOf(this.e)
     if (!approvals) return landing.reason ? this.touch(row, landing) : { ...landing, reason: 'no approval queue (ctx.approvals) is loaded: the merge waits for one', at: now() }
+    // What would land, and the subject the request binds it to, are the landing provider's (PROP-0017 L0): with none, nothing is asked.
+    const provider = this.provider()
+    if (!provider) return this.noProvider(row, landing, 'the merge request')
     const task = await board.task(row.task_id)
     const project = task ? { projectId: task.projectId } : {}
     const verdict = await approvals.check({ class: 'merge', ...project })
@@ -576,16 +605,16 @@ export class TaskLandings {
     if (verdict.failedChecks?.length) return this.refuse(row, landing, 'merge', 'checks', `the autonomy policy ${verdict.policy.id} requires ${verdict.failedChecks.join(', ')} before a merge, and no landing runs them: merge ${landing.branch} by hand once they pass`, [verdict.decision])
     // A merge always asks (D56): a queue whose policy gave it anything but ask is not one this landing merges on.
     if (verdict.mode !== 'ask') return this.refuse(row, landing, 'merge', 'failed', `a merge always asks the operator (D56), but the autonomy policy ${verdict.policy.id} gives merge ${verdict.mode}: nothing is merged; merge ${landing.branch} by hand`, [verdict.decision])
-    const subject: Subject = { type: 'git-head', ref: landing.branch!, version: landingVersion(landing.base!.sha, landing.head!) }
-    if (subject.version!.length > 128) return this.refuse(row, landing, 'merge', 'failed', `a landing version of this repository's object ids is longer than a request's subject holds (${subject.version!.length} > 128): merge ${landing.branch} by hand`, [verdict.decision])
+    const prepared = await provider.prepare(this.targetOf(row, landing))
+    if (prepared.outcome === 'refused') return this.refuse(row, landing, 'merge', prepared.cause, prepared.reason, [verdict.decision])
+    const subject: Subject = { ...prepared.subject }
     const request = await this.adopt(approvals, row, subject, project) ?? await approvals.request({
       subject,
       action: {
         class: 'merge',
         summary: line(`Merge the accepted result of task ${task ? `"${line(task.title, 80)}"` : row.task_id} into ${landing.base!.branch}`, 300),
         consequences: [
-          `Approved: system merges ${landing.branch} (at ${landing.head}) into ${landing.base!.branch} (at ${landing.base!.sha}) in ${landing.repository}, as one merge commit. Never a force or a push; a conflict or a moved branch changes nothing.`,
-          `Denied or unanswered: nothing is merged; ${landing.branch} keeps the commit.`,
+          ...prepared.consequences,
           'A merge always asks the operator (D56), whatever the policy\'s mode for merge.',
           // Rebased onto the base as it is now (ADR-0068): what the operator approves is that tree, checked again.
           rebasedNote(landing),
@@ -613,7 +642,11 @@ export class TaskLandings {
     const request = await approvals.get(landing.requestId!)
     if (!request) return this.refuse(row, landing, 'merge', 'failed', `the approval queue no longer knows request ${landing.requestId}`, [])
     if (request.state === 'open' || request.state === 'batched') return this.touch(row, landing)
-    const bound = request.subject.ref === landing.branch && request.subject.version === landingVersion(landing.base!.sha, landing.head!)
+    // Bound to this landing's exact subject, as its provider gives it (PROP-0017 L0): with no provider, it cannot be told, and it waits.
+    const provider = this.provider()
+    if (!provider) return this.noProvider(row, landing, 'the answer to the merge request')
+    const prepared = await provider.prepare(this.targetOf(row, landing))
+    const bound = prepared.outcome === 'prepared' && sameSubject(prepared.subject, request.subject)
     if (request.state === 'approved' && bound && request.resolution?.cause === 'verdict' && request.resolution.approval) {
       return { ...landing, state: 'merging', approval: request.resolution.decision, at: now() }
     }
@@ -622,14 +655,34 @@ export class TaskLandings {
     return { ...landing, state: 'rejected', reason: `request ${request.requestId} was not approved (${why}): nothing is merged; ${landing.branch} keeps the commit ${landing.head}`, ...(request.resolution ? { decisions: [...(landing.decisions ?? []), request.resolution.decision] } : {}), at: now() }
   }
 
-  /** Have the source merge the branch, on the policy's or the operator's word. */
+  /**
+   * Have the landing provider land the branch on its target, on the operator's word (PROP-0017 L0; the
+   * local provider merges it through the source that holds it). The subject `land` is given is the one
+   * the approved request names, read from the queue, and only while the provider in force prepares that
+   * same subject: a provider that changed since the approval (a restart in `merging` with another one)
+   * lands nothing on it, and the merge is asked again on its own subject (INV-5). With no provider, or
+   * no queue to read the request from, it waits.
+   */
   private async merge(row: TaskRow, board: Board, landing: TaskLanding): Promise<TaskLanding | undefined> {
-    const land = this.e.ctx.workers.land
-    if (!land) return this.refuse(row, landing, 'merge', 'failed', 'the workers seam cannot land a result (no land)', [landing.approval!])
+    const provider = this.provider()
+    if (!provider) return this.noProvider(row, landing, 'the approved merge')
+    const approvals = queueOf(this.e)
+    if (!approvals) return landing.reason ? this.touch(row, landing) : { ...landing, reason: 'no approval queue (ctx.approvals) is loaded: the approved merge waits for one to read its request from', at: now() }
+    const request = await approvals.get(landing.requestId!)
+    if (!request || request.state !== 'approved' || request.resolution?.decision !== landing.approval) {
+      return this.refuse(row, landing, 'merge', 'failed', `the approval queue does not hold request ${landing.requestId} approved by decision ${landing.approval}: nothing is merged`, [landing.approval!])
+    }
+    const target = this.targetOf(row, landing)
+    const prepared = await provider.prepare(target)
+    if (prepared.outcome === 'refused') return this.refuse(row, landing, 'merge', prepared.cause, prepared.reason, [landing.approval!])
+    if (!sameSubject(prepared.subject, request.subject)) {
+      const refused = this.refuse(row, landing, 'merge', 'unbound', `request ${request.requestId} approved ${request.subject.ref} at ${request.subject.version ?? 'no version'}, but the landing provider in force (${provider.id}) lands ${prepared.subject.ref} at ${prepared.subject.version}: nothing is merged on that approval; it is asked again on the provider's own subject`, [landing.approval!])
+      return { ...refused, state: 'commit', reason: refused.reason!, at: now() }
+    }
+    const approved = { type: 'git-head' as const, ref: request.subject.ref, version: request.subject.version! }
     const task = await board.task(row.task_id)
-    const message = this.mergeMessage(row, task, landing)
-    const landed = await land.call(this.e.ctx.workers, { step: 'merge', runId: row.run_id, workspace: landing.workspace!, head: landing.head!, base: landing.base!, message } satisfies LandStep)
-    if (!landed) return this.refuse(row, landing, 'merge', 'gone', `no Worker source holds the worktree of run ${row.run_id} any more`, [landing.approval!])
+    const message = this.mergeMessage(row, task, landing, approved.version)
+    const landed = await provider.land({ ...target, subject: approved, approval: landing.approval!, message })
     if (landed.outcome === 'refused') {
       // The base moved or was not clean when the approval came: the merge is asked again on the base as it is then.
       if (landed.cause === 'base-moved' || landed.cause === 'dirty') {
@@ -638,11 +691,10 @@ export class TaskLandings {
       }
       return this.refuse(row, landing, 'merge', landed.cause, landed.reason, [landing.approval!])
     }
-    if (landed.outcome !== 'merged') return this.refuse(row, landing, 'merge', 'failed', `source ${landed.source} answered ${landed.outcome} to a merge`, [landing.approval!])
-    return this.merged(row, landing, landed, [landing.approval!], landed.already ? `${landing.base!.branch} already held ${landing.head} (merged before a restart)` : `${landing.branch} at ${landing.head} is merged into ${landing.base!.branch} as ${landed.commit}`)
+    return this.merged(row, landing, { ...landed, source: landed.source ?? landed.provider }, [landing.approval!], landed.already ? `${landing.base!.branch} already held ${landing.head} (merged before a restart)` : `${landing.branch} at ${landing.head} is merged into ${landing.base!.branch} as ${landed.commit}`)
   }
 
-  private merged(row: TaskRow, landing: TaskLanding, landed: Extract<Landed, { outcome: 'merged' }> & { source: string }, inputs: ArtifactRef[], why: string): TaskLanding {
+  private merged(row: TaskRow, landing: TaskLanding, landed: Pick<LandedOn, 'commit' | 'already' | 'regenerated'> & { source: string }, inputs: ArtifactRef[], why: string): TaskLanding {
     const regenerated = landed.regenerated
     // A conflict only in files the repository declares generated, made again by its commands (T166): named, and their commands' autonomy decisions among the inputs (INV-13).
     const remade = regenerated ? [
@@ -754,12 +806,12 @@ export class TaskLandings {
     ].join('\n')
   }
 
-  private mergeMessage(row: TaskRow, task: BoardTask | undefined, landing: TaskLanding): string {
+  private mergeMessage(row: TaskRow, task: BoardTask | undefined, landing: TaskLanding, version: string): string {
     const on = landing.requestId ? `the operator's approval of request ${landing.requestId}` : 'the autonomy policy'
     return [
       `system: merge task ${row.task_id}${task ? `: ${line(task.title)}` : ''}`, '',
       `Lands ${landing.branch} at ${landing.head}, the accepted result of run ${row.run_id}, into ${landing.base!.branch} at ${landing.base!.sha}, on ${on} (decision ${landing.approval}).`, '',
-      `System-Task: ${row.task_id}`, `System-Run: ${row.run_id}`, `System-Landing: ${landingVersion(landing.base!.sha, landing.head!)}`,
+      `System-Task: ${row.task_id}`, `System-Run: ${row.run_id}`, `System-Landing: ${version}`,
     ].join('\n')
   }
 

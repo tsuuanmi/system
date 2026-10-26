@@ -1,0 +1,23 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-landing-local",
+  "version": "0.0.0",
+  "description": "ctx.landing, local: an accepted result merged into the repository's checked-out branch by the source that holds its worktree (workers.land), on the operator's merge approval of landing:merge:<base>:<head>; never a force or a push (ADR-0060)",
+  "class": {
+    "kind": "core",
+    "component": "gate"
+  },
+  "provides": [
+    {
+      "seam": "landing",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "workers",
+      "range": "^1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

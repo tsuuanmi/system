@@ -1,0 +1,19 @@
+{
+  "schema": "plugin-manifest@1.1",
+  "name": "@tsuuanmi/system-landing-core",
+  "version": "0.0.0",
+  "description": "Gate seam definition: ctx.landing, an accepted result put on its target on an approval of its exact head and target, reporting the landed commit or a typed refusal; with its conformance suite",
+  "class": {
+    "kind": "core",
+    "component": "gate"
+  },
+  "provides": [],
+  "consumes": [],
+  "defines": [
+    {
+      "seam": "landing",
+      "version": "1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

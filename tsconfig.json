@@ -144,6 +144,12 @@
       "@tsuuanmi/system-decision-core": [
         "packages/decision-core/src/index.ts"
       ],
+      "@tsuuanmi/system-landing-core": [
+        "packages/landing-core/src/index.ts"
+      ],
+      "@tsuuanmi/system-landing-local": [
+        "packages/plugins/landing-local/src/index.ts"
+      ],
       "@tsuuanmi/system-digest": [
         "packages/plugins/digest/src/index.ts"
       ],

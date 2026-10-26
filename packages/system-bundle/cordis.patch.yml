@@ -131,6 +131,12 @@
       name: '@tsuuanmi/system-models'                 # ctx.models and the `models` Worker source (no models until configured)
     - id: worker-sessions
       name: '@tsuuanmi/system-worker-sessions'       # sessions, mailboxes, peer messages; MCP session_send/session_inbox
+    # --- the landing seam (PROP-0017 L0): ctx.landing, local. An accepted result is merged into the
+    # repository's checked-out branch by the source that holds its worktree, on the operator's merge
+    # approval; never a force or a push (ADR-0060). Off, nothing is merged: a landing waits at its
+    # merge, saying why, until a provider of ctx.landing is registered (INV-2). ---
+    - id: landing-local
+      name: '@tsuuanmi/system-landing-local'         # ctx.landing over ctx.workers
     - id: workflow
       name: '@tsuuanmi/system-workflow'              # the single engine; MCP ask/research/result/usage/explain
     # --- the board (B4): ctx.board and the board_* MCP tools. It asks for every approval through

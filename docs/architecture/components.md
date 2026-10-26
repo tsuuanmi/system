@@ -264,9 +264,12 @@ runs the work the router admitted to them. Callers never reach a source directly
   queue, an approved deferred tool call's session is continued once, and a plain run that wrote
   records the policy's checks still pending ([remediation on the
   queue](../design/workflow-engine.md#remediation-on-the-approval-queue)). A board task's result
-  accepted in its run's worktree is landed: committed on the run's branch, then merged on a
-  `merge` request, both through the `workers` seam's optional `land`
-  ([landing an accepted result](../design/workflow-engine.md#landing-an-accepted-result)). A board
+  accepted in its run's worktree is landed: committed on the run's branch through the `workers`
+  seam's optional `land`, then merged on a `merge` request through the landing seam `ctx.landing`
+  (defined in `landing-core`; its provider `landing-local`, a bundle row, merges through the same
+  `land`; with no provider registered, a landing waits)
+  ([landing an accepted result](../design/workflow-engine.md#landing-an-accepted-result),
+  [the landing seam](../design/workflow-engine.md#the-landing-seam)). A board
   task's next attempt starts from the work its previous attempt left when that one failed only
   after its writing step, through the optional `carry`, decided and recorded by the engine
   ([starting from the previous attempt's work](../design/workflow-engine.md#starting-from-the-previous-attempts-work)).
@@ -339,6 +342,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   [digest-core](../../packages/digest-core/README.md), [digest](../../packages/plugins/digest/README.md),
   [digest-extractive](../../packages/plugins/digest-extractive/README.md),
   [decision-core](../../packages/decision-core/README.md),
+  [landing-core](../../packages/landing-core/README.md),
+  [landing-local](../../packages/plugins/landing-local/README.md),
   [experiments-core](../../packages/experiments-core/README.md),
   [evaluations-core](../../packages/evaluations-core/README.md),
   [statistics](../../packages/statistics/README.md).
