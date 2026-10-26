@@ -59,6 +59,13 @@ function repository(): string {
     '',
   ].join('\n'))
   writeFileSync(join(dir, 'fail.mjs'), "console.error('gen: the sources do not parse')\nprocess.exit(2)\n")
+  // What pnpm does before a script unless told not to (T235): an install, which needs the network the confinement does not give.
+  writeFileSync(join(dir, 'pnpm-like.mjs'), [
+    "if (process.env.pnpm_config_verify_deps_before_run !== 'false') { console.error('pnpm-like: verify-deps-before-run started an install: failed to lookup address'); process.exit(1) }",
+    "if (process.env.pnpm_config_offline !== 'true') { console.error('pnpm-like: not offline'); process.exit(1) }",
+    "await import('./gen.mjs')",
+    '',
+  ].join('\n'))
   writeFileSync(join(dir, 'dep.js'), 'export const dep = 1\n')
   writeFileSync(join(dir, 'generated.txt'), listing('dep.js'))
   git(dir, 'add', '.')
@@ -176,6 +183,13 @@ describe('a landing\'s conflict confined to generated files (worktreeSetup gener
       // Asked again (a restart): found merged, not made twice.
       expect(await ctx.workers.land!({ step: 'merge', runId: 'run_gen', workspace, head, base, message: 'again' })).toMatchObject({ outcome: 'merged', commit: merged.commit, already: true })
       expect(git(repo, 'rev-parse', 'HEAD')).toBe(merged.commit)
+    })
+
+    it('runs the generated files\' commands with pnpm\'s verify-deps-before-run off and offline, as a check\'s, so a pnpm script never starts an install (T235)', async () => {
+      const repo = repository()
+      const { merged } = await (await boot(repo, ['node pnpm-like.mjs'])).land('run_pnpm')
+      expect(merged).toMatchObject({ outcome: 'merged', regenerated: { files: ['generated.txt'], commands: ['node pnpm-like.mjs'] } })
+      expect(readFileSync(join(repo, 'generated.txt'), 'utf8')).toBe(listing('dep.js', 'main.js', 'used.js'))
     })
 
     it('refuses a merge that also conflicts in a source file: nothing is run, and the repository is as it was (INV-2)', async () => {

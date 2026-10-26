@@ -5,16 +5,16 @@
  * run's worktree, rather than refused. Each command is judged by the autonomy policy as a `command`
  * with its exact argv and runs only when the policy allows it unasked (as a run's checks, ./checks.ts);
  * it runs in the setup's confinement (the host read-only but the worktree and the setup's private
- * views, no network) within the setup's deadline, and only in a worktree its setup prepared under the
- * definition loaded now, so its dependencies are there. Anything else is a refusal naming why (INV-2):
+ * views, no network) within the setup's deadline, with pnpm's verify-deps-before-run off and offline
+ * as a check is (./setup.ts `noInstallEnvironment`), so it never starts an install, and only in a
+ * worktree its setup prepared under the definition loaded now, so its dependencies are there. Anything else is a refusal naming why (INV-2):
  * the git side (what changed, the repeat, the merge commit) is the worktree's owner's (./worktrees.ts).
  * @module @tsuuanmi/system-agent-workers/regenerate
  */
 import { realpathSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
-import { childEnvironment } from '@tsuuanmi/system-agent-runtime-core'
 import { CHECKS } from './gate.ts'
-import { confineIn, generatedPath, runBounded, type Setup } from './setup.ts'
+import { confineIn, generatedPath, noInstallEnvironment, runBounded, type Setup } from './setup.ts'
 
 /** How much of a failed command's output a refusal keeps, from the end (INV-9). */
 const OUTPUT_TAIL = 1500
@@ -82,7 +82,7 @@ export function regenerationOf(ctx: Context, setups: ReadonlyMap<string, Setup>,
       }
       try {
         const deadline = AbortSignal.timeout(setup.timeoutSeconds * 1000)
-        const env = childEnvironment()
+        const env = noInstallEnvironment()
         for (const [i, argv] of generated.commands.entries()) {
           const line = generated.lines[i]!
           let ended

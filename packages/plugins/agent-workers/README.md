@@ -437,9 +437,10 @@ The **`agents` Worker source**: agent runtimes as Workers
       (commands allowed unasked only, confined, offline), a `gate` decision of
       rule `agent-workers.worktree-setup-again`; an install that lacks a
       package refuses the checks as `dependency_unavailable`, naming it. Setups
-      run with pnpm offline and checks with pnpm's verify-deps-before-run off and
-      offline, each under its `pnpm_config_` and `npm_config_` names (pnpm 11 and
-      later read only the first); a check quiet for `checkStallSeconds` (default
+      run with pnpm offline, and checks and a landing's generated files' commands
+      with pnpm's verify-deps-before-run off and offline (`noInstallEnvironment`),
+      each under its `pnpm_config_` and `npm_config_` names (pnpm 11 and later
+      read only the first); a check quiet for `checkStallSeconds` (default
       300) is told by `agent-workers.check` events (`stalled` with its deadline,
       `resumed`, `ended`);
   - an agent can write the worktree's `.git` file, so git never follows it: a
@@ -517,8 +518,9 @@ The **`agents` Worker source**: agent runtimes as Workers
     again in the run's worktree (intact, free, clean, on its branch at the head): detached at the
     base, `git merge --no-ff --no-commit`, each conflicted file taken from either side, then the
     commands run in order, each only when the policy lets its argv run unasked, in the setup's
-    confinement and views (`confineIn`), within the setup's deadline, in a worktree set up under
-    the setup loaded now. They must exit 0, change only declared files, and leave the index; the
+    confinement and views (`confineIn`), within the setup's deadline, with pnpm's
+    verify-deps-before-run off and offline as a check's (`noInstallEnvironment`), in a worktree set
+    up under the setup loaded now. They must exit 0, change only declared files, and leave the index; the
     merge is committed (parents the base and the head), the commands run again and must change
     nothing, and the base, checked again, is fast-forwarded to that commit (`merged` with
     `regenerated`: the files, the commands, their autonomy decisions). The worktree goes back on

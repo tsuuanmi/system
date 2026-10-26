@@ -23,7 +23,6 @@
  */
 import { realpathSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
-import { childEnvironment } from '@tsuuanmi/system-agent-runtime-core'
 import type { ArtifactRef } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import { captureGitSubject, subjectId } from '@tsuuanmi/system-libs'
@@ -31,18 +30,8 @@ import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type { Checked, CheckResult, CheckStep, RunCheck } from '@tsuuanmi/system-workers-core'
 import { CHECKS } from './gate.ts'
-import { confineIn, type Confined, NESTED_REFUSED, packageManagerSettings, runBounded, type Setup, WorktreeSetups } from './setup.ts'
+import { confineIn, type Confined, NESTED_REFUSED, noInstallEnvironment, runBounded, type Setup, WorktreeSetups } from './setup.ts'
 import type { Worktrees } from './worktrees.ts'
-
-/**
- * The environment a check's command runs in (T235): the child environment, with pnpm's
- * verify-deps-before-run off, so a check never starts an install (the setup owns installation, and
- * runs again for a result that changed its dependencies), and pnpm (and npm) offline, so nothing in a
- * check waits on a network the confinement does not give.
- */
-export function checkEnvironment(): Record<string, string> {
-  return childEnvironment([], packageManagerSettings({ verify_deps_before_run: 'false', offline: 'true' }))
-}
 
 /**
  * The event a check's stall is told by (T235): `stalled` once it printed nothing for its setup's
@@ -253,7 +242,7 @@ export class RunChecks {
     const worktree = real(found.path)
     const tree = subjectId({ type: 'git-head', ...step.subject })
     const stopped = (): unknown => signal?.reason ?? new ProviderError('aborted', 'stopped')
-    const env = checkEnvironment()
+    const env = noInstallEnvironment()
     let moved: string | undefined
     for (const a of todo) {
       const base = { check: a.check, argv: a.argv, autonomy: a.autonomy }

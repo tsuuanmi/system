@@ -35,7 +35,7 @@ import { repositoryKey } from './worktrees.ts'
  * read only `pnpm_config_<name>` (an `npm_config_<name>` is ignored there), and npm and earlier
  * pnpm read `npm_config_<name>` (T235).
  */
-export function packageManagerSettings(settings: Readonly<Record<string, string>>): Record<string, string> {
+function packageManagerSettings(settings: Readonly<Record<string, string>>): Record<string, string> {
   return Object.fromEntries(Object.entries(settings).flatMap(([name, value]) => [[`pnpm_config_${name}`, value], [`npm_config_${name}`, value]]))
 }
 
@@ -46,6 +46,17 @@ export function packageManagerSettings(settings: Readonly<Record<string, string>
  */
 export function setupEnvironment(): Record<string, string> {
   return childEnvironment([], packageManagerSettings({ offline: 'true' }))
+}
+
+/**
+ * The environment a command that must not install runs in: a check's (./checks.ts) and a landing's
+ * generated files' commands (./regenerate.ts). The child environment, with pnpm's
+ * verify-deps-before-run off, so pnpm never starts an install before a script (the setup owns
+ * installation, and runs again for a result that changed its dependencies), and pnpm (and npm)
+ * offline, so nothing waits on a network the confinement does not give (T235).
+ */
+export function noInstallEnvironment(): Record<string, string> {
+  return childEnvironment([], packageManagerSettings({ verify_deps_before_run: 'false', offline: 'true' }))
 }
 
 /** A host directory the setup sees as a private, writable one of its own (a package store's index, say). */

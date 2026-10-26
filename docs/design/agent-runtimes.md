@@ -417,8 +417,9 @@ at a time per repository, as every worktree change:
   conflicted file is taken from either side (the run's, else the base's) and staged. The commands
   then run in order, each judged by the autonomy policy as a `command` with its exact argv and run
   only when the policy allows it unasked, in the setup's confinement (the host read-only but the
-  worktree and the setup's private views, no network) within the setup's deadline, and only in a
-  worktree its setup prepared under the definition loaded now. They must exit 0, change no file
+  worktree and the setup's private views, no network) within the setup's deadline, with pnpm's
+  verify-deps-before-run off and offline as a check's command is (T235), so a `pnpm` script never
+  starts an install there, and only in a worktree its setup prepared under the definition loaded now. They must exit 0, change no file
   but declared ones (git's diff of the files against the index, and the untracked files git does
   not ignore), and leave the index as it was; the changed files are staged and the merge committed
   by the system with the engine's message, its parents checked to be the base and the head. The
@@ -574,7 +575,8 @@ worktreeSetup:
   a `gate` decision of rule `agent-workers.worktree-setup-again`; an install that lacks a package
   refuses the checks as `dependency_unavailable`, naming it. A check itself runs with pnpm's
   verify-deps-before-run off (`pnpm_config_verify_deps_before_run=false`, and its `npm_config_` name),
-  offline, so it never installs; one quiet for
+  offline, so it never installs (a landing's generated files' commands run in the same environment);
+  one quiet for
   `checkStallSeconds` is told by an `agent-workers.check` event.
 
 - **Only on the result's tree:** the worktree is still there (`gone`), no agent run of its

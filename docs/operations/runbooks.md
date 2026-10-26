@@ -3201,6 +3201,8 @@ happens only on your approval of its `merge` request.
 
 1. **The setup first.** The commands run in the run's worktree, in the environment the repository's
    setup prepares and in its confinement (no network): [set up a run's worktree](#set-up-a-runs-worktree).
+   As a check's do, they run with pnpm's verify-deps-before-run off and offline, so `corepack pnpm
+   gen:manifests` never starts an install there (T235).
 2. **The generated files and their commands**, beside the setup in the `agent-workers` row of your
    profile patch. For the `system` repository:
 

@@ -21,10 +21,10 @@ import WorkerRouter, { type RunCheck, type WorkRequirement } from '@tsuuanmi/sys
 import type { Checked } from '@tsuuanmi/system-workers-core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
-import { checkEnvironment, RunChecks, type RunChecksOptions } from '../src/checks.ts'
+import { RunChecks, type RunChecksOptions } from '../src/checks.ts'
 import { missingPackages } from '../src/dependencies.ts'
 import AgentWorkers, { type Config } from '../src/index.ts'
-import { loadSetups, setupEnvironment } from '../src/setup.ts'
+import { loadSetups, noInstallEnvironment, setupEnvironment } from '../src/setup.ts'
 import { Worktrees } from '../src/worktrees.ts'
 
 const cleanups: Array<() => unknown> = []
@@ -594,7 +594,7 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
 
   it('runs a check with pnpm\'s verify-deps-before-run off and offline, and a setup offline, so neither starts an install or waits on a network (T235)', () => {
     // pnpm 11 and later read only the pnpm_config_ names; npm and earlier pnpm the npm_config_ ones.
-    expect(checkEnvironment()).toMatchObject({ pnpm_config_verify_deps_before_run: 'false', pnpm_config_offline: 'true', npm_config_verify_deps_before_run: 'false', npm_config_offline: 'true' })
+    expect(noInstallEnvironment()).toMatchObject({ pnpm_config_verify_deps_before_run: 'false', pnpm_config_offline: 'true', npm_config_verify_deps_before_run: 'false', npm_config_offline: 'true' })
     expect(setupEnvironment()).toMatchObject({ pnpm_config_offline: 'true', npm_config_offline: 'true' })
   })
 
@@ -602,7 +602,7 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
   // verify-deps-before-run off and offline (an npm_config_ name alone, pnpm 12 ignores).
   const pnpm = process.env.npm_execpath && basename(process.env.npm_execpath).startsWith('pnpm') ? process.env.npm_execpath : undefined
   it.skipIf(!pnpm)('a check\'s environment is read by the pnpm that runs this suite as verify-deps-before-run off and offline (T235)', () => {
-    const get = (key: string): string => execFileSync(pnpm!, ['config', 'get', key], { env: checkEnvironment(), encoding: 'utf8', timeout: 30_000 }).trim()
+    const get = (key: string): string => execFileSync(pnpm!, ['config', 'get', key], { env: noInstallEnvironment(), encoding: 'utf8', timeout: 30_000 }).trim()
     expect(get('verify-deps-before-run')).toBe('false')
     expect(get('offline')).toBe('true')
   })

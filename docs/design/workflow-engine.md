@@ -1344,7 +1344,9 @@ check never installs.
 - **No install inside a check.** A check's command runs with pnpm's verify-deps-before-run off
   (`pnpm_config_verify_deps_before_run=false`, and the `npm_config_` name too) and offline: pnpm never
   starts an install before a script. pnpm 11 and later ignore an `npm_config_` setting, so the
-  `pnpm_config_` name is the one that holds for this repository's pnpm.
+  `pnpm_config_` name is the one that holds for this repository's pnpm. The commands that make a
+  landing's generated files again (at `rebase` and `merge`) run in this same environment: confined
+  with no network, an install pnpm started before `pnpm gen:manifests` would fail the landing.
 - **A stalled check is told.** A check that printed nothing for the setup's `checkStallSeconds`
   (default 300) is told by an `agent-workers.check` event (`stalled`, then `resumed` when it prints
   again, or `ended`; `stalled` names the check's deadline). While the run is running, its `explain`
