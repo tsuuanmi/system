@@ -11,8 +11,12 @@ import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter, { type WorkerExecution } from '@tsuuanmi/system-workers'
 import Workflow from '@tsuuanmi/system-workflow'
-import { describe, expect, it, onTestFinished } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import * as Science from '../src/index.ts'
+
+// Each test boots the whole engine with a research profile: quick alone, past vitest's 5 s default
+// on a host running several full suites at once (as the other integration specs, 120 s).
+vi.setConfig({ testTimeout: 120_000 })
 
 async function boot(workflow: Record<string, unknown> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'system-science-'))
