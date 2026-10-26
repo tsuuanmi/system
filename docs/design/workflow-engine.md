@@ -81,6 +81,22 @@ at once (`give one of them conversation: own`), since they would interleave in o
 conversation and bind it to one Worker. Parallel steps that each need a persistent
 conversation, such as Deep research reviews, use `own`.
 
+A step on the run's session routes only to the Workers the session stays on. When every
+one of them is refused for a reason no wait can change (its input bound, a capability,
+its tier, its locality), the step does not fail for that alone: it runs once off the
+session on another admissible Worker, without the session when its brief already quotes
+every earlier turn of it, else through a handoff (its brief carries those turns' results
+as `prior` pointers). A later step back on the session is handed what ran off it. The
+choice is a `route` decision by `workflow.session-move`; a step no Worker takes off the
+session either still fails, naming both refusals
+([sessions](sessions-and-messaging.md#a-step-its-sessions-worker-cannot-take)).
+
+Every route decision states the brief's size against its Worker's input bound: on the
+chosen Worker, `input N characters, within its bound of M` (or `declares no input bound`),
+and, when other Workers that could take the step were refused for their bound alone, how
+many and the largest of those bounds, so the lead reading the route sees a brief that has
+outgrown the Workers that could take it ([ADR-0032](../decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md)).
+
 ### Different provider families
 
 A template node may declare `differentFrom: [nodeId, …]`: its Worker must be of another

@@ -28,6 +28,17 @@ The synthesis steps share the run's one conversation, in order. The reviews and
 the critique each have their own, so they stay independent of the thread they
 feed or judge. That makes four conversations per run, not six.
 
+The conversation stays on the Worker `frame:1` ran on. When that Worker can
+never take a later synthesis step (live 2026-10-26: `frame:1` on a website that
+takes 30,000 characters, `evidence:1` 56,350 with both reviews quoted), the step
+runs once off the conversation on another Worker rather than failing the run.
+Each synthesis step quotes every result it builds on (`{{node:frame:1}}`,
+`{{node:evidence:1}}`, …), so it needs no conversation and runs without it
+(`sessionless`); `conclusion:1`, back on the conversation, is handed
+`evidence:1`'s result if `evidence:1` ran off it. Either way a `route` decision
+by `workflow.session-move` says so
+([sessions](../../../docs/design/sessions-and-messaging.md#a-step-its-sessions-worker-cannot-take)).
+
 `research` needs Workers of two provider families; with one, `literature:2`
 fails admission, fail closed, unless the operator sets the engine's
 `allowSameFamily` (ADR-0029)

@@ -20,6 +20,7 @@ import { admissionInfrastructure, executionInfrastructure, sourceGone } from './
 import { admissionKind, assignmentOf, choiceHoldEnded, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForChoice, waitForLimit } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
 import { missingSubject, remediate, reviewSubject, subjectGate, wordingOf } from './review.ts'
+import { leaveSession, type Moved, sessionGaps } from './session-moves.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
 import { appended, compose, DEFAULT_TEMPLATES, type Instructions, literal, type NodeTemplate, recordExecutor, type ResolvedNode, type ResolvedSpec, resolve, schemaBlock, UnfilledPlaceholders, variantProblem, variantsOf } from './spec.ts'
 import { MATERIAL_REQUEST, runSnapshot, showsTextMaterial, sourceOf } from './sources.ts'
@@ -644,6 +645,8 @@ export class Engine {
       let draft: Draft
       try {
         draft = draftOf(this, run, node, spec, record.requirement)
+        // On its session after an earlier step ran off it: handed what that step's turn added (session-moves.ts).
+        draft = sessionGaps(this, run, spec, draft)
       } catch (error) {
         return failAttempt(this, run, { ...node, attempt }, errorOf(error), { sent: false, decisions: [] }, lease)
       }
@@ -685,6 +688,8 @@ export class Engine {
       const input = { chars: renderedChars(this, draft) }
       // Recorded when the node runs on the same provider family for want of another (ADR-0029).
       let sameFamily: ArtifactRef | undefined
+      // Set when the node runs off its session, its session's Workers unable to take it (session-moves.ts).
+      let moved: Moved | undefined
       // The Workers it failed over from, unsent (ADR-0034); with none left but them, it routes as before.
       const failed = node.excluded ? (JSON.parse(node.excluded) as string[]) : []
       const away = failed.length ? { excludeWorkers: { workers: failed, reason: `an earlier attempt of ${node.node_id} failed here before anything was sent` } } : {}
@@ -749,19 +754,31 @@ export class Engine {
             }
           }
         } catch (error) {
-          done()
-          if (!(error instanceof AdmissionFailure)) throw error
-          const hint = error.rejections.length ? inputHint(this, spec, error, input.chars, sourceOf(this, this.nodeRows(run.run_id), spec.dependsOn)) : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
-          // A team member short of provider families: say what the team needs, beside why this one failed.
-          const team = spec.team?.member && exclude ? await this.familyShortage(spec, record.requirement, leftOut) : ''
-          // Refused only for assigned accounts' limits: it waits for the reset, bounded, spending no attempt (ADR-0052).
-          const waiting = error.limitUntil ? waitForLimit(this, run, node, error, `${team}${error.message}`, lease) : undefined
-          if (waiting && 'waited' in waiting) return
-          const unwaited = waiting ? `; it does not wait: ${waiting.why}` : ''
-          // A Worker that would otherwise take it is unavailable: the infrastructure's failure, not the attempt's (ADR-0069).
-          const down = admissionInfrastructure(node, error)
-          return failAttempt(this, run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${team}${error.message}${hint}${unwaited}` },
-            { sent: false, decisions: [error.decision], ...(down ? { infrastructure: down } : {}) }, lease)
+          // Its session's Workers cannot take it for a reason no wait changes: it runs off the
+          // session on another Worker, handed what the conversation held, or fails with both refusals.
+          const own = spec.session.sessionId && restricted.restrict ? this.ctx.workers.affinity(spec.session.sessionId) : undefined
+          const off = error instanceof AdmissionFailure && own?.length
+            ? await leaveSession(this, run, node, spec, draft, record.requirement, own, error, { ...(exclude ? { exclude } : {}), ...pinned }, failed)
+            : undefined
+          if (off && 'admitted' in off) {
+            admitted = off.admitted
+            moved = off
+          } else {
+            done()
+            if (!(error instanceof AdmissionFailure)) throw error
+            const hint = error.rejections.length ? inputHint(this, spec, error, input.chars, sourceOf(this, this.nodeRows(run.run_id), spec.dependsOn)) : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
+            // A team member short of provider families: say what the team needs, beside why this one failed.
+            const team = spec.team?.member && exclude ? await this.familyShortage(spec, record.requirement, leftOut) : ''
+            // Refused only for assigned accounts' limits: it waits for the reset, bounded, spending no attempt (ADR-0052).
+            const waiting = error.limitUntil ? waitForLimit(this, run, node, error, `${team}${error.message}`, lease) : undefined
+            if (waiting && 'waited' in waiting) return
+            const unwaited = waiting ? `; it does not wait: ${waiting.why}` : ''
+            // A Worker that would otherwise take it is unavailable: the infrastructure's failure, not the attempt's (ADR-0069).
+            const down = admissionInfrastructure(node, error)
+            const unmoved = off && 'why' in off ? off.why : ''
+            return failAttempt(this, run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${team}${error.message}${hint}${unwaited}${unmoved}` },
+              { sent: false, decisions: [error.decision], ...(down ? { infrastructure: down } : {}) }, lease)
+          }
         }
       }
       // A stop while routing starts nothing: the node is routed again on the next start.
@@ -784,8 +801,8 @@ export class Engine {
         worker: admitted.worker.worker, source: admitted.source, served_tier: admitted.worker.tier, quota_class: admitted.worker.quotaClass,
         // The account it runs on, so a failure of it is recovered by its group's mode (ADR-0052).
         account: admitted.worker.account ? JSON.stringify(admitted.worker.account) : null,
-        // The same-family decision first: the last two stay the tier and route decisions.
-        decisions: JSON.stringify([...(sameFamily ? [sameFamily] : []), admitted.decisions.tier, admitted.decisions.route]),
+        // The same-family or session-move decision first: the last two stay the tier and route decisions.
+        decisions: JSON.stringify([...(sameFamily ? [sameFamily] : []), ...(moved ? [moved.decision] : []), admitted.decisions.tier, admitted.decisions.route]),
       }
       try {
         this.ctx.store.transaction(() => {
@@ -800,13 +817,14 @@ export class Engine {
           }
           // The brief is recorded before the execution starts, and the execution names it; its
           // source renders the prompt from it (INV-13, INV-12).
-          const brief = recordBrief(this, run, node, draft, source.sandbox?.(admitted.worker.worker, run.run_id))
+          // Off its session (session-moves.ts), it starts without one, on the brief that carries the handoff.
+          const brief = recordBrief(this, run, node, moved ? moved.draft : draft, source.sandbox?.(admitted.worker.worker, run.run_id))
           const started = source.start({
             key: executionKey(run.run_id, node, attempt),
-            worker: admitted.worker.worker, brief, sessionId: spec.session.sessionId, runId: run.run_id,
+            worker: admitted.worker.worker, brief, sessionId: moved ? undefined : spec.session.sessionId, runId: run.run_id,
             // The template step it serves, from the engine's own record: a source may record it with what the run drew (PROP-0015 E2).
             step: { template: run.template, node: node.node_id },
-            requirement: record.requirement, decisions: admitted.decisions,
+            requirement: moved ? moved.requirement : record.requirement, decisions: admitted.decisions,
           })
           this.writeNode(node, { state: 'RUNNING', execution_id: started.id, attempt, not_before: null, ...routed }, (r) => ({
             ...r, schema: 'workflow-node@1.2', execution: { executionId: started.id, attempt, owner: admitted.source, generation: lease().generation, route: admitted.decisions.route, brief },
