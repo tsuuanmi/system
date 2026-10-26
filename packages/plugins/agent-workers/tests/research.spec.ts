@@ -274,7 +274,9 @@ describe('a read-only research role on agent runtimes (T262, ADR-0074)', () => {
     }
   })
 
-  it('keeps external-send always-ask for every other role, and for a research role with no grant', async () => {
+  // One stack and one run per test: three stacks booted in one test add up to more than the default
+  // test timeout on a loaded host, though each is quick.
+  it('keeps external-send always-ask for every other role', async () => {
     const runtime = new Researcher()
     runtime.script = () => [{ tool: 'WebSearch', input: { query: 'bubblewrap 0.12 release notes' } }]
     const ctx = await boot(runtime, studio({}))
@@ -285,13 +287,17 @@ describe('a read-only research role on agent runtimes (T262, ADR-0074)', () => {
     expect(webDecisions(ctx).filter((d) => d.outcome.detail.worker === 'agent:reader')).toEqual([])
     // A reader's run is no research run: no web tools on its spec.
     expect(runtime.runs.find((r) => r.prompt.startsWith('review the change'))!.web).toBeUndefined()
+  })
 
+  it('keeps external-send always-ask for a research role with no grant', async () => {
     const none = new Researcher()
     none.script = () => [{ tool: 'WebSearch', input: { query: 'bubblewrap 0.12 release notes' } }]
     const plain = await boot(none, studio())
     expect((await runOn(plain, 'agent:researcher', research(), 'review the literature', 1)).status).toBe('failed')
     expect(webDecisions(plain).filter((d) => d.outcome.detail.worker === 'agent:researcher').map((d) => [d.outcome.option, d.outcome.detail.reason])).toEqual([['ask', 'no-grant']])
-    // A grant for WebSearch alone: a WebFetch still asks.
+  })
+
+  it('keeps external-send always-ask for a WebFetch when the grant is for WebSearch alone', async () => {
     const fetches = new Researcher()
     fetches.script = () => [{ tool: 'WebFetch', input: { url: 'https://example.org/' } }]
     const narrow = await boot(fetches, studio({ tools: ['WebSearch'] }))

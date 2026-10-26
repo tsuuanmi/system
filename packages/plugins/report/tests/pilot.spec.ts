@@ -99,7 +99,10 @@ describe('the report tool over a pilot (PROP-0010 B8)', () => {
 
   it('gives the same report for the same period every time, and counts nothing outside it', async () => {
     const { ctx } = await pilotWeek()
-    const period = { since: new Date(Date.now() - 3_600_000).toISOString(), until: new Date(Date.now() + 1000).toISOString() }
+    // The period ends at an instant already past (its end is exclusive): an entry the pilot records
+    // after it, a batch or a request still settling, falls outside both reads, whichever UTC day it is.
+    const end = Date.now()
+    const period = { since: new Date(end - 3_600_000).toISOString(), until: new Date(end).toISOString() }
     const a = await call(ctx, { projectId: 'p1', ...period })
     const b = await call(ctx, { projectId: 'p1', ...period })
     const { asOf: _a, ...first } = a.report!
