@@ -6,3 +6,18 @@ coverage/
 *.db-wal
 *.db-shm
 .dsh-home/
+# The empty placeholders an agent runtime's sandbox leaves in a Worker's worktree (its protected
+# configuration paths): never part of a change, and work state never lives in a vendor's folder
+# (docs/governance/documentation.md#work-state-and-conversations).
+/.claude/
+/.idea
+/.vscode
+/.mcp.json
+/.gitconfig
+/.gitmodules
+/.ripgreprc
+/.bashrc
+/.bash_profile
+/.profile
+/.zshrc
+/.zprofile

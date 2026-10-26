@@ -1792,6 +1792,13 @@ export const APP_JS = `'use strict'
     const happened = [
       risk ? el('li', {}, 'Risk tier: ' + risk.tier + (risk.tier === 'heavy' ? ' (a second review by another provider family; never accepted automatically)' : risk.tier === 'light' ? ' (may skip its validation once its required checks pass)' : '') + '.',
         fold('Why', el('ul', {}, risk.reasons.map((r) => el('li', {}, r))), el('div', {}, 'decision ', shortId(risk.decision, 'Copy decision ID')))) : null,
+      // The handbook slice each step was given (docs/design/handbook.md): its size against the bound, each layer's version, and what its Worker source rendered.
+      ...(explain ? explain.nodes : []).filter((n) => n.handbook).map((n) => {
+        const h = n.handbook
+        return el('li', {}, 'Handbook at ' + (stepWords(n.nodeId) || n.nodeId) + ': ' + h.tokens + ' of ' + h.bound.tokens + ' tokens (' + h.bound.mode + ' mode), for role ' + h.selection.role + ', tier ' + h.selection.tier + '.',
+          fold('Layers', el('ul', {}, h.layers.map((l) => el('li', {}, 'Layer ' + l.layer + ' by ' + l.renderedBy + ': ' + (l.atMost ? 'at most ' : '') + l.tokens + ' tokens, version ', el('code', {}, l.version), l.parts.length ? ', parts ' + l.parts.join(', ') : '')),
+            (h.source || []).map((s) => el('li', {}, 'Rendered by its Worker source, ' + s.part + ': ' + s.tokens + ' tokens, version ', el('code', {}, s.version), s.lessons !== undefined ? ', ' + s.lessons + ' lesson(s)' : '')))))
+      }),
       carry ? carryLine(carry) : null,
       ...resent.map((nodeId) => {
         const node = run.nodes.find((x) => x.nodeId === nodeId)

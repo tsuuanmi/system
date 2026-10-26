@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:brief:v1",
   "title": "Brief",
-  "description": "Body of an `objective` artifact: what one Worker run is given (PROP-0010). It carries pointers to artifacts by content id, never their content; the Worker source resolves them when it renders the brief into its own prompt format (design/workflow-engine.md#briefs). 1.1 adds `instructions`; 1.2 adds `ask` and `files`; 1.3 adds an acceptance criterion's `check`; 1.4 adds `tier`; 1.5 adds `model`.",
+  "description": "Body of an `objective` artifact: what one Worker run is given (PROP-0010). It carries pointers to artifacts by content id, never their content; the Worker source resolves them when it renders the brief into its own prompt format (design/workflow-engine.md#briefs). 1.1 adds `instructions`; 1.2 adds `ask` and `files`; 1.3 adds an acceptance criterion's `check`; 1.4 adds `tier`; 1.5 adds `model`; 1.6 adds `handbook`.",
   "type": "object",
   "required": ["schema", "goal", "acceptance", "artifacts", "budget", "sandbox", "classification"],
   "properties": {
-    "schema": { "enum": ["brief@1.0", "brief@1.1", "brief@1.2", "brief@1.3", "brief@1.4", "brief@1.5"] },
+    "schema": { "enum": ["brief@1.0", "brief@1.1", "brief@1.2", "brief@1.3", "brief@1.4", "brief@1.5", "brief@1.6"] },
     "tier": {
       "description": "1.4: the tier routing served the run at, when its Worker offers several (ADR-0073): its source runs that tier's model. From the route decision, never from model text.",
       "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/tier"
@@ -159,6 +159,61 @@
       },
       "additionalProperties": false
     },
+    "handbook": {
+      "description": "1.6: the handbook slice the Worker was given (design/handbook.md#what-a-brief-records): the 6,000-token bound and its mode, what selected the slice, and per layer its version, who rendered it (the engine its half, as a `handbook-slice@1.0` context pointer; the Worker source the gate view and the lessons), the ids of the parts it carried, and its size in estimated tokens (ceil(UTF-8 bytes / 4); the source's lessons at what they render to, a source part whose size cannot be read before routing at its constructed maximum).",
+      "type": "object",
+      "required": ["bound", "tokens", "selection", "layers"],
+      "properties": {
+        "bound": {
+          "type": "object",
+          "required": ["tokens", "mode"],
+          "properties": {
+            "tokens": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+            "mode": { "enum": ["warn", "refuse"] }
+          },
+          "additionalProperties": false
+        },
+        "tokens": { "description": "The slice's estimated tokens in all, both halves.", "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "selection": {
+          "type": "object",
+          "required": ["role", "tier", "tierFrom", "paths"],
+          "properties": {
+            "role": { "enum": ["develop", "review", "validate", "research", "lead"] },
+            "class": { "description": "The step's kind of work (ADR-0057), when it names one.", "type": "string", "minLength": 1, "maxLength": 64 },
+            "tier": { "description": "The risk tier the slice was selected by; off when no path map applies.", "enum": ["light", "normal", "heavy", "off"] },
+            "tierFrom": { "description": "The workflow.risk-tier decision the tier is from, or map (the step's own reading of the path map), unknown (unread: heavy), or off.", "type": "string", "minLength": 1, "maxLength": 80 },
+            "paths": { "description": "Where the touched paths were read from; unknown selects every path-keyed part.", "enum": ["subject", "previous-attempt", "declared", "unknown"] },
+            "touched": {
+              "description": "The touched paths, when they were read and at most 200: the Worker source selects the lessons it renders by them too.",
+              "type": "array",
+              "maxItems": 200,
+              "items": { "type": "string", "minLength": 1, "maxLength": 1024 }
+            }
+          },
+          "additionalProperties": false
+        },
+        "layers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": ["layer", "version", "renderedBy", "parts", "tokens"],
+            "properties": {
+              "layer": { "type": "integer", "minimum": 1, "maximum": 5 },
+              "version": { "type": "string", "minLength": 1, "maxLength": 300 },
+              "renderedBy": { "enum": ["engine", "source"] },
+              "parts": { "type": "array", "maxItems": 128, "items": { "type": "string", "minLength": 1, "maxLength": 64 } },
+              "tokens": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+              "sha256": { "description": "The engine's half: the sha256 of the text of the layer it counted.", "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "atMost": { "description": "The source's half: `tokens` is its constructed maximum, for a part whose size cannot be read before the Worker is routed (the gate view; the lessons when their repository cannot be read); the Worker source records what it rendered, each part's version and size, on the workflow run (agent-workers.handbook).", "const": true }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "classification": {
       "description": "At least the strictest classification of the artifacts it points at (INV-12).",
       "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/classification"
@@ -168,23 +223,27 @@
   "allOf": [
     {
       "if": { "properties": { "instructions": { "type": "array" } }, "required": ["instructions"] },
-      "then": { "description": "@1.1 fields (instructions) are refused before @1.1.", "properties": { "schema": { "enum": ["brief@1.1", "brief@1.2", "brief@1.3", "brief@1.4", "brief@1.5"] } } }
+      "then": { "description": "@1.1 fields (instructions) are refused before @1.1.", "properties": { "schema": { "enum": ["brief@1.1", "brief@1.2", "brief@1.3", "brief@1.4", "brief@1.5", "brief@1.6"] } } }
     },
     {
       "if": { "anyOf": [{ "properties": { "ask": { "type": "object" } }, "required": ["ask"] }, { "properties": { "files": { "type": "array" } }, "required": ["files"] }] },
-      "then": { "description": "@1.2 fields (ask, files) are refused before @1.2.", "properties": { "schema": { "enum": ["brief@1.2", "brief@1.3", "brief@1.4", "brief@1.5"] } } }
+      "then": { "description": "@1.2 fields (ask, files) are refused before @1.2.", "properties": { "schema": { "enum": ["brief@1.2", "brief@1.3", "brief@1.4", "brief@1.5", "brief@1.6"] } } }
     },
     {
       "if": { "properties": { "acceptance": { "type": "array", "contains": { "type": "object", "properties": { "check": true }, "required": ["check"] } } }, "required": ["acceptance"] },
-      "then": { "description": "@1.3 fields (a criterion's check) are refused before @1.3.", "properties": { "schema": { "enum": ["brief@1.3", "brief@1.4", "brief@1.5"] } } }
+      "then": { "description": "@1.3 fields (a criterion's check) are refused before @1.3.", "properties": { "schema": { "enum": ["brief@1.3", "brief@1.4", "brief@1.5", "brief@1.6"] } } }
     },
     {
       "if": { "properties": { "tier": { "type": "string" } }, "required": ["tier"] },
-      "then": { "description": "@1.4 fields (tier) are refused before @1.4.", "properties": { "schema": { "enum": ["brief@1.4", "brief@1.5"] } } }
+      "then": { "description": "@1.4 fields (tier) are refused before @1.4.", "properties": { "schema": { "enum": ["brief@1.4", "brief@1.5", "brief@1.6"] } } }
     },
     {
       "if": { "properties": { "model": { "type": "string" } }, "required": ["model"] },
-      "then": { "description": "@1.5 fields (model) are refused before @1.5, and a model is named only beside the tier it runs at.", "required": ["tier"], "properties": { "schema": { "const": "brief@1.5" } } }
+      "then": { "description": "@1.5 fields (model) are refused before @1.5, and a model is named only beside the tier it runs at.", "required": ["tier"], "properties": { "schema": { "enum": ["brief@1.5", "brief@1.6"] } } }
+    },
+    {
+      "if": { "properties": { "handbook": { "type": "object" } }, "required": ["handbook"] },
+      "then": { "description": "@1.6 fields (handbook) are refused before @1.6.", "properties": { "schema": { "const": "brief@1.6" } } }
     }
   ],
   "additionalProperties": false

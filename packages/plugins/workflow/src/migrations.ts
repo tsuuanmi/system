@@ -182,4 +182,9 @@ export const MIGRATIONS = [{
   CREATE UNIQUE INDEX workflow_scheduled_reviews_day ON workflow_scheduled_reviews (day) WHERE trigger = 'schedule';
   CREATE INDEX workflow_scheduled_reviews_area ON workflow_scheduled_reviews (area, started_at);
   CREATE INDEX workflow_scheduled_reviews_running ON workflow_scheduled_reviews (state) WHERE state = 'running';`,
+}, {
+  // The board tasks whose handbook slice the engine built (docs/design/handbook.md#the-6000-token-bound):
+  // one row per task, the first time; their count moves the bound from warn to refuse.
+  version: 26,
+  sql: 'CREATE TABLE workflow_handbook_tasks (task_id TEXT PRIMARY KEY, created_at TEXT NOT NULL);',
 }]

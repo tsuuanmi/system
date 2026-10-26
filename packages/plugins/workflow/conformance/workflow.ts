@@ -40,6 +40,19 @@ export interface Booted {
 
 export type Boot = (source: (ctx: Context) => WorkerSource, config: Config) => Promise<Booted>
 
+/**
+ * A brief's handbook slice (`brief@1.6`, docs/design/handbook.md), when it has one: its pointer (the
+ * last of its artifacts, role `context`, at a `handbook-slice@1.0`) and that pointer as the brief's
+ * rendering shows it among the pointers its instructions do not place. Undefined for a brief with
+ * none (a run that serves no board task, or the slice turned off).
+ */
+export function handbookPointer(ctx: Context, brief: { artifacts: Array<{ ref: string; role: string; note?: string }> }): { pointer: { ref: string; role: string; note?: string }; rendered: string } | undefined {
+  const pointer = brief.artifacts.at(-1)
+  const body = pointer ? ctx.artifacts.get(pointer.ref as ArtifactRef)?.body as { schema?: string; text?: string } | undefined : undefined
+  if (!pointer || body?.schema !== 'handbook-slice@1.0') return undefined
+  return { pointer, rendered: `<artifact id="${pointer.ref}" role="${pointer.role}"${pointer.note ? ` note=${JSON.stringify(pointer.note)}` : ''}>\n${body.text}\n</artifact>` }
+}
+
 /** A start as the scripted Worker reads it: its brief rendered to the prompt a text-prompted source sends. */
 export type Rendered = WorkerStart & { prompt: string }
 
@@ -907,9 +920,12 @@ export const workflowSuite = defineSuite<Boot>({
       const task = await readyTask(ctx, 'briefed', { acceptance: [{ id: 'a1', statement: 'it answers' }, { id: 'a2', statement: 'it cites' }] })
       const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
       expect((await settled(ctx, run.runId)).status).toBe('completed')
-      const brief = ctx.artifacts.get(workers.started[0]!.brief!)!.body as Record<string, unknown>
+      const brief = ctx.artifacts.get(workers.started[0]!.brief!)!.body as Record<string, unknown> & { artifacts: Array<{ ref: string; role: string }> }
       expect(brief).toMatchObject({ projectId: 'p1', taskId: task.taskId, attempt: 1, goal: 'do briefed', acceptance: [{ id: 'a1', statement: 'it answers' }, { id: 'a2', statement: 'it cites' }] })
-      expect(workers.started[0]!.prompt).toBe(`Board task ${task.taskId} of project p1, attempt 1.\nGoal: do briefed\nAcceptance criteria:\n- a1: it answers\n- a2: it cites\nIf you cannot finish without an answer from a person, answer with only this JSON object and nothing else: {"questions": ["..."]}, with 1 to 8 questions of at most 500 characters each. The task then waits for the answers, and its next attempt is given them.\n\nq`)
+      // A step's handbook slice, when the engine gives one (docs/design/handbook.md), follows the instructions: the one pointer they do not place.
+      const handbook = handbookPointer(ctx, brief)
+      expect(brief.artifacts).toEqual(handbook ? [handbook.pointer] : [])
+      expect(workers.started[0]!.prompt).toBe(`Board task ${task.taskId} of project p1, attempt 1.\nGoal: do briefed\nAcceptance criteria:\n- a1: it answers\n- a2: it cites\nIf you cannot finish without an answer from a person, answer with only this JSON object and nothing else: {"questions": ["..."]}, with 1 to 8 questions of at most 500 characters each. The task then waits for the answers, and its next attempt is given them.\n\nq${handbook ? `\n\nRead these too:\n\n${handbook.rendered}` : ''}`)
     }, {}, '1.3'),
 
     scenario('task-resume', 'resumes, for a board task\'s next attempt, the session of the attempt before it when its Worker keeps a native session it can resume, the new brief as its next message, and starts fresh otherwise; each choice a decision (INV-9, INV-13)', async ({ ctx, workers }) => {
@@ -1069,7 +1085,9 @@ export const workflowSuite = defineSuite<Boot>({
       expect(failed).toMatchObject({ status: 'failed', error: { kind: 'question', disposition: 'USER_ACTION' } })
       expect(failed.nodes.map((n) => n.state)).toEqual(['FAILED', 'WAITING'])
       expect(failed.nodes[0]!.result).toBeUndefined()
-      expect(ctx.artifacts.get(workers.started[0]!.brief!)!.body).toMatchObject({ schema: 'brief@1.2', ask: { maxQuestions: 8 } })
+      // `ask` is a brief@1.2 field; a brief that also records its handbook slice is @1.6.
+      const asked = ctx.artifacts.get(workers.started[0]!.brief!)!.body as { schema: string; handbook?: unknown }
+      expect(asked).toMatchObject({ schema: asked.handbook ? 'brief@1.6' : 'brief@1.2', ask: { maxQuestions: 8 } })
       const view = await reported(ctx, run.runId)
       expect(view.task!.question).toMatchObject({ state: 'raised', nodeId: 'a', questions })
       expect(decisionOf(ctx, view.task!.question!.decision)).toMatchObject({ decisionType: 'gate', decider: { id: 'workflow.task-question' }, outcome: { option: 'ask', detail: { taskId: task.taskId, nodeId: 'a' } } })

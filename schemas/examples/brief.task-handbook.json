@@ -1,0 +1,52 @@
+{
+  "schema": "brief@1.6",
+  "projectId": "proj-sparse-align",
+  "taskId": "task-0007",
+  "attempt": 1,
+  "goal": "Implement the banded alignment kernel behind the existing interface.",
+  "acceptance": [
+    {
+      "id": "a1",
+      "statement": "pnpm test passes",
+      "check": "tests"
+    }
+  ],
+  "artifacts": [
+    {
+      "ref": "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+      "role": "context",
+      "note": "your handbook slice: the rules of layers 1 to 4 that bear on your role (develop), class, and risk tier (heavy); follow them"
+    }
+  ],
+  "instructions": [
+    {
+      "text": "Work toward the task above in this run's own git worktree, one hypothesis per attempt."
+    }
+  ],
+  "ask": {
+    "maxQuestions": 8
+  },
+  "budget": {
+    "remaining": []
+  },
+  "sandbox": {
+    "mode": "workspace-write",
+    "workspace": "/home/operator/.dsh/system/worktrees/proj-sparse-align/run_0007",
+    "network": "none",
+    "commands": true
+  },
+  "handbook": {
+    "bound": { "tokens": 6000, "mode": "warn" },
+    "tokens": 2117,
+    "selection": { "role": "develop", "class": "code", "tier": "heavy", "tierFrom": "map", "paths": "subject", "touched": ["packages/plugins/workflow/src/handbook.ts"] },
+    "layers": [
+      { "layer": 1, "version": "git:3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a;adr:0072", "renderedBy": "engine", "parts": ["L1.pointer", "INV-1", "INV-2", "ADR-0070"], "tokens": 290, "sha256": "9b2f7c3e4a1d5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c" },
+      { "layer": 2, "version": "policy:studio@3:sha256:1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0:map@studio@2", "renderedBy": "engine", "parts": ["L2.tier.heavy"], "tokens": 41, "sha256": "4c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d" },
+      { "layer": 2, "version": "source", "renderedBy": "source", "parts": ["L2.gate-view"], "tokens": 1000, "atMost": true },
+      { "layer": 3, "version": "charter:proj-sparse-align:2", "renderedBy": "engine", "parts": ["L3.objective", "L3.criteria", "L3.constraints"], "tokens": 96, "sha256": "7e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f" },
+      { "layer": 4, "version": "playbook:algorithm-development@0.4.0:5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b", "renderedBy": "engine", "parts": ["L4.playbook", "L4.rules", "W2", "W3", "Q1"], "tokens": 237, "sha256": "5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b" },
+      { "layer": 5, "version": "source", "renderedBy": "source", "parts": ["L5.lessons"], "tokens": 453 }
+    ]
+  },
+  "classification": "operator-shared"
+}

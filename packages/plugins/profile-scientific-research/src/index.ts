@@ -12,6 +12,7 @@
  * variant reviews with the providers' Deep research instead.
  * @module @tsuuanmi/system-profile-scientific-research
  */
+import { readFileSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
@@ -21,6 +22,9 @@ import type {} from '@tsuuanmi/system-workers'
 
 export const name = 'profile-scientific-research'
 export const inject = ['workflow', 'workers', 'artifacts', 'eventLog']
+
+/** This package's version: its template's playbook version in a handbook slice (docs/design/handbook.md). */
+const VERSION = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version
 
 const FRAME = [
   'Frame the research question below as 2 to 4 testable hypotheses, for a study that will review the published evidence.',
@@ -163,7 +167,7 @@ export function apply(ctx: Context): void {
     if (!cited.size) return { accepted: false, reasons: ['the conclusion cites no evidence ([E1], [E2], ...)'] }
     return { accepted: true, reasons: [`concludes on ${[...hypotheses].join(', ')}, citing ${[...cited].join(', ')}`] }
   })
-  ctx.effect(() => ctx.workflow.template('research', RESEARCH))
+  ctx.effect(() => ctx.workflow.template('research', RESEARCH, { version: VERSION }))
 
   // A typed step's accepted result becomes a typed artifact derived from it. When the step's
   // result changes (the operator superseded it or an input of it, and it ran again), the new typed

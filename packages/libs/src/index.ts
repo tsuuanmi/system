@@ -2,7 +2,7 @@ export { canonicalJson, contentId, sha256, type ContentId } from './canonical.ts
 export { DESCRIPTION, LABEL, MAX_DESCRIPTION, MAX_LABEL } from './descriptions.ts'
 export { type AccountMode, type AccountSetting, accountSettings, ASSIGNED, type PooledTerms, pooledTermsDecision, type ProviderAccounts } from './accounts.ts'
 export {
-  type ArtifactLookup, type Brief, type BriefBudgetLine, type BriefCheck, type BriefClassification, BriefError, type BriefFile, BRIEF_FILE_PATH, type BriefPointer, type BriefRole, type BriefSandbox, type BriefSegment, BRIEF_LIMITS,
+  type ArtifactLookup, type Brief, type BriefBudgetLine, type BriefCheck, type BriefClassification, BriefError, type BriefFile, BRIEF_FILE_PATH, type BriefHandbook, type BriefPointer, type HandbookLayer, type HandbookRole, type BriefRole, type BriefSandbox, type BriefSegment, BRIEF_LIMITS,
   bodyText, NO_LOCAL_SANDBOX, QUESTION_LIMITS, questionsOf, type ReadArtifact, renderBrief, type RenderOptions, type StartInput, startPrompt,
 } from './briefs.ts'
 export { extractJson, SchemaError, SchemaRegistry } from './schemas.ts'
@@ -31,3 +31,4 @@ export {
 export {
   DRAW_STATES, type DrawEntry, drawEntries, type DrawFigure, drawFigures, drawFigureText, type DrawReading, type DrawState, MAX_DRAW_WINDOWS, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDraw, quotaDrawOf,
 } from './draws.ts'
+export { appliesOf, lessonApplies, LESSONS_HEADING, LESSONS_LIMITS, LESSONS_PATH, type LessonsFor, lessonsSection, lessonsSectionOf, lessonsText, pathMatches } from './lessons.ts'

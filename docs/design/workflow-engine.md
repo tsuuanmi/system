@@ -172,7 +172,8 @@ provider family than the Workers that served those nodes
 ## Briefs
 
 Every Worker execution the engine starts is given a `brief@1.1` (`@1.2` for a board task's run,
-with its `ask` and `files`, `@1.3` when a criterion of its task names what checks it;
+with its `ask` and `files`, `@1.3` when a criterion of its task names what checks it, `@1.4` and
+`@1.5` with the tier and the model, `@1.6` when it carries its [handbook slice](#the-handbook-slice);
 [`brief`](../reference/schemas.md#brief)): an `objective` artifact recorded before the execution
 starts, in the transaction that starts it, and named by it (`workflow-node@1.2`
 `execution.brief`, the node's view, and the `workflow.node.started` event). The engine composes
@@ -261,6 +262,49 @@ the decision behind this attempt (`review`: a rejection's reasons, the answers t
 A run whose worktree starts from the previous attempt's work points first at the decision that
 carried it (`prior`, its note saying the worktree already holds that change;
 [below](#starting-from-the-previous-attempts-work)).
+
+### The handbook slice
+
+Each step of a board task's run is also given its slice of the [handbook](handbook.md) (ADR-0072,
+PROP-0016 I1 part 2; `handbook.enabled`, default on), built in `src/handbook.ts` before the step
+reserves its budget or is routed:
+
+- **The layers, declared once** (`HANDBOOK_LAYERS`): each layer's owner, homes, how its version is
+  read, its share of the bound, and which half renders it.
+- **Selected** by the step's role (`validate`, `review`, `develop`, else `research`, from its
+  capabilities), its class (its kind of work), its risk tier (the run's latest `workflow.risk-tier`
+  decision; before one, the policy's path map on the change's paths; heavy when they cannot be
+  read; `off` with no map), and its touched paths (read with the tier; unknown: every path-keyed
+  part). A role gets its own playbook, never another's.
+- **The engine's half** is a `handbook-slice@1.0` report the brief points at (role `context`), read
+  from the homes under `handbook.root` (default: the System repository the package sits in): layer
+  1's pointer, and for a heavy change the invariants' titles and the accepted ADRs that name a
+  touched package; layer 2's tier line; the project's charter; the role's playbook, the step's own
+  template text (already its instructions: counted and hashed, never repeated), a review's
+  [guides](handbook.md#review-guides-reviewmd) (already its `review-guides@1.0` pointer: counted,
+  hashed, and named with their versions in layer 4's version, never repeated), and the role's rules
+  of the handbook's layer-4 inventory, keyed by class and path (`PLAYBOOK_RULES`).
+- **The source's half** (the gate view, the lessons): the lessons are counted at what they render
+  to, measured by the engine with the one renderer the source uses (libs `lessonsSectionOf`) on the
+  lessons file of the repository the run's worktree was cut from, for the step's role and touched
+  paths (at their constructed maximum, 3,100 tokens, when that repository cannot be read); the gate
+  view, rendered from the routed Worker's own evidence and tools, at its constructed maximum (1,000;
+  agent-workers bounds both in UTF-8 bytes). A source's half over its layer's share is refused in
+  either mode (`handbook_over_bound`). The agent Worker source reads the brief's
+  selection (`handbook.selection`, with the touched paths), gives the run the lessons that apply to
+  its role and paths (a reviewer's included), and records what it rendered, each part's version
+  (the policy; the lessons file's blob at HEAD), sha256, and size, as an `agent-workers.handbook`
+  event of the workflow run.
+- **Measured** as `ceil(UTF-8 bytes / 4)` against 6,000 tokens. Over it, a `gate` decision
+  (`handbook.bound`) names each layer over its share, its size, and its owner: in warn mode the
+  slice is sent whole; once slices were built for `handbook.warnTasks` distinct board tasks
+  (default 30; `workflow_handbook_tasks`, the move itself a decision) the bound refuses, and the step
+  fails `config_error` (`handbook_over_bound`) with nothing sent; `continue` builds it again.
+- **Recorded** in the brief (`brief@1.6` `handbook`): the bound and its mode, the selection, and per
+  layer its version (layer 1 the invariants' blob and the highest accepted ADR; layer 4 the template,
+  its package's version, and the sha256 of the playbook text carried), who rendered it, its parts'
+  ids, and its size. `system explain` prints it under each step with what the source recorded it
+  rendered, and the run's page in `/ui` lists both under What happened.
 
 **Usage spent on a task.** The [ledger](resources.md) counts usage by run: a record names the
 task (or the run was reserved for it), the workflow run, or the Worker's own execution (an agent

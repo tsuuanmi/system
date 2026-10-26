@@ -394,6 +394,26 @@ describe('system usage and explain output', () => {
     ])
   })
 
+  it('prints the handbook slice each step was given: its size against the bound and the mode, what selected it, each layer\'s version and size, and what the source rendered (docs/design/handbook.md)', () => {
+    const handbook = {
+      bound: { tokens: 6000, mode: 'warn' }, tokens: 4200,
+      selection: { role: 'develop', class: 'code', tier: 'heavy', tierFrom: 'unknown', paths: 'unknown' },
+      layers: [
+        { layer: 1, version: 'git:ab;adr:0072', renderedBy: 'engine', parts: ['L1.pointer'], tokens: 60 },
+        { layer: 5, version: 'source', renderedBy: 'source', parts: ['L5.lessons'], tokens: 3100, atMost: true },
+      ],
+      source: [{ layer: 5, part: 'L5.lessons', version: 'git:0a1b', tokens: 410, lessons: 6 }],
+    }
+    expect(formatExplanation({ runId: 'run_3', template: 'algorithm-development', status: 'running', specHash: 'sha256:ef', nodes: [{ nodeId: 'develop:1', state: 'RUNNING', decisions: [], handbook }] })).toEqual([
+      'run_3  algorithm-development  running  spec sha256:ef',
+      '  develop:1  RUNNING  -  -  -',
+      '    handbook  4200 of 6000 tokens (warn mode)  role develop, class code, tier heavy (from unknown), paths unknown',
+      '      layer 1  60 tokens  by engine  git:ab;adr:0072  parts L1.pointer',
+      '      layer 5  at most 3100 tokens  by source  source  parts L5.lessons',
+      '      rendered L5.lessons  410 tokens  git:0a1b  6 lesson(s)',
+    ])
+  })
+
   it('prints a run\'s executions whose liveness needs a look after its decision chain: the verdict, its looks, why, what it holds, and what to do (PROP-0013)', () => {
     const held = {
       source: 'agents', execution: 'arun_00000000000000aa', worker: 'agent:dev', state: 'unknown' as const, since: '2026-10-24T01:00:00.000Z', verdict: 'unknown (liveness@1)', looks: { taken: 3, max: 3 },

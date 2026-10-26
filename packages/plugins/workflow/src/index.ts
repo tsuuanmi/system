@@ -142,6 +142,11 @@ export class Workflow extends Service {
     retainRunsDays: z.natural().default(30).description('Days a finished run is kept, then deleted with the artifacts only it needed and the website chats only it used (0: every run is kept); a session\'s latest run always stays'),
     maxLimitWaitHours: z.number().min(0).max(720).default(24).description('Hours a node may wait, in all from its first wait, spending no attempt: refused only because the assigned accounts that could take it are at their limit, for the earliest reset (ADR-0052); refused while a Worker that proves it is out of quota, at a limit, or its probe late, to be routed again when routing says it is worth a look (T282). Past it, it fails with the refusal\'s kind (INV-9); 0 never waits'),
     autoApprovePlans: z.boolean().default(false).description('Approve a high-confidence plan by policy instead of waiting for the operator'),
+    handbook: z.object({
+      enabled: z.boolean().default(true).description('Give every step of a board task\'s run its handbook slice (layers 1 to 4 by the engine, the gate view and the lessons by its Worker source), recorded in its brief'),
+      warnTasks: z.natural().max(1000).default(30).description('Distinct board tasks whose slice is built in warn mode: a slice over the 6,000-token bound is sent whole with a handbook.bound decision; past them, such a slice is refused and the step fails config_error'),
+      root: z.string().description('The System repository the handbook\'s homes are read from: the invariants and the ADR index (layer 1) and the rule inventory, docs/design/handbook.md (layer 4); default, the repository this package sits in. Unread, each version says so'),
+    }).description('The per-Worker handbook slice and its bound (docs/design/handbook.md)'),
     maxReviewCycles: z.natural().min(1).max(5).default(3).description('Reviews of one change, the first included, before remediation stops'),
     fixSessionWaitMinutes: z.number().min(0).max(1440).default(60).description('Minutes a review\'s fix that continues its author\'s session waits for that session\'s Worker while it cannot take the fix now (out of quota, signed out, not listed), from the fix\'s first wait, spending no attempt; past it, the session is handed off to another Worker with its earlier turns, recorded (INV-9); 0 hands off at once'),
     tieTimeoutHours: z.number().min(0.0001).max(720).default(24).description('Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9)'),
@@ -300,14 +305,20 @@ export class Workflow extends Service {
    * and served until the returned disposer runs; admitted runs keep their resolved spec, so
    * withdrawing a template never touches them. Its acceptance contracts come from `ctx.workers`.
    */
-  template(name: string, nodes: NodeTemplate[]): () => void {
+  template(name: string, nodes: NodeTemplate[], options: { version?: string } = {}): () => void {
     const templates = this.engine.templates
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(name)) throw new TypeError(`template name ${name} must be lowercase letters, digits, and hyphens`)
     if (templates[name]) throw new Error(`template ${name} already exists`)
+    if (options.version !== undefined && !/^[0-9A-Za-z.+-]{1,64}$/.test(options.version)) throw new TypeError(`template ${name}'s version ${options.version} must be a package version`)
     this.engine.check(name, nodes)
     templates[name] = nodes
+    // The version of the package that contributes it: a step's handbook slice names its playbook by it (docs/design/handbook.md).
+    if (options.version !== undefined) this.engine.templateVersions.set(name, options.version)
     return () => {
-      if (templates[name] === nodes) delete templates[name]
+      if (templates[name] === nodes) {
+        delete templates[name]
+        this.engine.templateVersions.delete(name)
+      }
     }
   }
 

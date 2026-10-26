@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:handbook-slice:v1",
+  "title": "Handbook slice",
+  "description": "Body of a `report` artifact: the engine's half of the handbook slice one step of a board task's run is given (design/handbook.md#the-per-worker-slice, ADR-0072), as its brief points at it (role `context`). The parts of layers 1 to 4 that bear on the step's role, task class, risk tier, and touched paths, rendered by the engine from the layers' declared homes, never by a model; the Worker source renders the other half (the gate view, the lessons). The brief's `handbook` (brief@1.6) records the versions and sizes.",
+  "type": "object",
+  "required": ["schema", "projectId", "taskId", "role", "tier", "parts", "text"],
+  "properties": {
+    "schema": { "const": "handbook-slice@1.0" },
+    "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "role": { "enum": ["develop", "review", "validate", "research", "lead"] },
+    "class": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "tier": { "enum": ["light", "normal", "heavy", "off"] },
+    "parts": {
+      "description": "The ids of the parts the text carries, in order.",
+      "type": "array",
+      "maxItems": 256,
+      "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+    },
+    "text": { "type": "string", "minLength": 1, "maxLength": 262144 }
+  },
+  "additionalProperties": false
+}

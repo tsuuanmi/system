@@ -149,7 +149,9 @@ export function recordBrief(e: Engine, run: RunRow, node: NodeRow, draft: Draft,
   // The tier the run was routed at, when its Worker offers several, and the model its source's
   // configuration runs there (ADR-0073): `brief@1.4` with the tier, `@1.5` with its model too.
   const named = model !== undefined && model.length && model.length <= 200 ? model : undefined
-  const tiered = tier ? (named ? { schema: 'brief@1.5' as const, tier, model: named } : { schema: 'brief@1.4' as const, tier }) : {}
+  // A brief that records its handbook slice is `brief@1.6`, which holds the tier and the model too.
+  const versioned = draft.handbook ? { schema: 'brief@1.6' as const } : undefined
+  const tiered = tier ? (named ? { ...(versioned ?? { schema: 'brief@1.5' as const }), tier, model: named } : { ...(versioned ?? { schema: 'brief@1.4' as const }), tier }) : (versioned ?? {})
   const body: Brief = { ...draft, ...tiered, sandbox: sandbox ?? NO_LOCAL_SANDBOX, classification }
   return e.ctx.artifacts.put({
     kind: 'objective', bodySchema: body.schema, body, inputs: refs,

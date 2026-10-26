@@ -63,7 +63,10 @@ counts 94 rules, 45 with no check, 13 written in two or more places, and 8 contr
    dossier's slice not counted) is at most 6,000 tokens, estimated as `ceil(UTF-8 bytes / 4)`; no
    vendor's tokenizer is used (INV-11). Shares: layer 1 400, layer 2 1,300, layer 3 300, layer 4
    900, layer 5 3,100. The total is what is enforced; a slice over it names every layer over its
-   share. The engine counts the source's half at its constructed maximum.
+   share. The engine counts the source's half at what it renders to where that can be read before
+   the Worker is routed (the lessons, with the source's own renderer), and at its constructed maximum
+   where it cannot (the gate view); a source's half over its layer's share is refused in either mode
+   (T259).
 6. **Warn, then refuse.** The bound starts in warn mode: an over-bound slice is sent whole with a
    `gate` decision `handbook.bound` (`warn`) naming the layers. After the slice was built for 30
    distinct board tasks (`handbook.warnTasks`, default 30, 0 to 1,000), a recorded decision moves it

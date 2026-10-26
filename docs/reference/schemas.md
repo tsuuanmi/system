@@ -1062,11 +1062,29 @@ guesses.
   ([workflow templates](workflow-templates.md#algorithm-development)). The workflow engine writes
   `@1.3` for a board task's run when one of its criteria names a check, `@1.2` otherwise; a `check`
   before 1.3 is refused. Example: [`brief.task-checks.json`](../../schemas/examples/brief.task-checks.json).
+- `brief@1.6` adds `handbook`: the handbook slice the Worker was given
+  ([handbook](../design/handbook.md#what-a-brief-records)): the 6,000-token bound and its mode
+  (`warn`, `refuse`), what selected the slice (role, class, risk tier and where it came from, how the
+  touched paths were read, and those paths, at most 200), and per layer its version, who rendered it
+  (`engine`, `source`), the ids of the parts it carried, and its estimated tokens (`ceil(UTF-8 bytes /
+  4)`; the source's lessons at what they render to, and a part whose size cannot be read before routing, the gate view always, at its constructed maximum, `atMost`). The workflow engine writes `@1.6` for
+  every step of a board task's run while the slice is on (it holds `tier` and `model` too); `handbook`
+  before 1.6 is refused. Example: [`brief.task-handbook.json`](../../schemas/examples/brief.task-handbook.json).
 - `sandbox` comes from trusted configuration (the Worker source's), never from model text, and
   `budget.remaining` is computed from the ledger when the brief is written. `resume` names the
   native session the brief continues, when the Worker keeps one. Examples:
   [`brief.task.json`](../../schemas/examples/brief.task.json),
   [`brief.node.json`](../../schemas/examples/brief.node.json).
+
+### `handbook-slice`
+
+- The body of a `report` artifact: the engine's half of the handbook slice one step of a board
+  task's run is given, which its brief points at (role `context`)
+  ([the per-Worker slice](../design/handbook.md#the-per-worker-slice)): the parts of layers 1 to 4
+  selected for the step's `role`, `class`, and `tier`, their ids in order (`parts`), and the `text`
+  the Worker reads, rendered by the engine, never by a model. A role's playbook is its step's
+  instructions: the text names it in one line and does not repeat it. Its classification is the
+  run's. Example: [`handbook-slice.develop.json`](../../schemas/examples/handbook-slice.develop.json).
 
 ### `board-projection`
 

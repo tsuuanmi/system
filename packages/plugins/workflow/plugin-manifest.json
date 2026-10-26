@@ -129,6 +129,10 @@
       "sensitive": false
     },
     {
+      "key": "handbook",
+      "sensitive": false
+    },
+    {
       "key": "maxReviewCycles",
       "sensitive": false
     },

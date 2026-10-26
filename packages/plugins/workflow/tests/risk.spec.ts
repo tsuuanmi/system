@@ -418,7 +418,8 @@ describe('tier by risk (ADR-0073): a step\'s minimum tier set by its task\'s ris
     await settled(ctx, taskId)
     const view = ctx.workflow.get(runId)!
     const brief = (nodeId: string) => ctx.artifacts.get(view.nodes.find((n) => n.nodeId === nodeId)!.brief!)!.body as Record<string, unknown>
-    expect(brief('review')).toMatchObject({ schema: 'brief@1.5', tier: 'standard', model: 'model-standard-1' })
+    // A board task's step records its handbook slice too (brief@1.6, which holds the tier and the model).
+    expect(brief('review')).toMatchObject({ schema: 'brief@1.6', tier: 'standard', model: 'model-standard-1', handbook: { selection: { role: 'review' } } })
     expect(brief('develop')).not.toHaveProperty('tier')
     expect(brief('develop')).not.toHaveProperty('model')
   })

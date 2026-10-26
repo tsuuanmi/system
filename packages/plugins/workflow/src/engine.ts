@@ -8,7 +8,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Board, Subject } from '@tsuuanmi/system-board-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
-import { canonicalJson, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
+import { type BriefPointer, canonicalJson, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { acceptPlain } from './acceptance.ts'
@@ -16,6 +16,7 @@ import { checksFor, landingTargets } from './checks.ts'
 import { DOSSIER_CAPABILITY, type TaskDossiers } from './dossiers.ts'
 import { type Draft, draftOf, guidesFor, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
 import { awaitCall, continueWithMessage, settleCalls, waitsOnCall } from './continuations.ts'
+import { applyHandbook, type Built, buildHandbook } from './handbook.ts'
 import { authorDraft, commitFixed, commitReviewed, continued, waitForAuthor, waitForSelfReview } from './fix-sessions.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
 import { heldNow, release } from './hold.ts'
@@ -63,6 +64,8 @@ export class Engine {
   /** The scheduled review of one area a day (D93 item 8), off unless configured on; its settings validated here. */
   readonly scheduledReviews: ScheduledReviews
   readonly templates: Record<string, NodeTemplate[]>
+  /** The version of the package each contributed template came from (`Workflow.template`), for the playbook a handbook slice names. */
+  readonly templateVersions = new Map<string, string>()
   /** Configured templates refused at load, with why (health reports them). */
   readonly refused = new Map<string, string>()
   readonly waiters = new Map<string, Set<() => void>>()
@@ -706,9 +709,10 @@ export class Engine {
       if (differs === 'deferred') return 'deferred'
       // The brief this execution is given, but for the routed Worker's sandbox (docs/design/workflow-engine.md#briefs).
       let draft: Draft
+      let guides: BriefPointer | undefined
       try {
         // A review is given the REVIEW.md guides of the areas its change touches (./review-guides.ts).
-        const guides = await guidesFor(this, run, node, spec)
+        guides = await guidesFor(this, run, node, spec)
         if (signal.aborted) return
         draft = draftOf(this, run, node, spec, record.requirement, guides)
         // On its session after an earlier step ran off it: handed what that step's turn added (session-moves.ts).
@@ -717,6 +721,20 @@ export class Engine {
         draft = authorDraft(this, run, node, spec, draft)
       } catch (error) {
         return failAttempt(this, run, { ...node, attempt }, errorOf(error), { sent: false, decisions: [] }, lease)
+      }
+      // A board task's step is given its handbook slice, within its bound or refused here, before
+      // anything is reserved, routed, or sent (docs/design/handbook.md).
+      let built: Built | undefined
+      try {
+        built = await buildHandbook(this, run, node, spec, guides)
+      } catch (error) {
+        return failAttempt(this, run, { ...node, attempt }, errorOf(error), { sent: false, decisions: [] }, lease)
+      }
+      if (signal.aborted) return
+      if (built) {
+        const applied = applyHandbook(this, run, node, draft, built, lease)
+        if (applied === 'refused') return
+        draft = applied
       }
       // A board task's step reserves its task's budget before it is routed or sent (ADR-0047, step 1):
       // refused, it stays as it is and the run starts nothing new.

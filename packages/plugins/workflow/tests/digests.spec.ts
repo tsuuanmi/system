@@ -18,7 +18,7 @@ import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { type Drafter, FakeDigests } from '../../../digest-core/conformance/digests.ts'
-import { activeProject, CONFIG, readyTask, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
+import { activeProject, CONFIG, handbookPointer, readyTask, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
 import Workflow, { type Config, type RunView, type TaskView } from '../src/index.ts'
 
 // The engine's digests of board task results, end to end over the store-backed board and approval
@@ -175,7 +175,8 @@ describe('the engine digests a board task\'s result once it reached the board (B
     const two = await run(ctx, second, 'go on')
     expect(two.task?.outcome).toMatchObject({ status: 'accepted' })
     const brief = ctx.artifacts.get(workers.started.at(-1)!.brief!)!.body as Brief
-    expect(brief.artifacts).toEqual([{ ref: board.result!.digest, role: 'input', note: `the digest of the accepted result of ${first.taskId}: first` }])
+    // Then the step's handbook slice (docs/design/handbook.md).
+    expect(brief.artifacts).toEqual([{ ref: board.result!.digest, role: 'input', note: `the digest of the accepted result of ${first.taskId}: first` }, handbookPointer(ctx, brief)!.pointer])
   })
 
   it('records why a result keeps no digest: the hourly bound reached, a digest not written, or no digest provider loaded (ADR-0036, INV-9)', async () => {

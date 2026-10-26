@@ -1225,6 +1225,26 @@ export function formatReview(review: ExplainedReview): string[] {
   ]
 }
 
+/** The handbook slice a step's brief recorded (docs/design/handbook.md#what-a-brief-records). */
+interface ExplainedHandbook {
+  bound: { tokens: number; mode: string }
+  tokens: number
+  selection: { role: string; class?: string; tier: string; tierFrom: string; paths: string }
+  layers: Array<{ layer: number; version: string; renderedBy: string; parts: string[]; tokens: number; atMost?: boolean }>
+  /** What the Worker source recorded it rendered of its half for the execution: each part's version and size. */
+  source?: Array<{ layer: number; part: string; version: string; tokens: number; lessons?: number }>
+}
+
+/** A step's handbook slice: its size against the bound and the mode, what selected it, each layer's size, version, and parts, then what its Worker source rendered. */
+export function formatHandbook(h: ExplainedHandbook): string[] {
+  const s = h.selection
+  return [
+    `    handbook  ${h.tokens} of ${h.bound.tokens} tokens (${h.bound.mode} mode)  role ${s.role}${s.class ? `, class ${s.class}` : ''}, tier ${s.tier} (from ${s.tierFrom}), paths ${s.paths}`,
+    ...h.layers.map((l) => `      layer ${l.layer}  ${l.atMost ? 'at most ' : ''}${l.tokens} tokens  by ${l.renderedBy}  ${l.version}${l.parts.length ? `  parts ${l.parts.join(', ')}` : ''}`),
+    ...(h.source ?? []).map((r) => `      rendered ${r.part}  ${r.tokens} tokens  ${r.version}${r.lessons !== undefined ? `  ${r.lessons} lesson(s)` : ''}`),
+  ]
+}
+
 interface Explained {
   runId: string
   template: string
@@ -1234,7 +1254,7 @@ interface Explained {
   decisions?: ExplainedDecision[]
   /** The run's risk tier and why (ADR-0071), when its project's policy has a path map. */
   risk?: { tier: string; reasons: string[]; decision: string; at?: string }
-  nodes: Array<{ nodeId: string; state: string; worker?: string; quotaClass?: string; turnId?: string; tier?: string; model?: string; decisions: ExplainedDecision[]; review?: ExplainedReview }>
+  nodes: Array<{ nodeId: string; state: string; worker?: string; quotaClass?: string; turnId?: string; tier?: string; model?: string; decisions: ExplainedDecision[]; review?: ExplainedReview; handbook?: ExplainedHandbook }>
   liveness?: ExplainedLiveness[]
   livenessUnread?: Array<{ source: string; detail: string }>
   /** The run's checks stalled now: no output for their bound, still running to their deadline (T235). */
@@ -1270,10 +1290,11 @@ export function formatLiveness(runs: readonly ExplainedLiveness[], unread: Reado
 
 /**
  * `system explain <runId>`: the run's risk tier and why (ADR-0071), when it has one; the run's own
- * decisions (a board task's admission, subject, acceptance, report), then each step's (egress, tier,
- * route, acceptance) with their reasons, a review step's findings by severity with their votes
- * (ADR-0075), then its executions whose liveness needs a look, and its
- * checks stalled now, and its research Workers' web calls (T262).
+ * decisions (a board task's admission, subject, acceptance, report), then each step's handbook slice
+ * (its size, the bound's mode, each layer's version) and decisions (egress, tier, route, acceptance)
+ * with their reasons, a review step's findings by severity with their votes (ADR-0075), then its
+ * executions whose liveness needs a look, and its checks stalled now, and its research Workers' web
+ * calls (T262).
  */
 export function formatExplanation(explained: Explained): string[] {
   const liveness = explained.liveness?.length || explained.livenessUnread?.length ? ['liveness', ...formatLiveness(explained.liveness ?? [], explained.livenessUnread)] : []
@@ -1287,6 +1308,7 @@ export function formatExplanation(explained: Explained): string[] {
     ...(explained.decisions?.length ? ['  run (decisions no step holds)', ...explained.decisions.map(line)] : []),
     ...explained.nodes.flatMap((n) => [
       `  ${n.nodeId}  ${n.state}  ${n.worker ?? '-'}  ${n.quotaClass ?? '-'}  ${n.turnId ?? '-'}${n.tier && n.model ? `  tier ${n.tier}, model ${n.model}` : ''}`,
+      ...(n.handbook ? formatHandbook(n.handbook) : []),
       ...n.decisions.map(line),
       ...(n.review ? formatReview(n.review) : []),
     ]),

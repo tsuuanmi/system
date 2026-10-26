@@ -5,16 +5,43 @@
 > 2026-10-26, D83; I1). The risk tier it selects by is
 > [ADR-0071](../decisions/adr/0071-a-changes-risk-tier-comes-from-the-policys-path-map.md)'s (T237).
 >
-> Not implemented yet; differs from target: everything but layer 5. Today a writing agent Worker's
-> prompt carries the repository's lessons (agent-workers `src/lessons.ts`, T220) and its tool gate's
-> note (agent-workers `src/gate.ts` `unaskedNote`), both appended by the Worker source and recorded
-> nowhere as rules; its role's text is its template's prompt (profile plugins); nothing is measured
-> against a bound, and no brief names the version of any rule it carried. The lead's playbook is
-> written ([lead's playbook](../operations/lead-playbook.md), T252), and the lead reads it as a file:
-> no slice is built from it. One part of layer 4 is built ahead of the slice (T267): the
-> [review guides](#review-guides-reviewmd), which a review step's brief carries as a pointer for the
-> paths its change touches, and the author's own checks and fresh-context self-review before the
+> Implemented for I1 part 2 (T259). The layers are declared once (workflow `src/handbook.ts`
+> `HANDBOOK_LAYERS`); every step of a board task's run is given its slice, selected by role, class,
+> risk tier, and touched paths: the engine's half as a `handbook-slice@1.0` context pointer, read
+> from the homes under `handbook.root` (the invariants' titles and the accepted ADRs naming a touched
+> package for `heavy`; the inventory's layer-4 rules of the role, keyed by class and path,
+> `PLAYBOOK_RULES`); the source's half by agent-workers (the gate view; the lessons by role and
+> `Applies:`, a reviewer's included, X3). Both halves are bounded in UTF-8 bytes and measured against
+> the bound, warned for the first `handbook.warnTasks` tasks and then refused (`handbook_over_bound`);
+> the brief records each layer's version and size (`brief@1.6` `handbook`: `@1.4` and `@1.5` were
+> taken by the tier and the model, [ADR-0073](../decisions/adr/0073-agent-workers-offer-tiers-per-role-with-quota-per-model.md)),
+> the source records what it rendered (`agent-workers.handbook`), and `system explain` and `/ui`
+> show both ([workflow engine](workflow-engine.md#the-handbook-slice)). The
+> [review guides](#review-guides-reviewmd), built ahead of the slice (T267), are a part of its layer
+> 4: a review step's slice counts and versions the guides its brief already points at for the paths
+> its change touches, and the author's own checks and fresh-context self-review run before the
 > independent review (W19, V6).
+>
+> Differs from target: the homes carry no rule ids or `Applies` keys of their own yet: the writer's
+> and reviewer's rules are the inventory's lines below, and their keys are declared in code
+> (`PLAYBOOK_RULES`); the validator's, researcher's, and lead's playbooks are their templates' text
+> alone. The touched paths are read only where tiering is on (with it off, they are unknown: every
+> path-keyed part); with them unknown, a heavy change's ADRs are not listed (the pointer's ADR index
+> stands for them, rather than every ADR that names a package). Layer 1's blob is that of the file as
+> checked out under `handbook.root`. The bound counts distinct tasks in a table
+> (`workflow_handbook_tasks`) and records a `handbook.bound` decision only for a slice over the bound
+> and for the move to refuse. The source records its half as an event of the workflow run, not as a
+> field of an execution record. Probation's line (trust tiers) is not built; the lead's file is part 3.
+> The gate view is counted at its constructed maximum (1,000 tokens), since only the routed Worker's
+> evidence decides it; the lessons at what they render to. Measured on this repository at T259
+> (`scripts/handbook-bound.spec.ts`: the real homes, guides, lessons, templates, and path map, a
+> stand-in charter), in estimated tokens:
+>
+> | Change | `develop:1` | `review:1` |
+> |---|---|---|
+> | one area (`packages/plugins/workflow/`; normal) | 2,563 | 2,871 |
+> | two areas (with `packages/plugins/agent-workers/`; heavy) | 3,135 | 4,051 |
+> | paths unknown (heavy; every guide) | 3,080 | 5,830 |
 
 System's rules are written in many places: the invariants and ADRs, the autonomy policy and its path
 map, the board's charters, the templates' prompts, `AGENTS.md`, `CONTRIBUTING.md`, the engineering
@@ -106,7 +133,7 @@ the repository.
 | P10 | what System decides alone, tells, or escalates with a decision brief | PROP-0016 §7 | in part: `ALWAYS_ASK` covers merge, policy change, charter, funding, and the board holds a heavy result; a new project and a trust boundary: **none**; the decision brief is not built |
 | P11 | research spends at most 10 % of the week's quota, never the 20 % reserve | D83 #6 | **none** |
 | P12 | the attention budget: 15 decisions a day, 10 for `system` | D83 #8 | **none** |
-| P13 | the handbook part of a brief is at most 6,000 tokens: a warning for 30 tasks, then a refusal | D83 #3 | **none** (this design; I1 part 2) |
+| P13 | the handbook part of a brief is at most 6,000 tokens: a warning for 30 tasks, then a refusal | D83 #3 | the engine's `handbook.bound` (workflow `tests/handbook.spec.ts`; I1 part 2, T259) |
 
 ### Layer 3: project charter
 
@@ -245,11 +272,11 @@ is written at all **none** (the engine writes the step's entry when a Worker wro
 | Layer | Rules listed | With a check that tests the rule | In part | **None** |
 |---|---|---|---|---|
 | 1 | 23 (and the ADRs) | 11 | 1 | 11 |
-| 2 | 13 | 8 | 1 | 4 |
+| 2 | 13 | 9 | 1 | 3 |
 | 3 | 5 | 4 | 0 | 1 |
 | 4 | 75 | 14 | 20 | 41 |
 | 5 | 6 | 2 | 2 | 2 |
-| **All** | **122** | **39** | **24** | **59** |
+| **All** | **122** | **40** | **24** | **58** |
 
 "In part" counts INV-3, P10, W8, W11, W18, Q5, V3, Y1, S1, LD1, LD3, LD12, LD14, LD16 to LD19,
 LD22, LD25, LD26, LD30, B2, L3, and L6. INV-2, 6, 8, 9, and 13 count as **none**: each mechanism
@@ -406,9 +433,13 @@ the lead's total would pass 6,000; the playbook's owner, the lead, shortens it f
 **The bound acts on the total.** A slice whose total is within 6,000 tokens is sent whatever its
 layers' shares; a layer over its share in such a slice is recorded, never refused. A slice over the
 total has at least one layer over its share, and those layers are named. The engine checks its own
-half when it drafts the brief, and counts the source's half at its constructed maximum (layer 2's
-gate view at 1,000 tokens, layer 5 at 3,100), since a source cannot exceed it; the source records
-the size it actually rendered.
+half when it drafts the brief. It counts the lessons at what they render to, with the renderer the
+source uses (libs `lessonsSectionOf`) on the lessons file of the repository the run's worktree was cut
+from, for the step's role and touched paths, and the gate view, which only the routed Worker's
+evidence decides, at its constructed maximum (1,000 tokens); the lessons too when their repository
+cannot be read (3,100). The source records the size it actually rendered. One exception to acting on
+the total: a source's half counted over its layer's share is refused in either mode, so a source's
+bound that grows is never sent in the warn period.
 
 **First a warning, then a refusal** (D83 #3):
 
@@ -426,8 +457,8 @@ the size it actually rendered.
 ## What a brief records
 
 Each brief records the version of each layer it was given, so a result traces to the rules it was
-given (INV-13). `brief@1.4` adds an optional `handbook` (a minor version: a reader of `@1.x` keeps
-working):
+given (INV-13). `brief@1.6` (this design said `@1.4`; the tier and the model took `@1.4` and `@1.5`
+first) adds an optional `handbook` (a minor version: a reader of `@1.x` keeps working):
 
 | Field | What |
 |---|---|
@@ -518,7 +549,10 @@ the run's change, as `ctx.workers.changes` reads it (the same read the risk tier
 many it left out. When the change's paths are unknown, or any part of them could not be read, **every**
 guide is given, never none (INV-2). The brief records each guide's file, version, and hash, so a
 result traces to the rules it was reviewed by (INV-13). The step is any review of a run: the author's
-self-review, the review, a re-review, and a heavy change's second review.
+self-review, the review, a re-review, and a heavy change's second review. The guides are part of that step's
+[slice](#the-per-worker-slice) (T259): its layer 4 counts their text against the bound, as the step's
+instructions are counted, without repeating it, and its version names each guide's area and version
+(`;guides:<area>@<version>`), the text in the layer's sha256.
 
 **Where they are read from.** The `docs/review/` directory of the repository the run's worktree was cut
 from (its checked-out branch, as the landing target says), never from the worktree: a change cannot
@@ -612,7 +646,8 @@ acceptance checks did not. It is replaced by two things that run before the inde
    acceptance (ADR-0063).
 2. **A fresh session of the author's account reviews the diff** (`selfreview:1`): it never sees the
    author's transcript, and is given only the task's goal and criteria, the exact diff (the goal as its
-   requested change), and the review guides: no dossier (no slice, no file, `dossier_read` refused, and none left in the shared worktree: a run's
+   requested change), and the review guides within a reviewer's handbook slice (T259): no dossier (no
+   dossier slice, no file, `dossier_read` refused, and none left in the shared worktree: a run's
    `.system/` holds only its own brief's files when its agent starts), no
    earlier results or decisions, and not the caller's input. Its important findings are verified as a
    review's are (ADR-0075), and the confirmed ones grow a fix that continues the author's session, answered and re-reviewed before the independent review starts,
@@ -626,15 +661,16 @@ acceptance checks did not. It is replaced by two things that run before the inde
 | Metric | From |
 |---|---|
 | slice size per run, per layer | the `handbook` field of each brief and the execution's source half |
-| rules without a check | this inventory's **none** rows, counted again from the layers' homes once rules carry ids (59 today, after the lead's playbook and the review guides; 45 before them) |
+| rules without a check | this inventory's **none** rows, counted again from the layers' homes once rules carry ids (58 today, after the bound's check, T259; 59 after the lead's playbook and the review guides; 45 before them) |
 | reads fetched per run | the run's recorded `read` gate decisions on a handbook home (invariants, ADRs, lessons, AGENTS.md, the engineering docs): whether Workers read what the slice left out, or read too much |
 | overflows | `handbook.bound` decisions, by layer, in warn and refuse mode |
 
 ## Later parts of I1
 
-1. **Part 2, the engine's half:** rule ids and `Applies` keys in the homes, the slice composer,
-   `handbook-slice@1.0`, `brief@1.4` `handbook`, the bound in warn mode, the source's record of its
-   half; the reviewer's lessons (X3).
+1. **Part 2, the engine's half:** the slice composer, `handbook-slice@1.0`, `brief@1.6` `handbook`,
+   the bound in warn mode then refuse, the source's record of its half, the reviewer's lessons (X3),
+   `explain` and `/ui` showing them: **implemented** (T259). Still to come from it: rule ids and
+   `Applies` keys in the homes themselves (the keys are declared in code until then).
 2. **Part 3, the lead's file** (`system handbook --role lead`) and `explain`'s view.
 3. **Part 4, the docs that follow:** the duplicates turned into links and contradictions X1, X2, X6,
    and X7 resolved in their homes.

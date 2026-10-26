@@ -265,7 +265,8 @@ ignored, so an update never stops a row from loading; remove it.
   proves `review`, so it is that account's read-only role), in a session of its own. It never sees
   the author's transcript: its brief is the task's goal and criteria, the exact diff (its requested
   change the task's goal, never the caller's input), and the review guides of the areas the change
-  touches ([handbook](../design/handbook.md#review-guides-reviewmd)). It is given no dossier (no slice,
+  touches ([handbook](../design/handbook.md#review-guides-reviewmd)), within a reviewer's handbook
+  slice. It is given no dossier (no dossier slice,
   no file, and `dossier_read` is refused), none of the task's pointers (earlier results and decisions),
   and no file in its worktree: an agent Worker's source leaves in a run's worktree (`.system/`) only
   the files of the brief of the run starting, so the dossier and board an earlier step was given are
@@ -334,24 +335,29 @@ board task's run also reads the task frame its brief states first
 and attempt, the goal, the acceptance criteria with what checks each (`brief@1.3`), the budget left
 at that step, the pointers (the results of the tasks it depends on, the previous attempt's result
 and the decision behind this one, and, when its worktree starts from the previous attempt's work,
-the decision that carried it), and the board's `TASKS.md` in the worktree.
+the decision that carried it), and the board's `TASKS.md` in the worktree. Each step also reads its
+[handbook slice](../design/workflow-engine.md#the-handbook-slice): the rules that bear on its role,
+class, risk tier, and touched paths, a review's guides among them.
 
 | Step | Reads | Never reads |
 |---|---|---|
 | `develop:1` (and its variants) | the task frame; the caller's input; on a later attempt, the session of the attempt before it when it is resumed | — |
-| `selfreview:1` (and its re-reviews) | the task frame's goal, criteria, and budget; its own instructions; the exact subject the engine appends (the worktree's subject, its diff, and the task's goal as the requested change); the review guides | the author's answer and conversation, the caller's input, the task's pointers, the dossier, and the worktree's files |
+| `selfreview:1` (and its re-reviews) | the task frame's goal, criteria, and budget; its own instructions; the exact subject the engine appends (the worktree's subject, its diff, and the task's goal as the requested change); the review guides, within a reviewer's handbook slice | the author's answer and conversation, the caller's input, the task's pointers, the dossier, and the worktree's files |
 | `selfreview:1:fix:<n>` | as `review:1:fix:<n>`, on the author's session, told to show the checks' output again | — |
 | `review:1` | the task frame; its own instructions; the exact subject the engine appends: the worktree's subject, its diff, and the caller's input as the requested change; the review guides; the task's dossier | the developer's answer or conversation |
 | `review:1:fix:<n>` (remediation) | the task frame; the engine's fix prompt: the caller's input, the reviewed subject, and the review's blocking findings, quoted | — |
 | `review:1:review:<n+1>` | as `review:1`, on the fixed subject | the fix's answer |
 
-A step on a writing Worker (a `workspace-write` sandbox: `develop:1` and its fixes) also reads, after its instructions and before its Tools section, the section
+A step on an agent Worker also reads, after its instructions and before its Tools section, the section
 **Lessons of this repository**: the lines of the repository's
 [`docs/engineering/lessons.md`](../engineering/lessons.md) that start with `- `, as committed at
 the HEAD of the Worker's repository (an uncommitted edit, a Worker's included, is never read), at
-most 30, each at most 400 characters, the rest counted. No such file committed, or one with no
-lesson, is no section; the review, on a read-only Worker, never reads it. The lead or a review adds
-a lesson by committing a line to that file; nothing else changes.
+most 30, each at most 400 characters, the rest counted. A step whose brief records its handbook
+slice reads the lessons that apply to its role and touched paths (a lesson's `Applies:` clause; none:
+`develop` and `review`), so a review reads those whose check is the review; any other run reads them
+on a writing Worker (a `workspace-write` sandbox) only. No such file committed, or no lesson that
+applies, is no section; a review member's empty workspace holds no repository, so it has none. The
+lead or a review adds a lesson by committing a line to that file; nothing else changes.
 
 ## Removed templates
 

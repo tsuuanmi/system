@@ -618,7 +618,7 @@ const ANSWER = 'Approved: the next run of this session makes exactly this call. 
 /** At most this many of the policy's commands-list lines are shown to the agent (INV-9). */
 const NOTE_LINES = 50
 const NOTE_LINE_CHARS = 200
-/** The characters of a Worker's Tools section at most, whatever the policy lists (INV-9). */
+/** The UTF-8 bytes of a Worker's Tools section at most, whatever the policy lists (INV-9): 1,000 estimated tokens, the handbook's count of it. */
 export const TOOLS_NOTE_MAX = 4000
 /** The characters of the workspace path the section names at most. */
 const NOTE_PATH_CHARS = 300
@@ -670,7 +670,7 @@ export interface ToolsNoteOptions {
  * (T200b), its tools are the reading tools named, and the agent is told to read with them, never
  * with a shell. Where the agent has reading tools (`options.readTools`, T222), it says a shell
  * inspection command one of them serves is denied at once, never asked, and names the tool to use
- * for each. At most {@link TOOLS_NOTE_MAX} characters: the commands list is
+ * for each. At most {@link TOOLS_NOTE_MAX} UTF-8 bytes: the commands list is
  * cut first, its rest counted.
  */
 export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; effective: ReadonlyArray<{ actionClass: ActionClass; mode: string }> }, workspace: string, options: ToolsNoteOptions = {}): string {
@@ -756,12 +756,12 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
     const intro = exception
       ? `- Any other Bash command${readOnly ? ', under your read-only sandbox (it changes no file),' : ','} except one on the autonomy policy's commands list:`
       : '- Bash, exactly these commands, word for word (the autonomy policy\'s commands list; no other word, option, or argument):'
-    let budget = TOOLS_NOTE_MAX - [...head, ...lines, intro, ...tail].join('\n').length - 40
+    let budget = TOOLS_NOTE_MAX - utf8([...head, ...lines, intro, ...tail].join('\n')) - 40
     const shown: string[] = []
     for (const line of listing.slice(0, NOTE_LINES)) {
-      if (line.length + 5 > budget) break
+      if (utf8(line) + 5 > budget) break
       shown.push(`  - ${line}`)
-      budget -= line.length + 5
+      budget -= utf8(line) + 5
     }
     if (shown.length) {
       lines.push(intro, ...shown)
@@ -771,7 +771,21 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
     }
   }
   const note = [...head, ...lines, ...tail].join('\n')
-  return note.length > TOOLS_NOTE_MAX ? `${note.slice(0, TOOLS_NOTE_MAX - 1)}…` : note
+  if (utf8(note) <= TOOLS_NOTE_MAX) return note
+  // Cut by UTF-8 bytes, whole code points, the ellipsis (3 bytes) included.
+  let cut = ''
+  let used = 0
+  for (const char of note) {
+    if (used + utf8(char) > TOOLS_NOTE_MAX - 3) break
+    cut += char
+    used += utf8(char)
+  }
+  return `${cut}…`
+}
+
+/** UTF-8 bytes of a text: the Tools section is bounded in bytes, so the handbook's estimate (`ceil(bytes / 4)`) of it never passes 1,000 tokens. */
+function utf8(text: string): number {
+  return Buffer.byteLength(text, 'utf8')
 }
 
 /** The part of a policy {@link unaskedNote} reads. */

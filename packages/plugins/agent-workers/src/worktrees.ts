@@ -284,6 +284,12 @@ export async function committedText(dir: string, path: string, maxChars: number)
   return { text: text.slice(0, maxChars), cut }
 }
 
+/** The git blob id of `path` as committed at `dir`'s HEAD, or undefined when HEAD holds no such blob. */
+export async function committedBlob(dir: string, path: string): Promise<string | undefined> {
+  const id = await git(dir, ['rev-parse', '--verify', '--quiet', `HEAD:${path}`]).then((out) => out.trim(), () => undefined)
+  return id && /^[0-9a-f]{40,64}$/.test(id) ? id : undefined
+}
+
 /** Characters one NUL-separated field of git's output may have (a path, a status): longer is not git's listing. */
 const FIELD_CHARS = 64 * 1024
 

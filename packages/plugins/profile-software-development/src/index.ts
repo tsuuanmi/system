@@ -6,6 +6,7 @@
  * default composition (PROP-0004), though the agent Worker rows it needs are on.
  * @module @tsuuanmi/system-profile-software-development
  */
+import { readFileSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { type NodeTemplate, SCHEDULED_REVIEW, SCHEDULED_REVIEW_NODES } from '@tsuuanmi/system-workflow'
@@ -13,6 +14,9 @@ import { WORK_KIND } from '@tsuuanmi/system-workers-core'
 
 export const name = 'profile-software-development'
 export const inject = ['workflow']
+
+/** This package's version: its templates' playbook version in a handbook slice (docs/design/handbook.md). */
+const VERSION = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version
 
 /**
  * The kind of work (ADR-0057) each step of `algorithm-development` names, by step: `develop` is
@@ -232,7 +236,7 @@ export const ALGORITHM_DEVELOPMENT: NodeTemplate[] = algorithmDevelopment()
 export function apply(ctx: Context, config: Config = {}): void {
   const problems = checkConfig(config)
   if (problems.length) throw new Error(`profile-software-development: ${problems.join('; ')}`)
-  ctx.effect(() => ctx.workflow.template('agent-review', AGENT_REVIEW))
-  ctx.effect(() => ctx.workflow.template('algorithm-development', algorithmDevelopment(config.kinds)))
-  ctx.effect(() => ctx.workflow.template(SCHEDULED_REVIEW, SCHEDULED_REVIEW_TEMPLATE))
+  ctx.effect(() => ctx.workflow.template('agent-review', AGENT_REVIEW, { version: VERSION }))
+  ctx.effect(() => ctx.workflow.template('algorithm-development', algorithmDevelopment(config.kinds), { version: VERSION }))
+  ctx.effect(() => ctx.workflow.template(SCHEDULED_REVIEW, SCHEDULED_REVIEW_TEMPLATE, { version: VERSION }))
 }

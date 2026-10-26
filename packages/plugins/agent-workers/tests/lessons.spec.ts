@@ -8,7 +8,9 @@ import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type { WorkerExecution } from '@tsuuanmi/system-workers'
 import { describe, expect, it, onTestFinished } from 'vitest'
-import { LESSONS_HEADING, LESSONS_LIMITS, LESSONS_PATH, lessonsSection, repositoryLessons } from '../src/lessons.ts'
+import { HANDBOOK_SOURCE_EVENT } from '../src/handbook.ts'
+import { appliesOf, lessonApplies, LESSONS_HEADING, LESSONS_LIMITS, LESSONS_PATH, lessonsSection, pathMatches } from '@tsuuanmi/system-libs'
+import { repositoryLessons } from '../src/lessons.ts'
 import { boot, requirement, ScriptedAgent, worker } from './stack.ts'
 
 const git = (dir: string, ...args: string[]): string => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { encoding: 'utf8' }).trim()
@@ -54,6 +56,45 @@ describe('the lessons section (lessonsSection)', () => {
     const long = lessonsSection(`- ${'x'.repeat(1000)}`)!.split('\n')[1]!
     expect([...long]).toHaveLength(LESSONS_LIMITS.lineChars)
     expect(long.endsWith('…')).toBe(true)
+  })
+})
+
+describe('the lessons a role is given (docs/design/handbook.md, layer 5)', () => {
+  const KEYED = [
+    '- Every role\'s default lesson (T1). Check: a test.',
+    '- A validator\'s lesson (T2). Check: a check. Applies: validate',
+    '- A schema writer\'s lesson (T3). Check: check:schemas. Applies: develop; schemas/',
+    '- A test file\'s lesson (T4). Check: a test. Applies: review, develop; **/tests/',
+  ].join('\n')
+
+  it('reads a lesson\'s Applies clause after its Check: roles, then paths; none is develop and review, every path', () => {
+    expect(appliesOf('- x. Check: y. Applies: develop, review; schemas/')).toEqual({ roles: ['develop', 'review'], paths: ['schemas/'] })
+    expect(appliesOf('- Applies: validate, before any check')).toBeUndefined()
+    expect(lessonApplies('- x. Check: y.', { role: 'review' })).toBe(true)
+    expect(lessonApplies('- x. Check: y.', { role: 'validate' })).toBe(false)
+    expect(pathMatches('**/tests/', 'packages/libs/tests/a.spec.ts')).toBe(true)
+    expect(pathMatches('schemas/', 'packages/schemas/x.json')).toBe(false)
+  })
+
+  it('gives each role the lessons that apply to it and the paths it touches, every path-keyed one when the paths are unknown (INV-2)', () => {
+    const shown = (role: string, touched?: string[]): string[] => (lessonsSection(KEYED, { role, ...(touched ? { touched } : {}) }) ?? '').split('\n').slice(1).map((l) => /\(T\d\)/.exec(l)![0])
+    expect(shown('develop', ['src/a.ts'])).toEqual(['(T1)'])
+    expect(shown('develop', ['schemas/a.v1.json', 'packages/x/tests/a.spec.ts'])).toEqual(['(T1)', '(T3)', '(T4)'])
+    expect(shown('develop')).toEqual(['(T1)', '(T3)', '(T4)'])
+    expect(shown('review', ['packages/x/tests/a.spec.ts'])).toEqual(['(T1)', '(T4)'])
+    expect(shown('validate')).toEqual(['(T2)'])
+    expect(lessonsSection(KEYED, { role: 'research' })).toBeUndefined()
+  })
+
+  it('holds the section within its UTF-8 byte bound, so its estimated tokens never pass layer 5\'s share; what does not fit is counted', () => {
+    // 30 lessons of 400 four-byte characters: 48,000 bytes if each were kept whole.
+    const wide = Array.from({ length: 30 }, (_, i) => `- ${String(i).padStart(2, '0')} ${'𝔏'.repeat(500)}`).join('\n')
+    const section = lessonsSection(wide)!
+    expect(Buffer.byteLength(section, 'utf8')).toBeLessThanOrEqual(LESSONS_LIMITS.sectionBytes)
+    expect(Math.ceil(Buffer.byteLength(section, 'utf8') / 4)).toBeLessThanOrEqual(3100)
+    const lines = section.split('\n')
+    expect(lines.length - 2).toBeGreaterThan(0)
+    expect(lines.at(-1)).toBe(`- and ${30 - (lines.length - 2)} more in ${LESSONS_PATH}`)
   })
 })
 
@@ -126,6 +167,50 @@ describe('agents source: a writing Worker\'s brief carries the lessons (T220)', 
     expect((await run(other.ctx, 'agent:dev', 'k-tree', 'run_lessons')).status).toBe('completed')
     expect(second.runs[0]!.workspace).not.toBe(repo)
     expect(second.runs[0]!.prompt).toBe(`k-tree\n\n${lessonsSection(FILE)}`)
+  })
+
+  /** A board task's brief@1.6 whose handbook slice was selected for `role` (and the paths `touched`). */
+  const handbookBrief = (ctx: Context, role: string, touched?: string[]): `sha256:${string}` => ctx.artifacts.put({
+    kind: 'objective', bodySchema: 'brief@1.6', classification: 'public', producer: { type: 'system', ref: 'workflow' }, inputs: [],
+    body: {
+      schema: 'brief@1.6', projectId: 'p1', taskId: 'task-1', attempt: 1, goal: 'review add', acceptance: [{ id: 'a1', statement: 'add adds' }], artifacts: [],
+      instructions: [{ text: `as ${role}` }], budget: { remaining: [] }, sandbox: { mode: 'read-only', network: 'allow-list', commands: false }, classification: 'public',
+      handbook: {
+        bound: { tokens: 6000, mode: 'warn' }, tokens: 4100,
+        selection: { role, tier: 'normal', tierFrom: 'map', paths: touched ? 'subject' : 'unknown', ...(touched ? { touched } : {}) },
+        layers: [{ layer: 2, version: 'source', renderedBy: 'source', parts: ['L2.gate-view'], tokens: 1000, atMost: true }, { layer: 5, version: 'source', renderedBy: 'source', parts: ['L5.lessons'], tokens: 3100, atMost: true }],
+      },
+    },
+  }).id as `sha256:${string}`
+  const briefed = async (ctx: Context, id: string, key: string, brief: `sha256:${string}`): Promise<WorkerExecution> => {
+    const source = ctx.workers.source('agents')!
+    return source.wait(source.start({ key, worker: id, brief, runId: `run_${key}`, requirement: requirement({ capabilities: id === 'agent:dev' ? ['develop'] : ['review'] }), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never }).id, 30_000)
+  }
+
+  it('gives a run whose brief records its handbook slice the lessons of that role and those paths, a read-only reviewer\'s included, and records what it rendered with the lessons file\'s blob (X3)', async () => {
+    const KEYED = `${FILE}- A validator's lesson (T9). Check: a check. Applies: validate\n- A schema lesson (T8). Check: check:schemas. Applies: review; schemas/\n`
+    const repo = repository(KEYED)
+    const blob = git(repo, 'rev-parse', `HEAD:${LESSONS_PATH}`)
+    const scripted = agent()
+    const { ctx } = await boot(scripted, { workers: [worker({ id: 'reviewer', workspace: repo })] })
+    // A reviewer on a read-only Worker: every lesson that applies to review, the schema one only when a schema path is touched.
+    expect((await briefed(ctx, 'agent:reviewer', 'review', handbookBrief(ctx, 'review', ['src/a.ts']))).status).toBe('completed')
+    expect((await briefed(ctx, 'agent:reviewer', 'schemas', handbookBrief(ctx, 'review', ['schemas/a.v1.json']))).status).toBe('completed')
+    expect((await briefed(ctx, 'agent:reviewer', 'validate', handbookBrief(ctx, 'validate'))).status).toBe('completed')
+    expect((await briefed(ctx, 'agent:reviewer', 'research', handbookBrief(ctx, 'research'))).status).toBe('completed')
+    const [review, schemas, validate, research] = scripted.runs
+    expect(review!.prompt).toContain(lessonsSection(KEYED, { role: 'review', touched: ['src/a.ts'] }))
+    expect(review!.prompt).toContain('(T1)')
+    expect(review!.prompt).not.toContain('(T8)')
+    expect(schemas!.prompt).toContain('(T8)')
+    expect(validate!.prompt).toContain('(T9)')
+    expect(validate!.prompt).not.toContain('(T1)')
+    expect(research!.prompt).not.toContain('Lessons of this repository')
+    // What it rendered of its half, per execution: the lessons file's blob at HEAD, the section's size, and how many lessons.
+    const recorded = (key: string): unknown => ctx.eventLog.query({ type: HANDBOOK_SOURCE_EVENT, runId: `run_${key}`, limit: 10 })[0]?.data
+    const section = lessonsSection(KEYED, { role: 'review', touched: ['src/a.ts'] })!
+    expect(recorded('review')).toMatchObject({ parts: [{ layer: 5, part: 'L5.lessons', version: `git:${blob}`, tokens: Math.ceil(Buffer.byteLength(section, 'utf8') / 4), lessons: 2 }] })
+    expect(recorded('research')).toMatchObject({ parts: [{ layer: 5, part: 'L5.lessons', version: `git:${blob}`, tokens: 0, lessons: 0 }] })
   })
 
   it('sends a writing run no lessons section when its repository commits no lessons file', async () => {

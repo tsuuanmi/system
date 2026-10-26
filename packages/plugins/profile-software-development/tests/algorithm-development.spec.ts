@@ -125,6 +125,9 @@ describe('the algorithm-development template (PROP-0010 B8, T267)', () => {
     expect(work[0]!.prompt).toContain('Fix add() so it adds')
     expect(work[0]!.prompt).toContain('append their real output, verbatim, to the task\'s dossier as an evidence entry')
     expect(agent.calls.filter((c) => c.tool === 'Bash')).toEqual([])
+    const brief = ctx.artifacts.get(done.nodes.find((n) => n.nodeId === 'develop:1')!.brief!)!.body as { schema: string; acceptance: unknown[] }
+    // A criterion's check (brief@1.3), in a brief@1.6 that records the writer's own handbook slice.
+    expect(brief).toMatchObject({ schema: 'brief@1.6', acceptance: [{ id: 'a1', statement: `${TESTS} passes`, check: 'tests' }], handbook: { selection: { role: 'develop', class: 'code' } } })
     expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).map((r) => r.action.class).sort()).toEqual(['charter', 'remediation'])
 
     // The result is the review's report on the exact subject the task writes; the review check passed on it.
@@ -326,9 +329,16 @@ describe('the algorithm-development template (PROP-0010 B8, T267)', () => {
     }
     expect(prompt('develop')).not.toContain('Review guide')
     // The guide is an artifact the brief points at, with its version and hash, so a result traces to the rules it was reviewed by.
-    const brief = ctx.artifacts.get(ctx.workflow.get(run.runId)!.nodes.find((n) => n.nodeId === 'review:1')!.brief!)!.body as { artifacts: Array<{ ref: ArtifactRef; role: string }> }
+    const brief = ctx.artifacts.get(ctx.workflow.get(run.runId)!.nodes.find((n) => n.nodeId === 'review:1')!.brief!)!.body as { artifacts: Array<{ ref: ArtifactRef; role: string }>; handbook: { selection: { role: string }; layers: Array<{ layer: number; version: string; parts: string[] }> } }
     const pointed = brief.artifacts.map((p) => ctx.artifacts.get(p.ref)).find((a) => a?.bodySchema === 'review-guides@1.0')!
     expect(pointed.body).toMatchObject({ guides: [{ file: 'docs/review/python.REVIEW.md', version: 1, owner: 'lead' }], left: 1, problems: [expect.stringContaining('broken.REVIEW.md')] })
+    // The guides are part of the reviewer's handbook slice (T259): its layer 4 counts them and names their version.
+    expect(brief.handbook.selection.role).toBe('review')
+    const layer4 = brief.handbook.layers.find((l) => l.layer === 4)!
+    expect(layer4.parts).toContain('L4.review-guides')
+    expect(layer4.version).toContain(';guides:python@1')
+    const develop = ctx.artifacts.get(ctx.workflow.get(run.runId)!.nodes.find((n) => n.nodeId === 'develop:1')!.brief!)!.body as { handbook: { layers: Array<{ parts: string[] }> } }
+    expect(develop.handbook.layers.flatMap((l) => l.parts)).not.toContain('L4.review-guides')
   })
 
   /** The candidates of a step's route decision: who was refused it, and why. */

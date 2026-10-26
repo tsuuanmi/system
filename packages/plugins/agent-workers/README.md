@@ -63,14 +63,28 @@ The **`agents` Worker source**: agent runtimes as Workers
   `mcp__workspace__…` tool. Such a Worker's Tools section (`unaskedNote`, never a
   review member's) names them as its reading tools and tells it to read with them,
   never with a shell.
-- **The repository's lessons** (`src/lessons.ts`, T220): a run on a writing
-  Worker (`workspace-write`, never a review member) is sent, before its Tools
-  section, a section "Lessons of this repository": the `- ` lines of
+- **The repository's lessons** (`src/lessons.ts`, T220; rendered by libs'
+  `lessonsSectionOf`, which the workflow engine measures them by too): a run is sent, before
+  its Tools section, a section "Lessons of this repository": the `- ` lines of
   `docs/engineering/lessons.md` as its repository (the configured `workspace`)
   has it committed at HEAD, read by git, never from the working tree, at most 30
-  lessons of at most 400 characters each, the rest counted. No file committed
+  lessons of at most 400 characters each and 12,400 UTF-8 bytes in all (3,100
+  estimated tokens, the handbook's share for them), the rest counted. A run whose
+  brief records its handbook slice (`brief@1.6` `handbook.selection`,
+  [handbook](../../../docs/design/handbook.md)) gets the lessons that apply to
+  its role and touched paths (a lesson's `Applies:` clause after its `Check:`;
+  none: `develop` and `review`), whatever its sandbox, so a reviewer gets those
+  whose check is the review; any other run, on a writing Worker
+  (`workspace-write`, never a review member), every lesson. No file committed
   there, or no repository, is no section. It is appended before the egress check,
   which sees it.
+- **The source's half of the handbook slice** (`src/handbook.ts`): for a run of a
+  workflow run whose brief records its slice, an `agent-workers.handbook` event of
+  that run names the execution and step, and what it rendered: the Tools section
+  (version: the policy it was rendered from) and the lessons (version: the lessons
+  file's blob at HEAD; how many), each with its sha256 and estimated tokens
+  (`ceil(UTF-8 bytes / 4)`). The Tools section is bounded at 4,000 UTF-8 bytes.
+  The workflow's `explain` shows it beside the brief's record.
 - **A board task's dossier tools** (`src/dossier.ts`, ADR-0070,
   [design](../../../docs/design/task-dossier.md)): a run that serves a step of a
   board task's workflow run (its row's `workflow_run_id`, `step_node`, and

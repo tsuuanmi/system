@@ -1,0 +1,10 @@
+{
+  "schema": "handbook-slice@1.0",
+  "projectId": "system",
+  "taskId": "task-9957e11c3134",
+  "role": "develop",
+  "class": "code",
+  "tier": "normal",
+  "parts": ["L1.pointer", "L2.tier.normal", "L3.objective", "L3.criteria", "L4.playbook", "L4.rules", "W2", "W3"],
+  "text": "Handbook slice for this step: role develop, class code, risk tier normal (docs/design/handbook.md). A higher layer wins over a lower one; a lower layer may only be stricter.\n\n## 1. Constitution (owner: operator)\n- System's constitution binds every change: its invariants (docs/architecture/invariants.md in the System repository) and its accepted ADRs (docs/decisions/adr/README.md); the decision rules are docs/decisions/README.md#decision-rules. Read the ones a change bears on.\n\n## 2. Organisation policy (owner: operator (the lead proposes))\n- This change is normal by the policy's path map (ADR-0071): one review, then the steps after it and the checks the policy requires.\n\n## 3. Project charter (owner: operator, with the lead)\n- Objective (project system): System runs software work end to end.\n- Criteria: c1: accepted results land on dev.\n\n## 4. Role playbook (owner: lead)\n- Your role's playbook (develop) is this step's instructions, as template algorithm-development words them; it is not repeated here.\n- Your role's rules, each one line; its home and its check: docs/design/handbook.md#layer-4-role-playbooks\n- W2 change only what the task needs; the smallest coherent change\n- W3 never weaken, skip, or loosen a test or benchmark"
+}

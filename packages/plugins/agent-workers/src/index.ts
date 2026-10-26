@@ -57,7 +57,8 @@ import {
 import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MAX_SLOTS } from './accounts.ts'
 import { commandRecorder, type DossierCaller, dossiersOf, dossierTools, type StepDossiers } from './dossier.ts'
 import { DENIAL_MIGRATION, GATE_MIGRATION, type Deferral, readToolsOf, recordDenial, runGate, unaskedNote } from './gate.ts'
-import { repositoryLessons } from './lessons.ts'
+import { HANDBOOK_SOURCE_EVENT, handbookSelection, type SourcePart } from './handbook.ts'
+import { repositoryLessonsFor } from './lessons.ts'
 import { type Applied, CUTOVER_MIGRATION, Cutover, type CutoverRecord, type MigrationPlan, type Moved, planMigration, type RolledBack } from './migrate.ts'
 import { Overlaps } from './overlaps.ts'
 import { Probes, isLate, provenBefore, refused } from './probes.ts'
@@ -318,6 +319,11 @@ interface RunRow {
   resumes?: number | null
   /** The `reconciliation` decision of its latest resume or restart after a host stop (T283, INV-13). */
   resume_decision?: string | null
+  /**
+   * JSON `{ role, touched? }`: who the run's brief selected its handbook slice for (`brief@1.6`
+   * `handbook.selection`), so the lessons it is given are that role's and paths' (docs/design/handbook.md).
+   */
+  handbook?: string | null
   created_at: string
   updated_at: string
 }
@@ -801,6 +807,10 @@ export class AgentWorkers extends Service {
       sql: `ALTER TABLE agent_runs ADD COLUMN host_stopped_at TEXT;
       ALTER TABLE agent_runs ADD COLUMN resumes INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE agent_runs ADD COLUMN resume_decision TEXT;`,
+    }, {
+      // Who the run's brief selected its handbook slice for (brief@1.6 handbook.selection): the lessons it is given follow it.
+      version: 22,
+      sql: 'ALTER TABLE agent_runs ADD COLUMN handbook TEXT;',
     }])
     this.cutover = new Cutover(ctx)
     // Once the operator applied the move, the hand-named rows are refused: one implementation, no second path.
@@ -1491,8 +1501,10 @@ export class AgentWorkers extends Service {
     // It may name a branch and a directory (a worktree per run): letters, digits, `_`, and `-` only.
     if (request.runId !== undefined && !RUN_ID.test(request.runId)) throw new ProviderError('invalid_input', `run id ${JSON.stringify(request.runId)} must match ${RUN_ID}`)
     // The board task the brief serves, from the engine's own record (never from model text): the run's usage is recorded under it.
-    const task = request.brief ? this.ctx.artifacts.get(request.brief)?.body as { taskId?: unknown; projectId?: unknown; files?: BriefFile[] } | undefined : undefined
+    const task = request.brief ? this.ctx.artifacts.get(request.brief)?.body as { taskId?: unknown; projectId?: unknown; files?: BriefFile[]; handbook?: unknown } | undefined : undefined
     const taskId = typeof task?.taskId === 'string' ? task.taskId : null
+    // Who its handbook slice was selected for (brief@1.6), from the engine's record: its lessons follow it.
+    const handbook = handbookSelection(task?.handbook)
     const projectId = taskId !== null && typeof task?.projectId === 'string' ? task.projectId : null
     // Its files' text, resolved now like the prompt, so the egress check reads what the agent will (INV-12).
     const files = places && Array.isArray(task?.files) && task.files.length ? JSON.stringify(task.files.map((file) => this.fileOf(file))) : null
@@ -1524,11 +1536,12 @@ export class AgentWorkers extends Service {
         // Its kind of work and template step, for what it draws (PROP-0015 E2): only well-formed ones, never guessed.
         kind: request.requirement.kind !== undefined && WORK_KIND.test(request.requirement.kind) ? request.requirement.kind : null,
         step_template: step?.template ?? null, step_node: step?.node ?? null, tier, configured_model: configuredModel,
+        handbook: handbook ? JSON.stringify(handbook) : null,
         created_at: now(), updated_at: now(),
       }
-      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, task_id, project_id, files, scope, session_generation, kind, step_template, step_node, tier, configured_model, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.workflow_run_id ?? null, taskId, projectId, files,
-        row.scope ?? null, generation, row.kind ?? null, row.step_template ?? null, row.step_node ?? null, tier, configuredModel, row.created_at, row.updated_at)
+      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, task_id, project_id, files, scope, session_generation, kind, step_template, step_node, tier, configured_model, handbook, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.workflow_run_id ?? null, taskId, projectId, files,
+        row.scope ?? null, generation, row.kind ?? null, row.step_template ?? null, row.step_node ?? null, tier, configuredModel, row.handbook ?? null, row.created_at, row.updated_at)
       this.ctx.store.afterCommit(() => this.schedule(row.run_id))
       return execution(row)
     })
@@ -2180,7 +2193,10 @@ export class AgentWorkers extends Service {
         const account = worker.derived ? this.agentAccounts.accountGate(worker.derived.accountId) : undefined
         if (account?.state === 'unavailable') throw new ProviderError('config_error', `${row.worker}: ${account.why}; nothing was run`)
         // What the agent is sent: its prompt, or a review member's conversation replayed before it (ADR-0049).
-        let turn = await this.withUnasked(await this.withLessons(await this.turnOf(row, worker, current), row, worker), row, worker)
+        // The source's half of its handbook slice, recorded with what it rendered (./handbook.ts).
+        const rendered: SourcePart[] = []
+        let turn = await this.withUnasked(await this.withLessons(await this.turnOf(row, worker, current), row, worker, rendered), row, worker, rendered)
+        this.recordHalf(row, rendered)
         // A run the host cut is told so, and resumes from its native conversation or starts again in its worktree.
         const again = cut ? await this.againAfterCut(row, worker, turn) : undefined
         if (again) turn = again.turn
@@ -2324,7 +2340,7 @@ export class AgentWorkers extends Service {
    * queue, or one that cannot be read, the turn is sent as it is (logged), since the gate still
    * decides every call. Appended before the egress check, which sees it.
    */
-  private async withUnasked(turn: Turn, row: RunRow, worker: AgentWorkerConfig): Promise<Turn> {
+  private async withUnasked(turn: Turn, row: RunRow, worker: AgentWorkerConfig, rendered: SourcePart[] = []): Promise<Turn> {
     if (row.scope === REVIEW_MEMBER) return turn
     const approvals = this.ctx.get('approvals')
     if (!approvals) return turn
@@ -2333,11 +2349,15 @@ export class AgentWorkers extends Service {
       const evidence = await this.evidence(worker, 'proven').catch(() => undefined)
       // A research run is told its web tools and the grant its gate judges them under (T262), the project's as well.
       const grant = worker.research ? webAccessOf((await approvals.policy(row.project_id ?? undefined)).policies, 'research') : undefined
-      const note = unaskedNote(await approvals.policy(), workspace, {
+      const policy = await approvals.policy()
+      const note = unaskedNote(policy, workspace, {
         shellReads: evidence?.cleanShells === true, workspaceReads: evidence?.workspaceReads === true, readTools: readToolsOf(evidence, this.atTier(worker, row.tier).tools), resumes: row.session_id !== null && row.session_id !== undefined, sandbox: worker.sandbox,
         dossier: this.dossierOf(row, evidence) !== undefined,
         ...(worker.research ? { research: { tools: (this.atTier(worker, row.tier).tools ?? []).filter((t) => WEB_RUN_TOOLS.includes(t)), grant: grant ?? null } } : {}),
       })
+      // Its version is the policy it was rendered from: each policy's id and version, and the set in force.
+      const version = `policy:${policy.policies.map((p) => `${p.id}@${p.version}`).join(',') || 'none'}:${policy.set?.hash ?? 'unhashed'}`.slice(0, 300)
+      rendered.push({ layer: 2, part: 'L2.gate-view', version, sha256: sha256(note).slice('sha256:'.length), tokens: Math.ceil(Buffer.byteLength(note, 'utf8') / 4) })
       return { ...turn, prompt: `${turn.prompt}\n\n${note}` }
     } catch (error) {
       this.ctx.logger.warn(`agent Workers: the autonomy policy could not be read for ${row.run_id}'s note of the calls that run unasked; it is sent without it: ${(error as Error).message}`)
@@ -2346,21 +2366,43 @@ export class AgentWorkers extends Service {
   }
 
   /**
-   * The turn with the repository's lessons appended (lessons.ts, T220): for a writing Worker
-   * (`workspace-write`) only, never a review member, the lessons file as its repository (the
-   * configured workspace, whose HEAD a run's worktree is cut from) has it committed at HEAD, at most
-   * 30 lessons (lessons.ts `LESSONS_LIMITS`). No such file, or none committed, is no section; one that cannot be
-   * read is none either (logged), since nothing else depends on it. Appended before the egress
-   * check, which sees it.
+   * The turn with the repository's lessons appended (lessons.ts, T220), from the lessons file as its
+   * repository (the configured workspace, whose HEAD a run's worktree is cut from) has it committed
+   * at HEAD, within its bound (lessons.ts `LESSONS_LIMITS`). A run whose brief records its handbook
+   * slice (`brief@1.6`, docs/design/handbook.md) is given the lessons that apply to the role and paths
+   * the slice was selected for, whatever its sandbox: a reviewer is given the lessons whose check is
+   * the review (X3; a review member's empty workspace holds no repository, so it has none). Any other
+   * run: a writing Worker (`workspace-write`) only, never a review member, every lesson. No such
+   * file, or none committed, is no section; one that cannot be read is none either (logged), since
+   * nothing else depends on it. Appended before the egress check, which sees it; what was given is
+   * recorded in `rendered`.
    */
-  private async withLessons(turn: Turn, row: RunRow, worker: AgentWorkerConfig): Promise<Turn> {
-    if (row.scope === REVIEW_MEMBER || worker.sandbox !== 'workspace-write') return turn
+  private async withLessons(turn: Turn, row: RunRow, worker: AgentWorkerConfig, rendered: SourcePart[] = []): Promise<Turn> {
+    const who = row.handbook ? handbookSelection({ selection: JSON.parse(row.handbook) as unknown }) : undefined
+    if (!who && (row.scope === REVIEW_MEMBER || worker.sandbox !== 'workspace-write')) return turn
     try {
-      const section = await repositoryLessons(worker.workspace)
+      const read = await repositoryLessonsFor(worker.workspace, who)
+      if (read && who) rendered.push({ layer: 5, part: 'L5.lessons', version: read.version, ...(read.sha256 ? { sha256: read.sha256 } : {}), tokens: read.tokens, lessons: read.lessons })
+      const section = read?.section
       return section ? { ...turn, prompt: `${turn.prompt}\n\n${section}` } : turn
     } catch (error) {
       this.ctx.logger.warn(`agent Workers: the lessons of ${worker.workspace} could not be read for ${row.run_id}; it is sent without them: ${(error as Error).message}`)
       return turn
+    }
+  }
+
+  /**
+   * Record what this source rendered of a run's handbook slice (./handbook.ts): for a run of a
+   * workflow run whose brief records its slice, one {@link HANDBOOK_SOURCE_EVENT} event naming the
+   * execution and step, and each part's version, sha256, and estimated tokens (none: the part was not
+   * rendered). Logged, never failing the run, when the log cannot take it.
+   */
+  private recordHalf(row: RunRow, rendered: readonly SourcePart[]): void {
+    if (!row.handbook || !row.workflow_run_id) return
+    try {
+      this.ctx.get('eventLog')?.append({ type: HANDBOOK_SOURCE_EVENT, runId: row.workflow_run_id, data: { execution: row.run_id, ...(row.step_node ? { node: row.step_node } : {}), parts: rendered } })
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: what ${row.run_id} was given of its handbook slice could not be recorded: ${(error as Error).message}`)
     }
   }
 

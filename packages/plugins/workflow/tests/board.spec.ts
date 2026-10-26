@@ -22,7 +22,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import { worker } from '../../../workers-core/conformance/workers.ts'
-import { activeProject, CONFIG, KEEPER, readyTask, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
+import { activeProject, CONFIG, handbookPointer, KEEPER, readyTask, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
 import Workflow, { type Config, type RunView, WorkflowFailure } from '../src/index.ts'
 
 // End to end over the store-backed board and approval queue and the engine, on one durable store;
@@ -537,9 +537,11 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     const brief = ctx.artifacts.get(started.brief!)!.body as { budget: { remaining: unknown[] }; artifacts: Array<{ ref: string; role: string; note: string }>; taskId: string; attempt: number }
     const firstResult = (await ctx.board.task(first.taskId))!.result!.artifacts[0]!
     expect(brief).toMatchObject({ taskId: second.taskId, attempt: 1, budget: { remaining: [{ pool: 'max.programmatic', unit: 'usd', amount: 3.5 }, { pool: 'max.programmatic', unit: 'runs', amount: 2 }] } })
-    expect(brief.artifacts).toEqual([{ ref: firstResult, role: 'input', note: `the accepted result of ${first.taskId}: first` }])
+    // The step's handbook slice (docs/design/handbook.md) is its last pointer.
+    const handbook = handbookPointer(ctx, brief)!
+    expect(brief.artifacts).toEqual([{ ref: firstResult, role: 'input', note: `the accepted result of ${first.taskId}: first` }, handbook.pointer])
     expect(JSON.stringify(brief)).not.toContain('the first result')
-    expect(started.prompt).toBe(`Board task ${second.taskId} of project p1, attempt 1.\nGoal: build on the first\nAcceptance criteria:\n- a1: it builds\nIf you cannot finish without an answer from a person, answer with only this JSON object and nothing else: {"questions": ["..."]}, with 1 to 8 questions of at most 500 characters each. The task then waits for the answers, and its next attempt is given them.\n\ngo on\n\nRead these too:\n\n<artifact id="${firstResult}" role="input" note="the accepted result of ${first.taskId}: first">\nthe first result\n</artifact>`)
+    expect(started.prompt).toBe(`Board task ${second.taskId} of project p1, attempt 1.\nGoal: build on the first\nAcceptance criteria:\n- a1: it builds\nIf you cannot finish without an answer from a person, answer with only this JSON object and nothing else: {"questions": ["..."]}, with 1 to 8 questions of at most 500 characters each. The task then waits for the answers, and its next attempt is given them.\n\ngo on\n\nRead these too:\n\n<artifact id="${firstResult}" role="input" note="the accepted result of ${first.taskId}: first">\nthe first result\n</artifact>\n\n${handbook.rendered}`)
   })
 
   it('counts against a task\'s budget the usage the ledger records under the runs that served it and the executions they started, each record once (PROP-0010)', async () => {
@@ -1059,8 +1061,8 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(failed.nodes.map((n) => n.state)).toEqual(['FAILED', 'WAITING'])
     expect(failed.nodes[0]!.result).toBeUndefined()
     expect(workers.started).toHaveLength(1)
-    // Its brief offered the way to ask (brief@1.2 ask).
-    expect(ctx.artifacts.get(workers.started[0]!.brief!)!.body).toMatchObject({ schema: 'brief@1.2', ask: { maxQuestions: 8 } })
+    // Its brief offered the way to ask (brief@1.2 ask), in a brief@1.6 that records its handbook slice.
+    expect(ctx.artifacts.get(workers.started[0]!.brief!)!.body).toMatchObject({ schema: 'brief@1.6', ask: { maxQuestions: 8 }, handbook: { selection: { role: 'research' } } })
     const view = await reported(ctx, run.runId)
     expect(view.task?.question).toMatchObject({ state: 'raised', nodeId: 'a', questions: ['Which band width?', 'Keep the old API?'] })
     expect(decisionOf(ctx, view.task!.question!.decision)).toMatchObject({ decisionType: 'gate', decider: { id: 'workflow.task-question' }, outcome: { option: 'ask', detail: { taskId: task.taskId, nodeId: 'a' } } })

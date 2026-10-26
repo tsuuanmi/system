@@ -4,7 +4,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import type { UnreleasedHold } from '@tsuuanmi/system-board-core'
-import type { ContentId, DrawFigure } from '@tsuuanmi/system-libs'
+import type { BriefHandbook, ContentId, DrawFigure } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, Classification, RunLiveness, Tier, WorkRequirement } from '@tsuuanmi/system-workers-core'
 import type { AdvisorConfig } from './advisor.ts'
 import type { CallerOptions, NodeTemplate } from './spec.ts'
@@ -501,7 +501,13 @@ export interface Explanation {
    */
   risk?: { tier: 'light' | 'normal' | 'heavy'; reasons: string[]; decision: ArtifactRef; at?: string }
   /** `tier` and `model`: the tier a tiered Worker's step ran at and the model it ran on (ADR-0073), only when its result names them. */
-  nodes: Array<{ nodeId: string; state: NodeState; executionId?: string; worker?: string; quotaClass?: string; tier?: Tier; model?: string; decisions: ExplainedDecision[]; review?: ExplainedReview }>
+  /**
+   * For a step whose latest brief recorded one (`brief@1.6`), `handbook`: the slice it was given, the
+   * bound and its mode, what selected it, and each layer's version and size
+   * (docs/design/handbook.md#what-a-brief-records), with what its Worker source recorded it rendered
+   * of the source's half (`source`: the gate view and the lessons, each version and size).
+   */
+  nodes: Array<{ nodeId: string; state: NodeState; executionId?: string; worker?: string; quotaClass?: string; tier?: Tier; model?: string; decisions: ExplainedDecision[]; review?: ExplainedReview; handbook?: BriefHandbook & { source?: Array<{ layer: number; part: string; version: string; sha256?: string; tokens: number; lessons?: number }> } }>
   /**
    * The run's executions whose liveness needs a look, as their Worker sources tell it
    * (`ctx.workers.liveness`, PROP-0013): stalled, looked at, or ended not known to be gone, with the
@@ -603,6 +609,13 @@ export interface Config {
   maxLimitWaitHours?: number
   /** Approve a high-confidence plan by policy (`by: policy`) instead of waiting for the operator (default false). */
   autoApprovePlans?: boolean
+  /**
+   * The handbook slice every step of a board task's run is given (docs/design/handbook.md, ADR-0072):
+   * `enabled` (default true); `warnTasks`, the distinct board tasks whose slice is built in warn mode
+   * before a slice over the 6,000-token bound is refused (default 30, 0 to 1,000); `root`, the System
+   * repository the homes of layers 1 and 4 are read from (default: the one this package sits in).
+   */
+  handbook?: { enabled?: boolean; warnTasks?: number; root?: string }
   /** Reviews of one change, the first included, before remediation stops (default 3). */
   maxReviewCycles?: number
   /**

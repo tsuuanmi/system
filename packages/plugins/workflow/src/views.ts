@@ -4,6 +4,7 @@ import { type ContentId, drawFigures, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDra
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import { waitsOnCall } from './continuations.ts'
 import type { Engine } from './engine.ts'
+import { handbookOf } from './handbook.ts'
 import { blocks, bySeverity, countOf, type ResolvedNode } from './spec.ts'
 import { isSameFamily, waitingUntil } from './recovery.ts'
 import { latestAssessment } from './review.ts'
@@ -202,6 +203,8 @@ export function explain(e: Engine, runId: string): Explanation | undefined {
       const latest = [...kept, ...(last && !kept.includes(last) ? [last] : [])]
       const earlier = e.ctx.artifacts.list({ kind: 'decision', runId, nodeId: node.node_id, limit: 1000 }).map((a) => a.id as ArtifactRef).filter((id) => !latest.includes(id))
       const ids = [...earlier, ...latest]
+      // The handbook slice its latest brief recorded, with what its Worker source rendered (docs/design/handbook.md#what-a-brief-records).
+      const handbook = handbookOf(e, record.execution?.brief, runId, node.execution_id)
       return {
         nodeId: node.node_id, state: node.state,
         ...(node.execution_id ? { executionId: node.execution_id } : {}), ...(node.worker ? { worker: node.worker } : {}), ...(node.quota_class ? { quotaClass: node.quota_class } : {}),
@@ -211,6 +214,7 @@ export function explain(e: Engine, runId: string): Explanation | undefined {
           return model.model && node.served_tier ? { tier: node.served_tier, model: model.model } : {}
         })(),
         decisions: ids.filter((id): id is ArtifactRef => !!id).map((id) => decision(e, id)).filter((d): d is ExplainedDecision => !!d),
+        ...(handbook ? { handbook } : {}),
         ...(() => {
           const review = explainedReview(e, node)
           return review ? { review } : {}
