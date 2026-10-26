@@ -212,7 +212,9 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     // Every pre-approved tool is scoped to the workspace, and Claude Code runs under the host's
     // read confinement, proven here (ADR-0024, ADR-0038). A run's tool gate is a PreToolUse hook on
     // every tool, which holds in every permission mode.
-    const found = { available: true, version, resume: true, gatesToolCalls: true, homes: true }
+    // Its own reading tools, on every run whose tools list names them (or names none): a gate denies
+    // a shell inspection command it has the tool for, naming it (T222).
+    const found = { available: true, version, resume: true, gatesToolCalls: true, homes: true, readTools: [...READ_ONLY_TOOLS] }
     const unconfined = (detail: string): RuntimeEvidence => ({ ...found, detail: `Claude Code ${version}; ${detail}`, sandboxes: ['read-only'], executes: false, readsConfined: false })
     if (!this.options.confine) return unconfined('no read confinement is configured')
     try {

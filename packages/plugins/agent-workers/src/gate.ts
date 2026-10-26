@@ -51,6 +51,7 @@ export const DENIAL_REASONS = {
   'unknown-checks': 'The autonomy policy left checks pending that no rule can require, so the verdict is not one the gate knows.',
   'unknown-mode': 'The autonomy policy gave a mode the gate does not know.',
   'gate-error': 'The gate failed while it judged the call, so the call is denied.',
+  'use-read-tool': 'A Bash inspection command is denied at once, never asked, where the run\'s agent has a reading tool for it: Read or read_file for cat, head, tail, sed -n, and wc (its numbered lines count them); Grep or search for grep and rg; Glob or list_dir for ls and find.',
 } as const satisfies Record<string, string>
 /** A stable code of why the gate denied a call. */
 export type DenialReason = keyof typeof DENIAL_REASONS
@@ -93,6 +94,14 @@ export interface ClassifyOptions {
    * name is refused, since no server of System's started under it.
    */
   workspaceReads?: boolean | undefined
+  /**
+   * The reading tools the run's agent has, by name (T222): its runtime's own (`Read`, `Grep`,
+   * `Glob`; `RuntimeEvidence.readTools`, as the Worker's tools list keeps them) and the workspace
+   * reads server's (`read_file`, `list_dir`, `search`, with `workspaceReads`). A shell inspection
+   * command one of them serves is refused at once, naming it ({@link inspectionRefusal}). Absent or
+   * empty: none, and such a command stays a `command`.
+   */
+  readTools?: readonly string[] | undefined
 }
 
 /**
@@ -411,6 +420,72 @@ function readCommand(argv: string[], workspace: string): boolean {
   return rule !== undefined && rule(args, workspace)
 }
 
+/**
+ * The shell inspection commands a reading tool serves (T222), by group: the programs (the argv's
+ * first word, as the gate split it; T147's programs), the reading tools that serve them in the
+ * order they are named (the runtime's own first, then the workspace reads server's), and how.
+ */
+export const INSPECTIONS = [
+  { programs: ['cat', 'head', 'tail', 'sed'], forms: 'cat, head, tail, sed -n', tools: ['Read', 'read_file'], how: 'it reads a file, a range of its lines too' },
+  { programs: ['wc'], forms: 'wc', tools: ['Read', 'read_file'], how: 'it numbers a file\'s lines, so its last line number is the line count' },
+  { programs: ['grep', 'rg'], forms: 'grep, rg', tools: ['Grep', 'search'], how: 'it searches files for a pattern' },
+  { programs: ['ls', 'find'], forms: 'ls, find', tools: ['Glob', 'LS', 'list_dir'], how: 'it lists a directory or finds files by name' },
+] as const
+
+/** find's actions: a `find` that carries one is no inspection, and stays a `command`. */
+const FIND_ACTIONS = new Set(['-exec', '-execdir', '-ok', '-okdir', '-delete', '-fprint', '-fprint0', '-fprintf', '-fls'])
+
+/**
+ * Whether `args` is `sed`'s read-only printing form, `-n <a>[,<b>]p <path>…`, its paths relative or
+ * absolute (the `sed` rule of {@link READ_COMMANDS}, which wants one absolute path): no other
+ * option, so no `-i` and no `-e` or `-f` script, and no script but a line range printed, so none
+ * that writes a file (`w`) or runs a command (`e`).
+ */
+function sedPrints(args: readonly string[]): boolean {
+  return args.length >= 3 && args[0] === '-n' && /^\d+(,\d+)?p$/.test(args[1]!) && args.slice(2).every((word) => !word.startsWith('-'))
+}
+
+/**
+ * The inspection group `argv` is, by its first word, or undefined: `sed` only in its read-only
+ * printing form ({@link sedPrints}), `find` only with no action (`-exec`, `-delete`, …), since a
+ * form that writes or runs a command is no inspection a reading tool serves.
+ */
+function inspectionOf(argv: readonly string[]): (typeof INSPECTIONS)[number] | undefined {
+  const [program, ...args] = argv
+  if (program === undefined) return undefined
+  if (program === 'sed' && !sedPrints(args)) return undefined
+  if (program === 'find' && args.some((word) => FIND_ACTIONS.has(word))) return undefined
+  return INSPECTIONS.find((group) => (group.programs as readonly string[]).includes(program))
+}
+
+/**
+ * The reading tools a run's agent has (T222), from its runtime's evidence and the Worker's tools
+ * list: the workspace reads server's three where the runtime gives it (`workspaceReads`), and the
+ * runtime's own (`readTools`) that the tools list keeps (an absent or empty list keeps every one,
+ * as the runtime then gives its default set). No evidence: none.
+ */
+export function readToolsOf(evidence: { workspaceReads?: boolean | undefined; readTools?: readonly string[] | undefined } | undefined, tools: readonly string[] | undefined): string[] {
+  const own = (evidence?.readTools ?? []).filter((tool) => !tools?.length || tools.includes(tool))
+  return [...own, ...(evidence?.workspaceReads === true ? WORKSPACE_READ_TOOLS : [])]
+}
+
+/**
+ * The refusal of a shell inspection command whose reading tool the run's agent has (T222): the
+ * tools of `readTools` that serve it, named. Undefined when it is no inspection command, or none
+ * of its tools is the agent's: it stays a `command`, judged as one.
+ */
+export function inspectionRefusal(argv: readonly string[], readTools: readonly string[] | undefined): Refusal | undefined {
+  const group = inspectionOf(argv)
+  if (!group || !readTools?.length) return undefined
+  const tools = group.tools.filter((tool) => readTools.includes(tool))
+  if (!tools.length) return undefined
+  const named = tools.join(' or ')
+  return {
+    refused: `Bash: ${argv[0]} is a shell inspection command, and you have ${named} for it (${group.how}): use ${named} instead. A shell inspection command is denied at once, never asked`,
+    reason: 'use-read-tool',
+  }
+}
+
 const ANSWER = 'Approved: the next run of this session makes exactly this call. Rejected, or unanswered when the request expires: the call is denied.'
 
 /** At most this many of the policy's commands-list lines are shown to the agent (INV-9). */
@@ -438,6 +513,12 @@ export interface ToolsNoteOptions {
    * shell. Absent: it gives none.
    */
   workspaceReads?: boolean | undefined
+  /**
+   * The reading tools the agent has, by name, as its gate reads them ({@link ClassifyOptions.readTools},
+   * T222): the section says a shell inspection command one of them serves is denied at once, and
+   * names the tool for each. Absent: none.
+   */
+  readTools?: readonly string[] | undefined
 }
 
 /**
@@ -453,7 +534,9 @@ export interface ToolsNoteOptions {
  * about now. A Bash inspection command is named as a read only where the runtime enforces clean
  * shells, as the gate judges it; where the runtime gives the agent the workspace reads server
  * (T200b), its tools are the reading tools named, and the agent is told to read with them, never
- * with a shell. At most {@link TOOLS_NOTE_MAX} characters: the commands list is
+ * with a shell. Where the agent has reading tools (`options.readTools`, T222), it says a shell
+ * inspection command one of them serves is denied at once, never asked, and names the tool to use
+ * for each. At most {@link TOOLS_NOTE_MAX} characters: the commands list is
  * cut first, its rest counted.
  */
 export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; effective: ReadonlyArray<{ actionClass: ActionClass; mode: string }> }, workspace: string, options: ToolsNoteOptions = {}): string {
@@ -487,9 +570,15 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
       listing.push(...listed)
     } else lines.push(readOnly ? '- Any other Bash command, under your read-only sandbox (it changes no file).' : '- Any other Bash command.')
   } else if (listed.length && writes) listing.push(...listed)
-  const bashReads = options.shellReads === true
+  // The inspection commands the gate denies at once, each with the reading tool to use (T222).
+  const served = INSPECTIONS.map((group) => ({ group, tools: group.tools.filter((tool) => options.readTools?.includes(tool)) })).filter((s) => s.tools.length)
+  const inspections = !served.length ? ''
+    : ` A Bash inspection command you have a reading tool for is denied at once, never asked${options.shellReads === true ? ' (unless it is one of the reads above)' : ''}: ${served.map(({ group, tools }) => `${group.forms}: use ${tools.join(' or ')} (${group.how})`).join('; ')}.`
+  const bashReads = (options.shellReads === true
     ? ''
-    : ` Under this runtime no Bash command is a read (cat, ls, rg, and the like are commands, judged as one): read with the ${workspaceReads ? 'workspace server\'s tools, never with a shell' : 'reading tools'}.`
+    : served.length
+      ? ` Under this runtime no Bash command is a read: read with the ${workspaceReads ? 'workspace server\'s tools, never with a shell' : 'reading tools'}.`
+      : ` Under this runtime no Bash command is a read (cat, ls, rg, and the like are commands, judged as one): read with the ${workspaceReads ? 'workspace server\'s tools, never with a shell' : 'reading tools'}.`) + inspections
   // Whether an approval resumes the step is said whatever the command mode: a read or a write the
   // policy asks about defers (and resumes) or is denied at once just as a command does.
   const commandsForbidden = command === 'forbid'
@@ -624,7 +713,13 @@ function patchFiles(patch: string): Array<{ op: string; path: string }> | { refu
  *   metacharacter, so no expansion), under the run's read confinement and its runtime's own
  *   sandbox. Any word the rule does not match exactly, or that could be read as either an option
  *   or a path, leaves the call a `command`: its argv the command split on single spaces, exactly
- *   as the policy's exact-argv rule matches it;
+ *   as the policy's exact-argv rule matches it. But where the run's agent has the reading tool for
+ *   a shell inspection command (`options.readTools`, T222; {@link INSPECTIONS}: `Read` or
+ *   `read_file` for `cat`, `head`, `tail`, `sed -n`, `wc`; `Grep` or `search` for `grep`, `rg`;
+ *   `Glob` or `list_dir` for `ls`, `find`), recognised by its first word whatever its other words,
+ *   it is refused (`use-read-tool`), naming the tool, and opens no request; a `sed` other than
+ *   `sed -n <a>[,<b>]p <path>…` (an in-place edit, a `-e` or `-f` script, a script that writes
+ *   or runs a command) or a `find` with an action is no inspection, and stays a `command`;
  * - `WebFetch`, `WebSearch`: `external-send`;
  * - any other tool (`run_command` among them), or an input that is not an object: refused.
  * A path may be a `file:` URI, which is checked as the path it names.
@@ -706,6 +801,9 @@ export function classify(call: ToolCall, workspace: string, options: ClassifyOpt
     // function or an alias a startup file defined could run instead, so nothing is taken for a read.
     if (options.shellReads === true && noopCommand(argv)) return { class: 'read', summary: clamp(command), consequences: `Prints its words or the working directory, or nothing, and reads and changes nothing: ${clamp(command)}. ${ANSWER}` }
     if (options.shellReads === true && readCommand(argv, workspace)) return { class: 'read', summary: clamp(command), consequences: `Reads inside the run's workspace: ${clamp(command)}. ${ANSWER}` }
+    // An inspection command the agent has a reading tool for is denied at once, naming it, never asked (T222).
+    const inspection = inspectionRefusal(argv, options.readTools)
+    if (inspection) return inspection
     return { class: 'command', command: argv, summary: clamp(`${tool}: ${command}`), consequences: `Runs this exact command in the run's workspace. ${ANSWER}` }
   }
   const send = Object.hasOwn(SENDS, tool) ? SENDS[tool] : undefined
@@ -746,6 +844,11 @@ export interface GateRun {
    * tools for reads ({@link classify}); otherwise every `mcp__workspace__…` call is denied.
    */
   workspaceReads?: boolean | undefined
+  /**
+   * The reading tools the run's agent has, by name (T222; {@link ClassifyOptions.readTools}): a
+   * shell inspection command one of them serves is denied at once, naming it, and asks no one.
+   */
+  readTools?: readonly string[] | undefined
 }
 
 /** The call a run's gate deferred: the run stops there and does not complete. */
@@ -995,7 +1098,7 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
     if (deferred) return refuse(call, `the run stopped at its ${deferred.tool} call, which waits for approval request ${deferred.requestId}; no further call runs`, 'run-stopped')
     const approvals = ctx.get('approvals')
     if (!approvals) return refuse(call, 'no approval queue (ctx.approvals) is loaded, and no tool call runs without its autonomy decision', 'no-approvals')
-    const action = classify(call, run.workspace, { shellReads: run.shellReads === true, workspaceReads: run.workspaceReads === true })
+    const action = classify(call, run.workspace, { shellReads: run.shellReads === true, workspaceReads: run.workspaceReads === true, readTools: run.readTools })
     if ('refused' in action) return refuse(call, action.refused, action.reason)
     const verdict = await approvals.check({ class: action.class, ...(action.command ? { command: action.command } : {}) })
     switch (verdict.mode) {
