@@ -94,7 +94,7 @@ Tests: `tests/guard.spec.ts`.
   gets `teams`, in one sentence (`unknown` on every Worker when it could not
   tell). It then makes `now`, capacity now (below), reading the board's ready
   tasks (`projects`, `tasks`) and their templates' steps (`workflow.templateSteps`)
-  when it has them. The record is checked against `mcp-roster@1.7`
+  when it has them. The record is checked against `mcp-roster@1.9` (`ROSTER_SCHEMA`)
   before it is returned; one its schema refuses throws (a defect).
 - **`readCapacity(services, { scope, now? })`**: the roster's `now`, capacity now
   ([capacity now](../../docs/design/roster.md#capacity-now), `capacity.ts`):
