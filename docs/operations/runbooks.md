@@ -3612,7 +3612,7 @@ capabilities, tier, and conversation of its `review:1` steps, and the set. The f
 part that changed, and the change is not kept until the eval has run on it and is recorded. The
 Workers and models a deployment routes the review to are configuration, not code: after changing
 the reviewer Workers' rows or their models, run it too. Every recorded run lists the Workers that
-served it.
+served it, each with its tier (never its model: models are deployment configuration).
 
 1. **The set is sound:** `rev check` says `ok`. The defective versions of most escapes sit on run
    branches that never landed on `dev` (`system/run/run_1cf19d48db96256a`,

@@ -3,7 +3,7 @@
 > Experiment 4 (T268, D93, after Anthropic's "Solving code review": past bug-causing changes,
 > confirmed, form an eval set the reviewer runs on every change to its prompts, tools, or model).
 > State: **the runner, its gate in `pnpm check`, five escapes and three clean changes, every ref
-> pinned**; no measured run is recorded yet ([preconditions](#preconditions)). Helper:
+> pinned**; the first measured run is recorded (recall 4/5, false-important 1/3; [preconditions](#preconditions)). Helper:
 > [`scripts/experiments/reviewer-eval.ts`](../../../scripts/experiments/reviewer-eval.ts). Records:
 > [the set](records/reviewer-eval-set.v1.json) and [the gate](records/reviewer-eval-gate.json).
 
@@ -61,7 +61,7 @@ commit's recent-runs filter reverted as a diff against the file as it is now. Th
 |---|---|---|
 | P1 | each expected finding confirmed by the lead against its fix (the file the fix changed, the words the defect is told in), and each case's `paths` checked with `resolve` (a diff, within the `run` tool's 32,000 characters) | half: every case resolves against a clone with the run branches, each review input within the bound (the two `agent-workers` cases narrowed to `checks.ts`, the whole directory being over it); the expected findings are not yet confirmed by the lead |
 | P2 | the `agent-review` template served (the `profile-software-development` row on) with a reviewer Worker given no kinds, as `algorithm-development`'s `review:1` needs | as the host runs the board's reviews |
-| P3 | a first measured run, recorded with `--record`, after the reviewer is live | open: until then the gate reports drift from the reviewer as T268 found it and does not fail |
+| P3 | a first measured run, recorded with `--record`, after the reviewer is live | done 2026-10-26 (execution e9bf3a5b): recall 4/5, false-important 1/3; missed t235-npm-config-name, a false important on clean-t250-worktrees-remove-bound; from now on a change to the reviewer fails `pnpm check` until it runs again, no worse |
 
 ## Limits
 

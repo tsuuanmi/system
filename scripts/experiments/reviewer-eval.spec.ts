@@ -133,7 +133,7 @@ describe('System\'s reviewer, through the host\'s MCP tools', () => {
       { severity: 'important', claim: 'pnpm 12 ignores npm_config_: set pnpm_config_offline', evidence: 'only npm_config_offline is set', path: 'packages/plugins/agent-workers/src/setup.ts' },
       { severity: 'nit', claim: 'an important finding with no evidence' },
       { severity: 'nit', claim: 'a note' },
-    ], workers: [`agent:runtime:1 at ${board.tier} on model-x`] })
+    ], workers: [`agent:runtime:1 at ${board.tier}`] })
     expect(calls).toEqual([
       ['run', { template: REVIEW_TEMPLATE, input: 'the input', tier: board.tier, classification: 'operator-shared', clientRequestId: 'key-1', waitSeconds: 55 }],
       ['result', { runId: 'run_1', waitSeconds: 55 }],

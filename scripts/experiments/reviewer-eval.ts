@@ -260,7 +260,8 @@ export async function reviewOnSystem(call: Call, input: string, key: string, rev
   if (step.minTier !== reviewer.tier) return `${view.runId}: the host served review:1 at minimum tier ${String(step.minTier)}, not the board reviewer's ${reviewer.tier}: it does not serve this reviewer configuration (restart it on this build)`
   const findings = findingsOfAssessment(view.answer ?? '')
   if (typeof findings === 'string') return `${view.runId}: ${findings}`
-  return { findings, workers: [`${step.worker} at ${step.tier ?? 'an unknown tier'} on ${step.model ?? 'an unknown model'}`] }
+  // The Worker and tier only: a model is deployment configuration, never written to the repository.
+  return { findings, workers: [`${step.worker} at ${step.tier ?? 'an unknown tier'}`] }
 }
 
 // --- judging ---

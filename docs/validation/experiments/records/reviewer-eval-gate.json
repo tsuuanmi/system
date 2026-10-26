@@ -1,15 +1,38 @@
 {
   "record": "reviewer-eval-gate",
-  "fingerprint": "sha256:8dbf640b026c3422e760d97aa9c63e1ea41d498e1dc00830d6e1288601d3ab19",
+  "fingerprint": "sha256:53a094e6489b9e20d1eb89014f52ad63c3e3ab20c9c3c63d5e253183e85414b3",
   "parts": {
-    "instructions": "sha256:c39e499037a0a6514805f12438b74838de593ef42b8446c9c99d227a9467b782",
-    "subjectBlock": "sha256:bf885a655d3ec9932e3e25d4d596fcf81eaa8bb06033a9c3611dd126ed58384c",
+    "instructions": "sha256:b872d4d92ac6aa601329d91f24bf3380e382fbd844c308f5d3a87b8d858df17d",
+    "subjectBlock": "sha256:dbfb3a663188dd0a05d139706fc4dfc34d912fe10ecf256893f5cf0856a2c022",
     "parser": "sha256:1e318f5c4b35b9184fd4601e891a5f5d615b94e24917d96a251ad831cc18aeb9",
-    "boardStep": "sha256:78e6afede9a7436784876a56b9c85e0d14edfe49410afb015003200e3eefef9a",
+    "boardStep": "sha256:0affea5786cfba6fb3c760105f3296c3f38f6472d166a9045d1c5b2dc02760ab",
     "evalStep": "sha256:c157edb45ae599f429eea8f69d196e85d0808dfcfe78aa2ea388ed567a517bef",
     "set": "sha256:850ec58647fb0c02c617520893fa0c557d9ad2a21979d63bb1eee15a1dd2f011",
     "runner": "sha256:4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a"
   },
-  "run": null,
-  "note": "The reviewer as T268 found it, before its first measured run (P3 of docs/validation/experiments/reviewer-eval.md): until the first run is recorded with --record, pnpm check (check:reviewer-eval) reports a change to it without failing (the first run needs the changed reviewer live); from that run on, a change fails until the eval runs on it."
+  "run": {
+    "execution": "e9bf3a5b-ee26-4d4d-b4cf-7a51c51d81c3",
+    "at": "2026-10-26T16:21:09.772Z",
+    "reviewer": {
+      "capabilities": [
+        "local-data",
+        "review"
+      ],
+      "tier": "standard"
+    },
+    "recall": {
+      "found": 4,
+      "of": 5,
+      "rate": 0.8
+    },
+    "falseImportant": {
+      "cases": 1,
+      "of": 3,
+      "rate": 0.333
+    },
+    "workers": [
+      "agent:claude-agent-sdk:b4bd4c88be9fffdf/review at standard",
+      "agent:codex-sdk:d50b2d1fa5532a21/review at standard"
+    ]
+  }
 }
