@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:board-task:v1",
   "title": "Board task",
-  "description": "Durable state of one task on a project's board (ctx.board, design/board.md): work that outlives a run. Only the work state machine moves it, and each move names the decision behind it (INV-13). Mutable state that points at immutable artifacts. @1.1 adds a spent budget's funding: the lines a budget-spent wait asks for (`waiting.funding`), and the raises an approved request applied (`funding`).",
+  "description": "Durable state of one task on a project's board (ctx.board, design/board.md): work that outlives a run. Only the work state machine moves it, and each move names the decision behind it (INV-13). Mutable state that points at immutable artifacts. @1.1 adds a spent budget's funding: the lines a budget-spent wait asks for (`waiting.funding`), and the raises an approved request applied (`funding`). 1.2 adds the `defect` link: the done task this one fixes a defect of, and the landing sha of its change.",
   "type": "object",
   "required": ["schema", "taskId", "projectId", "title", "goal", "acceptance", "dependsOn", "actionClass", "state", "attempts", "createdAt", "revision"],
   "properties": {
-    "schema": { "enum": ["board-task@1.0", "board-task@1.1"] },
+    "schema": { "enum": ["board-task@1.0", "board-task@1.1", "board-task@1.2"] },
     "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "milestone": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
@@ -176,6 +176,18 @@
         "additionalProperties": false
       }
     },
+    "defect": {
+      "description": "1.2: the defect this task fixes: `fixes` is the done task whose landed change held it, `sha` the landing sha of that change (7 to 64 hex characters), `at` when the link was set, `by` who set it (`filed`: when the task was filed). `system metrics` counts the tasks fixed as escaped defects.",
+      "type": "object",
+      "required": ["fixes", "sha", "at", "by"],
+      "properties": {
+        "fixes": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "sha": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" },
+        "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+        "by": { "enum": ["filed", "lead", "reviewer", "operator"] }
+      },
+      "additionalProperties": false
+    },
     "cancellation": {
       "type": "object",
       "required": ["reason", "at"],
@@ -271,11 +283,16 @@
           { "required": ["waiting"], "properties": { "waiting": { "type": "object", "required": ["funding"], "properties": { "funding": true } } } }
         ]
       },
-      "then": { "properties": { "schema": { "const": "board-task@1.1" } } }
+      "then": { "properties": { "schema": { "enum": ["board-task@1.1", "board-task@1.2"] } } }
     },
     {
       "if": { "required": ["waiting"], "properties": { "waiting": { "type": "object", "required": ["funding"], "properties": { "funding": true } } } },
       "then": { "properties": { "waiting": { "type": "object", "properties": { "reason": { "const": "budget-spent" } } } } }
+    },
+    {
+      "description": "1.2: a record that carries a defect link is board-task@1.2.",
+      "if": { "required": ["defect"], "properties": { "defect": true } },
+      "then": { "properties": { "schema": { "const": "board-task@1.2" } } }
     }
   ],
   "additionalProperties": false

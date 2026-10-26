@@ -15,7 +15,7 @@ import { type ApprovalRequest, type AutonomyVerdict, type Check, type Mode, type
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import {
-  type ActionClass, type ArtifactRef, Board, BoardError, type Breaker, BREAKER_DEFAULT, type BreakerLine, type Escape, type BoardTask, type BudgetLine, type CancelReason, type Charter, type CharterInput, type Claim, FREE_RETRIES_DEFAULT, FREE_RETRIES_MAX, freeRetriesOf, fundingVersion,
+  type ActionClass, type ArtifactRef, Board, BoardError, type Breaker, BREAKER_DEFAULT, type BreakerLine, type Escape, type BoardTask, type BudgetLine, type CancelReason, type Charter, type CharterInput, type Claim, DEFECT_SHA, type Defect, type DefectBy, FREE_RETRIES_DEFAULT, FREE_RETRIES_MAX, freeRetriesOf, fundingVersion,
   type InfrastructureFailure, infrastructureProblem, type Project, type ProjectState, REOPEN_REASON_MAX, type Reopening, renderTasks, type RunOutcome, type Subject, type TaskInput, type TaskState, TERMINAL, type Unit, type UnreleasedHold, unreleasedProblem, unreleasedText, type WaitReason,
 } from '@tsuuanmi/system-board-core'
 import type {} from '@tsuuanmi/system-gateway-core'
@@ -639,18 +639,47 @@ export class StoreBoard extends Board {
       if (!Number.isInteger(max) || max < 1 || max > 10) throw new BoardError('invalid', 'maxAttempts is a whole number from 1 to 10')
       const writes = writesKey(input.writes)
       if (writes && db.prepare('SELECT 1 FROM board_tasks WHERE writes = ?').get(writes)) throw new BoardError('conflict', `another open task writes ${input.writes!.type} ${input.writes!.ref} (INV-15)`)
+      const defect = input.fixes ? this.defectOf(input.fixes.taskId, input.fixes.sha, input.projectId, 'filed', at) : undefined
       const task: BoardTask = {
-        schema: 'board-task@1.0', taskId: newId('task'), projectId: input.projectId, title: input.title, goal: input.goal,
+        schema: defect ? 'board-task@1.2' : 'board-task@1.0', taskId: newId('task'), projectId: input.projectId, title: input.title, goal: input.goal,
         acceptance: input.acceptance, dependsOn: input.dependsOn ?? [], actionClass: input.actionClass, state: 'proposed',
         attempts: { count: 0, max }, createdAt: at.toISOString(), revision: 0,
         ...(input.milestone !== undefined ? { milestone: input.milestone } : {}), ...(input.template !== undefined ? { template: input.template } : {}),
-        ...(input.writes ? { writes: input.writes } : {}), ...(input.budget ? { budget: input.budget } : {}),
+        ...(input.writes ? { writes: input.writes } : {}), ...(input.budget ? { budget: input.budget } : {}), ...(defect ? { defect } : {}),
       }
       this.validTask(task)
       db.prepare('INSERT INTO board_tasks (task_id, project_id, state, created_at, revision, record, writes) VALUES (?, ?, ?, ?, ?, ?, ?)')
         .run(task.taskId, task.projectId, task.state, task.createdAt, task.revision, JSON.stringify(task), writes)
       if (clientRequestId !== undefined) this.recordRequest(clientRequestId, 'board_propose', task.projectId, task.taskId, undefined, at)
       return checkedBy(check, task)
+    })
+  }
+
+  /**
+   * The defect link a task carries: `fixes` must be a done task of `projectId`, `sha` 7 to 64 hex
+   * characters; otherwise `invalid`. A task never fixes itself (`self`, once it has an id).
+   */
+  private defectOf(fixes: string, sha: string, projectId: string, by: DefectBy, at: Date, self?: string): Defect {
+    if (typeof sha !== 'string' || !new RegExp(`^[0-9a-f]{${DEFECT_SHA.min},${DEFECT_SHA.max}}$`).test(sha)) throw new BoardError('invalid', `a defect's landing sha is ${DEFECT_SHA.min} to ${DEFECT_SHA.max} lowercase hex characters`)
+    const fixed = this.readTask(fixes)?.task
+    if (!fixed || fixed.projectId !== projectId) throw new BoardError('invalid', `${fixes} is not a task of ${projectId}: a defect is of a task of the same project`)
+    if (fixes === self) throw new BoardError('invalid', `${fixes} cannot fix a defect of itself`)
+    if (fixed.state !== 'done') throw new BoardError('invalid', `${fixes} is ${fixed.state}, not done: only a task whose change landed has a defect that escaped`)
+    return { fixes, sha, at: at.toISOString(), by }
+  }
+
+  /**
+   * Link a task to the defect it fixes, once, as the lead or the reviewer (or the operator): the same
+   * record a task filed with `fixes` has. No state moves and no decision is made (the link is a fact
+   * about the fixed task's change, not a move of this one).
+   */
+  async linkDefect(taskId: string, input: { fixes: string; sha: string; by: Exclude<DefectBy, 'filed'> }, at: Date = new Date(), check?: Checked<BoardTask>): Promise<BoardTask> {
+    if (!['lead', 'reviewer', 'operator'].includes(input.by)) throw new BoardError('invalid', 'a defect link is set by the lead, the reviewer, or the operator')
+    return this.ctx.store.transaction(() => {
+      const current = this.taskOf(taskId)
+      if (current.task.defect) throw new BoardError('invalid', `${taskId} already fixes a defect of ${current.task.defect.fixes}`)
+      const defect = this.defectOf(input.fixes, input.sha, current.task.projectId, input.by, at, taskId)
+      return checkedBy(check, this.commit(current, { changes: { schema: 'board-task@1.2', defect } }, at))
     })
   }
 
@@ -1537,7 +1566,7 @@ export class StoreBoard extends Board {
     const move = this.nextAttemptMove(project, { ...task, budget, funding: raises }, next, {
       decision, why: `the operator approved going on after budget-spent (request ${request.requestId}), its budget raised by ${linesText(funding, '+')}`,
     }, at)
-    return { changes: { schema: 'board-task@1.1', budget, funding: raises, ...move.changes } }
+    return { changes: { schema: task.defect ? 'board-task@1.2' : 'board-task@1.1', budget, funding: raises, ...move.changes } }
   }
 
   /**
@@ -1790,7 +1819,7 @@ export class StoreBoard extends Board {
     try {
       return this.commitLater(task, at, generation, () => ({
         changes: {
-          state: 'waiting-for-approval', holder: undefined, ...(funding ? { schema: 'board-task@1.1' as const } : {}),
+          state: 'waiting-for-approval', holder: undefined, ...(funding ? { schema: task.defect ? 'board-task@1.2' as const : 'board-task@1.1' as const } : {}),
           waiting: { reason, approvalRequest: request.requestId, ...(funding ? { funding } : {}), since: at.toISOString(), expiresAt: request.expiresAt }, lastDecision: request.policy.decision,
         },
       }))

@@ -292,6 +292,8 @@ export interface TaskLanding {
   approval?: ArtifactRef
   /** The base branch's head that holds the change, once merged. */
   commit?: string
+  /** The commits the landed change reverts, as its commit messages say (`This reverts commit <sha>`), once merged; the metrics read each as a defect of the reverted task (PROP-0016 I4). */
+  reverts?: string[]
   cause?: string
   reason?: string
   /** The landing's own `gate` decisions (rule `workflow.landing`), in order. */

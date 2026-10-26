@@ -22,6 +22,7 @@ import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { countedWhole, dshHome, ensurePrivateDir, registerSecretPath, SchemaRegistry, USAGE_UNKNOWN_EVENT, writeFileDurable } from '@tsuuanmi/system-libs'
 import type { PluginRecord } from '@tsuuanmi/system-plugin-host-core'
 import type {} from '@tsuuanmi/system-resources-core'
+import { type AvailabilityLog, recordAvailability } from './availability.ts'
 import { type HealthReport, healthReport, type LivenessRead } from './health.ts'
 import { z as zod } from 'zod'
 
@@ -39,6 +40,8 @@ export interface Config {
   driftWindowHours?: number
   /** How long the store's integrity check result is reused, in minutes (default 15): it blocks while it runs. */
   storeCheckMinutes?: number
+  /** Seconds between reads of the roster that record a change of a Worker's availability (default 60; 0 records none). */
+  availabilitySeconds?: number
 }
 
 export type { ToolContext, ToolHandler, ToolScope, ToolSpec } from '@tsuuanmi/system-gateway-core'
@@ -107,6 +110,7 @@ export class McpEndpoint extends McpTools {
     minFreeBytes: z.natural().default(2 ** 30).description('Free space under the DSH home below which health is degraded'),
     driftWindowHours: z.natural().min(1).default(24).description('How long a provider UI change keeps health degraded'),
     storeCheckMinutes: z.natural().min(1).default(15).description('Minutes the store integrity check result is reused (it blocks the host while it runs)'),
+    availabilitySeconds: z.natural().default(60).description('Seconds between reads of the roster that record a change of a Worker\'s availability in the event log, for the maturity metrics; 0 records none'),
   })
 
   private readonly tools = new Map<string, Tool>()
@@ -143,6 +147,29 @@ export class McpEndpoint extends McpTools {
         leadFiles.clear()
       }
     })
+
+    // Worker availability over time: each change the roster shows is an event the maturity metrics read.
+    const every = (config.availabilitySeconds ?? 60) * 1000
+    if (every > 0) {
+      ctx.effect(() => {
+        let reading = false
+        const tick = async (): Promise<void> => {
+          const log = this.ctx.get('eventLog' as never) as AvailabilityLog | undefined
+          if (reading || !log || !this.ctx.get('workers')) return
+          reading = true
+          try {
+            recordAvailability(log, await readRoster(this.rosterServices(), { scope: 'client' }))
+          } catch (error) {
+            this.ctx.logger.warn(`mcp-server: Worker availability was not recorded this time: ${(error as Error).message.slice(0, 300)}`)
+          } finally {
+            reading = false
+          }
+        }
+        const timer = setInterval(() => void tick(), every)
+        timer.unref()
+        return () => clearInterval(timer)
+      })
+    }
 
     const handler = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
       // The model token reaches only the model gateways, never /mcp. A lead token is a client's, with its project (ADR-0076).

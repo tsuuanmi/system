@@ -316,6 +316,47 @@ describe('the maturity metrics, computed (docs/design/maturity-metrics.md)', () 
     expect(none).toMatchObject({ state: 'not-measurable', reason: expect.stringMatching(/^1 escaped defect\(s\)/) })
   })
 
+  it('counts a fix task linked to a landed task, and a revert landed on the target, as escaped defects of the task they name, each task once, over the results merged', () => {
+    const fix = (id: string, fixes: string, when: string): BoardTask => ({ ...task(id, 'proposed'), schema: 'board-task@1.2', defect: { fixes, sha: 'abcdef1', at: when, by: 'filed' } })
+    // Not measurable until the board records the link at all.
+    expect(metricOf(buildMetrics(WINDOW, month(), 'p1').metrics, 'escaped-defects').state).toBe('not-measurable')
+    // One fix linked to t1 in the window (of the two results merged in it), one linked before the window: one defect.
+    const linked = { ...month(), defectLinks: true }
+    linked.tasks = [...linked.tasks, fix('t7', 't1', at(8)), fix('t8', 't5', at(-3))]
+    const read = buildMetrics(WINDOW, linked, 'p1')
+    expect(metricOf(read.metrics, 'escaped-defects')).toMatchObject({ state: 'measured', value: 50, figures: { linked: 1, reverted: 0, defects: 1 }, sample: 2, bound: 'lower' })
+    expect(() => schemas.assertDef('mcp-report@1.6', 'metrics-output', read)).not.toThrow()
+    // A revert landed on the target names t2's landing commit: a defect of t2, beside t1's fix, over three merged results.
+    const reverted = { ...linked, events: [...linked.events,
+      event('workflow.task.landing', at(10, 12), { taskId: 't2', state: 'merged', commit: '2222222aaaa' }, { runId: 'run-2b' }),
+      event('workflow.task.landing', at(12), { taskId: 't9', state: 'merged', commit: '9999999bbbb', reverts: ['2222222'] }, { runId: 'run-9' })] }
+    expect(metricOf(buildMetrics(WINDOW, reverted, 'p1').metrics, 'escaped-defects')).toMatchObject({ value: 66.67, figures: { linked: 1, reverted: 1, defects: 2 }, sample: 3 })
+    // The same task fixed and reverted counts once.
+    reverted.tasks = [...reverted.tasks, fix('t10', 't2', at(11))]
+    expect(metricOf(buildMetrics(WINDOW, reverted, 'p1').metrics, 'escaped-defects')).toMatchObject({ value: 66.67, figures: { defects: 2 } })
+  })
+
+  it('leaves a quota-exhausted Worker\'s hours out of the availability share, and counts a lost login\'s hours as unavailable', () => {
+    const ev = (type: 'unavailable' | 'available', worker: string, when: string, reason?: string): Recorded =>
+      event(`roster.worker.${type}`, when, { worker, ...(reason ? { reason } : {}) })
+    const events = [
+      ev('available', 'w1', at(-1)), ev('unavailable', 'w1', at(5, 0), 'quota-exhausted'), ev('available', 'w1', at(7, 0)),
+      ev('unavailable', 'w1', at(10, 0), 'login-lost'), ev('available', 'w1', at(11, 0)),
+      ev('available', 'w2', at(20, 0)),
+    ]
+    const read = buildMetrics(WINDOW, { ...month(), availability: events }, 'p1')
+    // w1: 648 h able, 48 h at the usage limit (left out), 24 h with its login lost; w2: 240 h able from its first event.
+    const m = metricOf(read.metrics, 'worker-availability')
+    expect(m).toMatchObject({ state: 'measured', unit: 'share', value: 0.9737, figures: { ableHours: 888, unavailableHours: 24, quotaExcludedHours: 48, workers: 2 }, sample: 2 })
+    expect(m.reason).toMatch(/login-lost 24 h/)
+    expect(m.l3.status).toBe('meets')
+    expect(() => schemas.assertDef('mcp-report@1.6', 'metrics-output', read)).not.toThrow()
+    // Only a usage limit all window: nothing to divide by.
+    const limited = metricOf(buildMetrics(WINDOW, { ...month(), availability: [ev('unavailable', 'w1', at(-1), 'quota-exhausted')] }, 'p1').metrics, 'worker-availability')
+    expect(limited).toMatchObject({ state: 'not-measurable' })
+    expect(metricOf(buildMetrics(WINDOW, { ...month(), availability: [] }, 'p1').metrics, 'worker-availability').state).toBe('not-measurable')
+  })
+
   it('reads L3 as not shown, with every reason: too few tasks, the lines missed, the bounds, and the metrics not measurable', () => {
     const { level } = buildMetrics(WINDOW, month(), 'p1')
     expect(level).toMatchObject({ l3: 'not-shown', finishedTasks: 4, minTasks: 30, days: 30 })

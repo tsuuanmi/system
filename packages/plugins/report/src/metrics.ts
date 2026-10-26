@@ -10,6 +10,7 @@ import type { ApprovalRequest } from '@tsuuanmi/system-approvals-core'
 import type { BoardTask, Escape } from '@tsuuanmi/system-board-core'
 import type { QuotaDraw } from '@tsuuanmi/system-libs'
 import type { UsageRecord } from '@tsuuanmi/system-resources-core'
+import { EXCLUDED_REASONS, WORKER_AVAILABLE_EVENT, WORKER_UNAVAILABLE_EVENT } from '@tsuuanmi/system-gateway-core'
 import { LIVENESS_EVENTS, type DecisionRead, type Period, type Recorded } from './report.ts'
 
 /** The window the metrics read by default, and the one a level is read over (PROP-0016 §1). */
@@ -130,6 +131,17 @@ export interface MetricSources {
    * `escapes`, D93), in scope; absent when the board records none (the metric is then not measurable).
    */
   escapes?: readonly Escape[]
+  /**
+   * The board records the `defect` link of a task (`board-task@1.2`, in `tasks`) and a landing records the commits
+   * it reverts: the escaped-defects metric then reads those too. Absent: the board records none of them.
+   */
+  defectLinks?: boolean
+  /**
+   * The Workers' availability events (`roster.worker.unavailable`, `roster.worker.available`), every one recorded
+   * before the window's end, not scoped to a project (a Worker serves every project). Absent: none is recorded
+   * (the metric is then not measurable); an empty list is the log holding none.
+   */
+  availability?: readonly Recorded[]
   /** Runs read whose decisions may not all have been read (more than one read holds): their people's decisions are a lower bound. */
   truncatedRuns?: readonly string[]
   /** Why decisions people made on runs in the window may not all have been read, when they may not. */
@@ -438,27 +450,60 @@ export function buildMetrics(period: Period, sources: MetricSources, projectId?:
       figures: { stalledOrHeld: stalledRuns.size }, sample: startedInWindow.length, sampleOf: 'runs started', sources: stallSources,
     }))
 
-  // Escaped defects, Worker availability, quota idle: the records they need do not exist yet.
-  const escapeSources = ['the board (recorded escapes of auto-accepted results)', 'workflow.task.landing (merged)']
-  if (sources.escapes === undefined) {
+  // Escaped defects: a task landed, and later a defect of its change was recorded.
+  const escapeSources = ['the board (defect links of tasks; recorded escapes of auto-accepted results)', 'workflow.task.landing (merged; reverts)']
+  if (sources.escapes === undefined && !sources.defectLinks) {
     drafts.push(unmeasurable('escaped-defects', 'Escaped defects per 100 landed', 'per-100-landed',
-      'the board records no escapes (no `escapes` read), and nothing else links a fix to the task whose landed change it fixes: a task\'s title naming another is not evidence of a defect', escapeSources))
+      'the board records no defect link and no escape (neither `defectLinks` nor `escapes` read): a task\'s title naming another is not evidence of a defect', escapeSources))
   } else {
-    // The escapes the operator or the lead recorded against auto-accepted results, found in the window: the count the
-    // auto-accept circuit breaker trips on (board.autoAccept.breaker, default 2 in 7 days; read this over 7 days).
-    const found = sources.escapes.filter((e) => inWindow(e.foundAt))
+    // Each task with a defect recorded, once, at the earliest time one was: a `defect` link of a fix task (`fixes`,
+    // its time the link's), a revert landed on the target (the commit it names is a task\'s landing commit or result),
+    // or an escape of an auto-accepted result (the count the auto-accept circuit breaker trips on, D93).
+    const defects = new Map<string, { at: string; via: Set<'link' | 'revert' | 'escape'> }>()
+    const note = (taskId: string, at: string, via: 'link' | 'revert' | 'escape'): void => {
+      const known = defects.get(taskId)
+      if (!known) defects.set(taskId, { at, via: new Set([via]) })
+      else {
+        known.via.add(via)
+        if (ms(at) < ms(known.at)) known.at = at
+      }
+    }
+    if (sources.defectLinks) for (const t of sources.tasks) if (t.defect) note(t.defect.fixes, t.defect.at, 'link')
+    for (const e of sources.escapes ?? []) note(e.taskId, e.foundAt, 'escape')
+    // The commits each task landed: its merged landing's commit, and its result's exact subject.
+    const commitsOf = new Map<string, Set<string>>()
+    const landedCommits = (taskId: string): Set<string> => commitsOf.get(taskId) ?? commitsOf.set(taskId, new Set()).get(taskId)!
+    for (const t of sources.tasks) if (t.result?.subject.type === 'git-head' && t.result.subject.version) landedCommits(t.taskId).add(t.result.subject.version)
+    const mergedEvents = ofType('workflow.task.landing').filter((e) => e.data?.['state'] === 'merged' && beforeEnd(e.at) && typeof e.data?.['taskId'] === 'string')
+    for (const e of mergedEvents) if (typeof e.data!['commit'] === 'string') landedCommits(String(e.data!['taskId'])).add(e.data!['commit'])
+    const sameCommit = (a: string, b: string): boolean => a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a))
+    for (const e of mergedEvents) {
+      const reverts = e.data!['reverts']
+      if (!Array.isArray(reverts)) continue
+      for (const sha of reverts) {
+        if (typeof sha !== 'string') continue
+        for (const [taskId, commits] of commitsOf) {
+          if (taskId !== e.data!['taskId'] && [...commits].some((c) => sameCommit(c, sha))) note(taskId, e.at, 'revert')
+        }
+      }
+    }
+    const found = [...defects.entries()].filter(([, d]) => inWindow(d.at))
+    const via = (kind: 'link' | 'revert' | 'escape'): number => found.filter(([, d]) => d.via.has(kind)).length
     const landed = landedTasks.size
+    const figures = { escapes: via('escape'), linked: via('link'), reverted: via('revert') }
     drafts.push(!landed
       ? unmeasurable('escaped-defects', 'Escaped defects per 100 landed', 'per-100-landed',
-        `${found.length} escaped defect(s) of auto-accepted results were recorded in the window, and no result was merged in it to divide by`, escapeSources)
+        `${found.length} escaped defect(s) were recorded in the window, and no result was merged in it to divide by`, escapeSources)
       : measured({
         id: 'escaped-defects', name: 'Escaped defects per 100 landed', unit: 'per-100-landed', value: round((found.length / landed) * 100, 2),
-        figures: { escapes: found.length }, sample: landed, sampleOf: 'results merged',
-        reason: 'only defects the operator or the lead recorded against auto-accepted results count: a defect in a result they accepted by hand is not recorded, so the value is a lower bound', bound: 'lower', sources: escapeSources,
+        figures: { ...figures, defects: found.length }, sample: landed, sampleOf: 'results merged',
+        reason: 'counts each task with a defect recorded in the window, once: a fix task linked to it (`fixes: <taskId>@<landing sha>`), a revert landed on the target, or an escape of an auto-accepted result recorded; a defect nobody linked, reverted, or recorded is not counted, so the value is a lower bound', bound: 'lower', sources: escapeSources,
       }))
   }
-  drafts.push(unmeasurable('worker-availability', 'Worker availability', 'share',
-    'when a Worker could not take work, and when it could again, is not recorded over time: the roster reads availability now only (PROP-0016 I3 and I4)', ['the roster (now only)']))
+
+  // Worker availability: the share of hours each Worker could take work, a usage limit's hours left out.
+  const availabilitySources = [WORKER_UNAVAILABLE_EVENT, WORKER_AVAILABLE_EVENT]
+  drafts.push(measuredAvailability(sources.availability, since, until, availabilitySources))
   drafts.push(measuredCost(sources.usage.filter((u) => inWindow(u.observedAt)), (sources.draws ?? []).filter((d) => inWindow(d.observedAt)), sources.usageUnknown ?? 0, finished.length))
   drafts.push(unmeasurable('quota-idle', 'Quota idle while work is ready', 'share',
     'an account\'s headroom is read when a run is routed and not recorded over time, so the hours with headroom above the reserve while a task waited ready cannot be counted (PROP-0016 I4, a later part)', ['quota readings (not kept)', 'board decisions (to ready)']))
@@ -574,6 +619,80 @@ function measuredCost(records: readonly UsageRecord[], draws: readonly QuotaDraw
     id: 'cost-per-accepted-result', name: 'Cost per accepted result', unit: 'tokens', value: perTokens, figures,
     sample: accepted, sampleOf: 'accepted results', ...(lower ? { bound: 'lower' as const } : {}), ...(reason ? { reason } : {}),
     byKind, sources: costSources,
+  })
+}
+
+/**
+ * Worker availability: of the hours each Worker was observed in the window, the share it could take
+ * work. A Worker's state over time is its availability events (`roster.worker.unavailable` with a
+ * reason, `roster.worker.available`): the state it was left in before the window, then each change.
+ * Hours before a Worker's first event are not observed and not counted. A usage limit
+ * (`quota-exhausted`) is no failure of the Worker (PROP-0016 §1): its hours are left out of both
+ * sides; a lost login, a quarantine, a stall, or any other reason counts as unavailable.
+ */
+function measuredAvailability(events: readonly Recorded[] | undefined, since: number, until: number, sources: string[]): Draft {
+  const name = 'Worker availability'
+  if (events === undefined) return unmeasurable('worker-availability', name, 'share', 'no availability event is recorded: the Worker availability changes are not read', sources)
+  const ordered = [...events].filter((e) => (e.type === WORKER_UNAVAILABLE_EVENT || e.type === WORKER_AVAILABLE_EVENT) && typeof e.data?.['worker'] === 'string' && ms(e.at) < until)
+    .sort((a, b) => ms(a.at) - ms(b.at) || a.seq - b.seq)
+  const byWorker = new Map<string, Recorded[]>()
+  for (const e of ordered) {
+    const worker = String(e.data!['worker'])
+    const list = byWorker.get(worker) ?? byWorker.set(worker, []).get(worker)!
+    list.push(e)
+  }
+  if (!byWorker.size) return unmeasurable('worker-availability', name, 'share', 'no Worker availability event is recorded up to the window\'s end', sources)
+  const hours = { able: 0, unavailable: 0, excluded: 0 }
+  const reasons = new Map<string, number>()
+  let unobserved = 0
+  let observed = 0
+  for (const list of byWorker.values()) {
+    // The state it was left in before the window, else unobserved until its first event.
+    let cursor = since
+    let state: { able: boolean; reason?: string } | undefined
+    const stateOf = (e: Recorded): { able: boolean; reason?: string } => {
+      const reason = e.data?.['reason']
+      return e.type === WORKER_AVAILABLE_EVENT ? { able: true } : { able: false, reason: typeof reason === 'string' ? reason : 'unavailable' }
+    }
+    const span = (to: number): void => {
+      if (to <= cursor) return
+      const h = (to - cursor) / HOUR_MS
+      if (!state) unobserved += h
+      else {
+        observed += h
+        if (state.able) hours.able += h
+        else if (EXCLUDED_REASONS.includes(state.reason as never)) hours.excluded += h
+        else {
+          hours.unavailable += h
+          reasons.set(state.reason!, (reasons.get(state.reason!) ?? 0) + h)
+        }
+      }
+      cursor = to
+    }
+    for (const e of list) {
+      if (ms(e.at) <= since) {
+        state = stateOf(e)
+        continue
+      }
+      span(ms(e.at))
+      state = stateOf(e)
+    }
+    span(until)
+  }
+  const counted = hours.able + hours.unavailable
+  const text = (h: number): number => round(h, 2)
+  const why = [...reasons.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([r, h]) => `${r} ${text(h)} h`)
+  const notes = [
+    `over ${byWorker.size} Worker(s)' ${text(observed)} observed hour(s); ${text(hours.excluded)} hour(s) at a usage limit (quota-exhausted) are left out, as PROP-0016 defines`,
+    why.length ? `unavailable: ${why.join(', ')}` : '',
+    unobserved ? `${text(unobserved)} hour(s) before a Worker's first recorded event are not counted` : '',
+    'a Worker is in the state its last event left it in until the next: hours the host was down are counted as that state',
+  ].filter(Boolean).join('; ')
+  if (!counted) return unmeasurable('worker-availability', name, 'share', `no Worker was observed able or unavailable for a reason other than a usage limit in the window; ${notes}`, sources)
+  return measured({
+    id: 'worker-availability', name, unit: 'share', value: round(hours.able / counted, 4),
+    figures: { ableHours: text(hours.able), unavailableHours: text(hours.unavailable), quotaExcludedHours: text(hours.excluded), workers: byWorker.size },
+    sample: byWorker.size, sampleOf: 'Workers', reason: notes, sources,
   })
 }
 

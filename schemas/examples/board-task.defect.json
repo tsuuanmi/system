@@ -1,0 +1,30 @@
+{
+  "schema": "board-task@1.2",
+  "taskId": "task-0031",
+  "projectId": "proj-sparse-align",
+  "milestone": "m2",
+  "title": "Fix the score overflow in the vectorized loop",
+  "goal": "Make the vectorized scoring loop of bench/align score long sequences as the scalar loop did.",
+  "acceptance": [
+    {
+      "id": "a1",
+      "statement": "bench/align scores of sequences over 4096 bases are identical to the scalar loop's",
+      "check": "tests"
+    }
+  ],
+  "dependsOn": [],
+  "actionClass": "workspace-write",
+  "state": "proposed",
+  "attempts": {
+    "count": 0,
+    "max": 3
+  },
+  "defect": {
+    "fixes": "task-0007",
+    "sha": "9f3c2a1b7d4e",
+    "at": "2026-10-25T09:00:00Z",
+    "by": "filed"
+  },
+  "createdAt": "2026-10-25T09:00:00Z",
+  "revision": 0
+}

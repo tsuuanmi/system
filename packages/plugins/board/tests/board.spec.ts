@@ -1128,6 +1128,7 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
       ['board_brief', { projectId: 'p3' }], ['board_tasks', { projectId: 'p3' }], ['board_breakers', { projectId: 'p3' }], ['board_breaker_reset', { projectId: 'p3', branch: 'dev' }],
       ['board_propose', { ...task('p3', 'sneaked') }], ['board_propose', { ...task('p2', 'depends', { dependsOn: [theirs.taskId] }) }],
       ['board_charter', { projectId: 'p3', title: 't', charter: CHARTER }], ['board_reopen_review', { taskId: theirs.taskId, reason: 'r' }],
+      ['board_defect', { taskId: theirs.taskId, fixes: own.taskId, sha: 'a'.repeat(40) }], ['board_defect', { taskId: own.taskId, fixes: theirs.taskId, sha: 'a'.repeat(40) }],
     ]
     for (const [name, args] of calls) {
       const refused = await call(name, args)
@@ -1702,6 +1703,45 @@ describe('ctx.board (store-backed): board_* MCP tools', () => {
     expect((await ok(call('board_projects', { limit: 2, after: projects.next }))).projects.map((p: { projectId: string }) => p.projectId)).toEqual(['p3'])
     expect(b.board().projectPage({ state: 'closed' })).toEqual({ items: [] })
     expect(() => b.board().taskPage({ projectId: 'p2', limit: 0 })).toThrow(BoardError)
+  })
+})
+
+describe('ctx.board (store-backed): the defect link (PROP-0016 I4)', () => {
+  const finished = async (ctx: Context, title: string): Promise<BoardTask> => {
+    const t = await ready(ctx, task('p2', title))
+    const { generation } = await ctx.board.claim(t.taskId, 'lead', 600_000, at(3))
+    await ctx.board.start(t.taskId, generation, { runId: `run-${title}` }, at(3))
+    const r = result(ctx, title)
+    await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: HEAD }, at(4))
+    return ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r), at(5))
+  }
+
+  it('files a task with the defect it fixes, and links an existing task once, as the lead, the reviewer, or the operator, only to a done task of its project', async () => {
+    const b = await boot()
+    const { ctx } = b
+    const call = caller(b)
+    await active(ctx)
+    const landed = await finished(ctx, 'landed')
+    const filed = await ctx.board.propose(task('p2', 'fix', { fixes: { taskId: landed.taskId, sha: 'abc1234' } }), at(6))
+    expect(filed).toMatchObject({ schema: 'board-task@1.2', defect: { fixes: landed.taskId, sha: 'abc1234', by: 'filed', at: at(6).toISOString() } })
+    expect((await ctx.board.task(filed.taskId))?.defect).toEqual(filed.defect)
+    // Refused: a task not done, an unknown one, a bad sha.
+    const open = await ctx.board.propose(task('p2', 'open'), at(6))
+    expect(await failureOf(ctx.board.propose(task('p2', 'x', { fixes: { taskId: open.taskId, sha: 'abc1234' } }), at(6)))).toBe('invalid')
+    expect(await failureOf(ctx.board.propose(task('p2', 'x', { fixes: { taskId: 'task-nope', sha: 'abc1234' } }), at(6)))).toBe('invalid')
+    expect(await failureOf(ctx.board.propose(task('p2', 'x', { fixes: { taskId: landed.taskId, sha: 'xyz' } }), at(6)))).toBe('invalid')
+    // Linked later, as the lead (the default), once.
+    const later = await ctx.board.propose(task('p2', 'later'), at(7))
+    expect(await ok(call('board_defect', { taskId: later.taskId, fixes: landed.taskId, sha: 'abc1234' }))).toMatchObject({ taskId: later.taskId })
+    expect((await ctx.board.task(later.taskId))?.defect).toMatchObject({ fixes: landed.taskId, by: 'lead' })
+    expect((await call('board_defect', { taskId: later.taskId, fixes: landed.taskId, sha: 'abc1234' })).content[0]?.text).toMatch(/^invalid: .*already fixes/)
+    const reviewed = await ctx.board.propose(task('p2', 'reviewed'), at(7))
+    await ok(call('board_defect', { taskId: reviewed.taskId, fixes: landed.taskId, sha: 'abc1234', as: 'reviewer' }))
+    expect((await ctx.board.task(reviewed.taskId))?.defect?.by).toBe('reviewer')
+    const byOperator = await ctx.board.propose(task('p2', 'operator'), at(7))
+    await ok(call('board_defect', { taskId: byOperator.taskId, fixes: landed.taskId, sha: 'abc1234', as: 'lead' }, 'operator'))
+    expect((await ctx.board.task(byOperator.taskId))?.defect?.by).toBe('operator')
+    expect((await call('board_defect', { taskId: open.taskId, fixes: open.taskId, sha: 'abc1234' })).content[0]?.text).toMatch(/^invalid/)
   })
 })
 

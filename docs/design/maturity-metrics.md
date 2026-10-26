@@ -7,7 +7,7 @@
 > Payload: [`mcp-report@1.6`](../reference/schemas.md#mcp-tool-metrics) `$defs/metrics-output`.
 >
 > Implemented in [`report`](../../packages/plugins/report/README.md) (`metrics.ts`): MCP `metrics`,
-> `system metrics`, and the weekly report's last section. Differs from target: five metrics are not
+> `system metrics`, and the weekly report's last section. Differs from target: three metrics are not
 > measurable yet (below), and a value the records only bound says so.
 
 PROP-0016 judges System's level by what its records show over a rolling 30 days, never by the
@@ -91,12 +91,25 @@ accepting decision was made in the window, as the report counts one.
 | Unattended completion | over every finished task, the share that went from ready to landed (a merged landing before the window's end) with no touch known: no lead touch, no run the operator started, and no operator decision but the merge approval (a verdict on a request of the task or its runs not of class `merge`, an operator acceptance of it or of an attempt, an operator decision on its runs). A task not landed is never unattended; a landed one whose move to ready was not read, or whose touches are not all recorded, counts unless a touch is known, so the share is an upper bound, over every tier (tiers come with I2) | finished tasks | no task finished |
 | Time ready-to-landed | the median and p90, in hours, from a task's first move to `ready` to its result's `merged` landing, for the merges of the window; over every tier. When the latest 1000 moves to ready were all read (`readyReadFrom`), a task created before the first of them may have become ready earlier: its time and the median are a lower bound, which shows a miss but never meets the line | results merged | no result merged, or none has a move to ready read |
 | Stalls per 100 runs | the workflow runs with an agent run that stalled or ended unknown in the window (each once), per 100 runs started in it | runs started | no run started |
-| Escaped defects per 100 landed | — | — | always, for now: no record links a fix to the task whose landed change it fixes (the `defect` link of I4 is not built), and a revert is not recorded; a title naming another task is not evidence of a defect |
-| Worker availability | — | — | always, for now: when a Worker could not take work is not recorded over time; the roster reads it now only |
+| Escaped defects per 100 landed | the tasks with a defect recorded in the window, each once at the earliest time one was, per 100 results merged in it: a task another task's `defect` link names (`fixes: <taskId>@<landing sha>`, set when the fix task is filed or later by the lead, the reviewer, or the operator), a task whose landing commit a revert landed on the target names (the landing records the `This reverts commit` lines of the commits it merged), and an escape of an auto-accepted result (D93). A lower bound: a defect nobody linked, reverted, or recorded is not counted | results merged | the board records neither links nor escapes; or no result merged in the window |
+| Worker availability | of the hours each Worker was observed in the window, the share it could take work. A Worker's state is the one its last event left it in (`roster.worker.unavailable` with a reason, `roster.worker.available`); hours before its first event are not observed. A usage limit (`quota-exhausted`) is no failure of the Worker (PROP-0016 §1): its hours are left out of both sides; a lost login, a quarantine, a stall, or another reason counts as unavailable | Workers | no event recorded, or no hour but at a usage limit |
 | Cost per accepted result | the ledger's tokens (input and output) counted in the window over the results accepted in it, with cost, turns, and the quota the agent runs drew (clean draws, percentage points); and the same by kind of work (`byKind`, each window's quota with the draws left out by state). A usage record's kind is its run's draw's; one no draw names is listed under no kind (not known). Each component is summed over the records that carry it: one no record carries (tokens, cost, turns, a window's points with no clean draw) has no figure, never 0, and the reason says so; one some records lack counts the others, said. The value is a lower bound when records carry no token counts or runs' usage could not be counted | accepted results | none accepted; neither usage nor a draw recorded; or no usage record carries token counts (the quota drawn, cost, and turns recorded stay as figures) |
 | Quota idle while work is ready | — | — | always, for now: an account's headroom is read when a run is routed, not recorded over time |
 
-The five not measurable each name the record they need; adding those records is the rest of I4.
+The three still not measurable (traced landings, gate coverage, quota idle) each name the record they need; adding those records is the rest of I4.
+
+## The records of I4 part 2
+
+- **The `defect` link** (`board-task@1.2`, [board design](board.md#the-defect-link)): `defect: { fixes, sha, at, by }`.
+  Set at filing (`board_propose` `fixes`) or later (`board_defect`).
+- **Reverts**: a merged landing records `reverts`, the commits its merged commits' messages say they
+  revert (`This reverts commit <sha>`), on its `workflow.task.landing` entry. The metric matches each to
+  the task whose landing commit or result it names. A tree the landing could not read records none.
+- **Worker availability events**: the MCP server reads the roster every `availabilitySeconds` (60)
+  and appends `roster.worker.unavailable` (`worker`, `reason`, `detail`) or `roster.worker.available`
+  (`worker`, `was`) to the event log when a Worker's ability changes; a Worker's first read is its
+  baseline. Reasons: `quota-exhausted` (left out of the share), `login-lost`, `quarantined`, `stalled`,
+  `unavailable`. Hours the host was down count as the state the last event left.
 
 ## The L3 reading
 
@@ -108,7 +121,7 @@ measured.
 
 `level.l3` is `holds` only when every line is met, over a window of at least 30 days, on at least
 30 finished tasks. Otherwise it is `not-shown`, with every reason: the window too short, too few
-tasks, the lines missed, those a bound does not show, and those not measurable. With five metrics
+tasks, the lines missed, those a bound does not show, and those not measurable. With three metrics
 not measurable yet, no reading can show L3: that is the honest reading, not a defect.
 
 ## Where it is shown

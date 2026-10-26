@@ -40,6 +40,7 @@
  * rebased tree, sends the result back to the board as another attempt (`Board.reopen`), with why; a
  * target that only moved spends no attempt.
  */
+import { execFileSync } from 'node:child_process'
 import type { ApprovalRequest, Approvals } from '@tsuuanmi/system-approvals-core'
 import { type ArtifactRef, type Board, BoardError, type BoardTask, REOPEN_REASON_MAX, type Subject } from '@tsuuanmi/system-board-core'
 import { type Landed as LandedOn, type LandingProvider, type LandingTarget, sameSubject } from '@tsuuanmi/system-landing-core'
@@ -76,6 +77,25 @@ const rebasedNote = (landing: TaskLanding): string => {
   const r = landing.rebase
   if (!r?.head || r.head !== landing.head) return ''
   return `${landing.base!.branch} moved since the result's work started (from ${r.fork}): the result was rebased onto it from ${r.from}${r.executionId ? `, its conflicts resolved by ${r.worker}` : ''}${r.checks?.length ? `, and its required checks (${r.checks.join(', ')}) passed again on the rebased tree` : '; no check ran on the rebased tree, as no command check ran on the result at its acceptance'}.`
+}
+
+/** Commits a landing records as reverted at most (INV-9). */
+const REVERTS_MAX = 8
+
+/**
+ * The commits a landed change reverts, from its commit messages (`git revert` writes `This reverts
+ * commit <sha>.`): the messages of the commits the branch holds over the base, read in the run's
+ * working tree, bounded in time and size. Nothing found, or the tree unreadable, gives none: a revert
+ * not seen here is simply not recorded (the metric says it counts only what was recorded).
+ */
+export function revertsOf(workspace: string | undefined, base: string | undefined, head: string | undefined): string[] {
+  if (!workspace || !base || !head || !/^[0-9a-f]{7,64}$/.test(base) || !/^[0-9a-f]{7,64}$/.test(head)) return []
+  try {
+    const log = execFileSync('git', ['-C', workspace, 'log', '--format=%B', `${base}..${head}`], { encoding: 'utf8', timeout: 5000, maxBuffer: 262_144, stdio: ['ignore', 'pipe', 'ignore'] })
+    return [...new Set([...log.matchAll(/This reverts commit ([0-9a-f]{7,64})/g)].map((m) => m[1]!))].slice(0, REVERTS_MAX)
+  } catch {
+    return []
+  }
 }
 
 /** Lead or Worker text in a commit message: one line, bounded. */
@@ -710,7 +730,8 @@ export class TaskLandings {
       { option: 'merge', selected: true, reasons: [why, ...remade, landing.approval ? `on ${landing.requestId ? `the operator's approval of request ${landing.requestId}` : 'the autonomy policy'} (decision ${landing.approval})` : 'no merge was needed'] },
       { option: 'refuse', selected: false, reasons: [regenerated ? 'not refuse: the branch and the base were where the approval saw them, and the merge met conflicts only in generated files, which were regenerated' : 'not refuse: the branch and the base were where the approval saw them, and the merge met no conflict'] },
     ], { step: 'merge', source: landed.source, branch: landing.branch, head: landing.head, base: landing.base, commit: landed.commit, already: landed.already, ...(regenerated ? { regenerated: { files: regenerated.files, commands: regenerated.commands } } : {}), ...(landing.requestId ? { requestId: landing.requestId } : {}) })
-    const done: TaskLanding = { ...landing, state: 'merged', commit: landed.commit, decisions: [...(landing.decisions ?? []), decision], at: now() }
+    const reverts = revertsOf(landing.workspace, landing.base?.sha, landing.head)
+    const done: TaskLanding = { ...landing, state: 'merged', commit: landed.commit, ...(reverts.length ? { reverts } : {}), decisions: [...(landing.decisions ?? []), decision], at: now() }
     delete done.reason
     this.e.ctx.logger.info(`workflow: board task ${row.task_id}'s accepted result (run ${row.run_id}) is in ${landing.base!.branch} of ${landing.repository} at ${landed.commit}; nothing is pushed`)
     return done
@@ -748,7 +769,7 @@ export class TaskLandings {
       // The landing keeps its own time (`at`): the row's updated_at stays the report's.
       db.prepare('UPDATE workflow_tasks SET landing = ? WHERE run_id = ?').run(JSON.stringify(landing), row.run_id)
       if (landing.state !== this.view(row)?.state) {
-        this.e.ctx.eventLog.append({ type: 'workflow.task.landing', runId: row.run_id, ...(landing.decisions?.length ? { decision: landing.decisions.at(-1)! } : {}), data: { taskId: row.task_id, state: landing.state, ...(landing.requestId ? { requestId: landing.requestId } : {}), ...(landing.commit ? { commit: landing.commit } : {}), ...(landing.reason ? { reason: landing.reason.slice(0, 500) } : {}) } })
+        this.e.ctx.eventLog.append({ type: 'workflow.task.landing', runId: row.run_id, ...(landing.decisions?.length ? { decision: landing.decisions.at(-1)! } : {}), data: { taskId: row.task_id, state: landing.state, ...(landing.requestId ? { requestId: landing.requestId } : {}), ...(landing.commit ? { commit: landing.commit } : {}), ...(landing.reverts?.length ? { reverts: landing.reverts } : {}), ...(landing.reason ? { reason: landing.reason.slice(0, 500) } : {}) } })
       }
     })
     row.landing = JSON.stringify(landing)

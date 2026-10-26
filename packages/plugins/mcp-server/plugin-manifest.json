@@ -121,6 +121,10 @@
     {
       "key": "storeCheckMinutes",
       "sensitive": false
+    },
+    {
+      "key": "availabilitySeconds",
+      "sensitive": false
     }
   ],
   "license": "UNLICENSED"

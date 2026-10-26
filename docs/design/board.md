@@ -502,6 +502,18 @@ D82 #3): its owner reports it failed with `infrastructure`, a kind and a reason
   never reports a stop as the infrastructure's). A malformed `infrastructure` (another kind, a reason that is empty or over 500
   characters, any other field) is `invalid`, and nothing moves.
 
+### The defect link
+
+A task may carry `defect: { fixes, sha, at, by }` (`board-task@1.2`, PROP-0016 I4): it fixes a
+defect of `fixes`, a **done** task of the same project, in the change that landed at `sha` (7 to
+64 hex characters). It is set when the task is filed (`TaskInput.fixes`, MCP `board_propose`
+`fixes`; `by: filed`) or later, once, by `Board.linkDefect` (MCP `board_defect`; `by` the lead, the
+reviewer with `as: reviewer`, or the operator's token). A task never fixes itself, and a link to a
+task that is not done, not of the project, or with a malformed sha is `invalid`. Setting it moves no
+state and makes no decision: it is a fact about the fixed task's change. `system metrics` counts
+the fixed tasks as [escaped defects](maturity-metrics.md#the-metrics), beside the escapes of
+auto-accepted results (D93) and the reverts the landings record.
+
 ## Fail-closed rules
 
 1. No task starts outside an active project with an approved charter.

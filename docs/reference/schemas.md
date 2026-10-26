@@ -1524,6 +1524,9 @@ guesses.
   operator for the policy's wait, with a reason. Refused unless the task has its result and its
   run's worktree is still recorded and on disk. The output names the `board` decision that
   records it.
+- `mcp-board` 1.5 adds the `defect` link (`board-task@1.2`, T277b): `board_propose`'s optional
+  `fixes` (a done task and its landing sha), and `board_defect`, which links an existing task to
+  the done task whose landed change held the defect it fixes; a lead links its own project's only.
 - A refused verdict (`unknown-request`, `already-resolved`, `expired`, `subject-changed`, or
   `failed`: the provider could not apply it, which it logs) leaves its request unchanged; the
   other verdicts of the call still apply. `mcp-approvals` 1.1 adds `failed`; 1.2 adds

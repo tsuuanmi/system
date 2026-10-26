@@ -4,7 +4,7 @@
  * because a project's state moves only from the operator's channel (INV-6). `board_escape` and
  * `board_breaker_reset` (the auto-accept circuit breaker, D93) are the lead's or the operator's, and
  * the caller's token says which it was. Each call's input and
- * structured output are validated against `schemas/mcp-board.v1.json` (1.4) `$defs/<tool>-input`
+ * structured output are validated against `schemas/mcp-board.v1.json` (1.5) `$defs/<tool>-input`
  * and `-output`; a refused input executes nothing, and a tool that changes the board checks the
  * output it would give inside the move's store transaction, before it commits, so an output its
  * schema refuses (a defect) leaves the board as it was. No tool starts, submits, accepts, blocks, or
@@ -18,7 +18,7 @@ import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
 import type { Chartered, Checked, Closed, Renewed, StoreBoard } from './index.ts'
 
-export const BOARD_TOOLS = ['board_projects', 'board_charter', 'board_brief', 'board_tasks', 'board_task', 'board_propose', 'board_claim', 'board_update', 'board_cancel', 'board_pause', 'board_resume', 'board_close', 'board_escape', 'board_breakers', 'board_breaker_reset', 'board_reopen_review'] as const
+export const BOARD_TOOLS = ['board_projects', 'board_charter', 'board_brief', 'board_tasks', 'board_task', 'board_propose', 'board_claim', 'board_update', 'board_cancel', 'board_pause', 'board_resume', 'board_close', 'board_escape', 'board_breakers', 'board_breaker_reset', 'board_reopen_review', 'board_defect'] as const
 type BoardTool = typeof BOARD_TOOLS[number]
 
 /**
@@ -28,12 +28,12 @@ type BoardTool = typeof BOARD_TOOLS[number]
 const SCOPES: Record<BoardTool, ToolScope> = {
   board_projects: 'client', board_charter: 'client', board_brief: 'client', board_tasks: 'client', board_task: 'client', board_propose: 'client', board_claim: 'client',
   board_update: 'client', board_cancel: 'client', board_pause: 'operator', board_resume: 'operator', board_close: 'operator',
-  board_escape: 'client', board_breakers: 'client', board_breaker_reset: 'client', board_reopen_review: 'client',
+  board_escape: 'client', board_breakers: 'client', board_breaker_reset: 'client', board_reopen_review: 'client', board_defect: 'client',
 }
 
 const schemas = new SchemaRegistry()
-/** The tools' schema: 1.1 adds the operator's project moves, 1.2 `board_propose`'s `maxAttempts`, 1.3 the circuit breaker's tools, 1.4 `board_reopen_review`. */
-const MCP_BOARD = 'mcp-board@1.4'
+/** The tools' schema: 1.1 adds the operator's project moves, 1.2 `board_propose`'s `maxAttempts`, 1.3 the circuit breaker's tools, 1.4 `board_reopen_review`, 1.5 the `defect` link (`board_propose`'s `fixes`, `board_defect`). */
+const MCP_BOARD = 'mcp-board@1.5'
 /** The `$defs` name of a tool's input or output: underscores written as hyphens. */
 const defOf = (tool: BoardTool, part: 'input' | 'output'): string => `${tool.replaceAll('_', '-')}-${part}`
 
@@ -41,6 +41,7 @@ const defOf = (tool: BoardTool, part: 'input' | 'output'): string => `${tool.rep
 const id = () => zod.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/)
 const shortText = () => zod.string().min(1).max(500)
 const artifactRef = () => zod.string().regex(/^sha256:[0-9a-f]{64}$/)
+const sha = () => zod.string().regex(/^[0-9a-f]{7,64}$/)
 const timestamp = () => zod.iso.datetime({ offset: true })
 const projectState = () => zod.enum(['proposed', 'active', 'paused', 'closed'])
 const taskState = () => zod.enum(['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval', 'done', 'cancelled'])
@@ -85,6 +86,8 @@ export const INPUTS: Record<BoardTool, ToolSpec['inputSchema']> = {
     dependsOn: zod.array(id()).max(64).optional(), actionClass: actionClass(), milestone: id().optional(), template: id().optional(),
     writes: subject().optional(), budget: zod.array(budgetLine()).max(16).optional(),
     maxAttempts: zod.number().int().min(1).max(10).optional().describe('Attempts the task gets (default: the board\'s for its template, else its maxAttempts, 3); each run that serves it is one, a rejected review included'),
+    fixes: zod.strictObject({ taskId: id().describe('The done task whose landed change held the defect'), sha: sha().describe('The landing sha of that change') }).optional()
+      .describe('The defect this task fixes: system metrics counts the task fixed as an escaped defect'),
     clientRequestId: zod.string().min(1).max(200).optional().describe('Retry-safe request key'),
   },
   board_claim: { taskId: id(), owner: id().describe('Who works on it, e.g. the lead\'s session id'), ttlSeconds: zod.number().int().min(30).max(3600).optional().describe('Lease length (default 600); board_update renews it') },
@@ -107,6 +110,12 @@ export const INPUTS: Record<BoardTool, ToolSpec['inputSchema']> = {
   board_breakers: { projectId: id().optional().describe('One project\'s breakers; every project\'s when absent') },
   board_breaker_reset: { projectId: id(), branch: zod.string().min(1).max(200).describe('The landing branch auto-accept turns on again for') },
   board_reopen_review: { taskId: id().describe('The task waiting for input as review-expired'), reason: shortText().describe('Why it is re-opened') },
+  board_defect: {
+    taskId: id().describe('The task that fixes the defect'),
+    fixes: id().describe('The done task whose landed change held the defect'),
+    sha: sha().describe('The landing sha of that change'),
+    as: zod.enum(['lead', 'reviewer']).optional().describe('Who sets it (default the lead); the operator\'s token always sets it as the operator'),
+  },
 }
 
 const DESCRIPTIONS: Record<BoardTool, string> = {
@@ -124,6 +133,7 @@ const DESCRIPTIONS: Record<BoardTool, string> = {
   board_close: 'Close an active or paused project as achieved or stopped; refused while one of its tasks runs or is in review. Its open tasks are cancelled (project-closed), the approval requests they and a pending amendment waited on are withdrawn, and the project takes no task again. Recorded as a board decision.',
   board_escape: 'Record a defect found after a result the auto-accept rule accepted (a done task whose last decision is rule board.auto-accept), once per task, as the caller (the operator, else the lead). At the line (board.autoAccept.breaker, default 2 escapes in 7 days) for the result\'s project and landing branch, auto-accept turns off for them: a board decision names every escape counted, and results are held for the operator until the operator or the lead turns it on again with board_breaker_reset. system metrics reads the escapes as escaped defects.',
   board_breakers: 'List where the auto-accept circuit breaker turned auto-accept off: per project and landing branch, the escapes it counted, its decision, and whether the line holds now (fewer escapes than the line in its window). A breaker never resets by itself.',
+  board_defect: 'Record that a task fixes a defect of a done task\'s landed change (`fixes` and its landing `sha`), once per task, when the fix task was not filed with `fixes`: set by the lead (or the reviewer, with as: reviewer), or by the operator. No state moves. system metrics counts the tasks fixed as escaped defects per 100 landed.',
   board_breaker_reset: 'Turn auto-accept on again for a project and landing branch whose breaker tripped, as the caller (the operator, else the lead): only once the line holds (fewer escapes than the line within its window now), refused otherwise. Recorded as a board decision naming the trip\'s.',
   board_reopen_review: 'Bring a task that waits for input as review-expired back to review, held for the operator for the policy\'s wait, as the caller (the operator, else the lead, for its own project). Only while the task has its result and its run\'s worktree is still recorded and on disk (refused otherwise). Recorded as a board decision; no attempt is counted.',
 }
@@ -327,6 +337,14 @@ function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }): Reco
       // Who re-opened it is who called: the operator's token, else the lead's (a client).
       const out = (t: BoardTask) => ({ taskId: t.taskId, state: 'review', revision: t.revision, decision: t.lastDecision })
       return out(await board.reopenReview(taskId, context.scope === 'operator' ? 'operator' : 'lead', String(args.reason), new Date(), sees(check, out)))
+    },
+    board_defect: async (args, context, check) => {
+      // A lead links defects of its own project only (T285).
+      await ownTask(context, String(args.taskId))
+      await ownTask(context, String(args.fixes))
+      const { scope } = context
+      const by = scope === 'operator' ? 'operator' as const : args.as === 'reviewer' ? 'reviewer' as const : 'lead' as const
+      return moved(await board.linkDefect(String(args.taskId), { fixes: String(args.fixes), sha: String(args.sha), by }, new Date(), sees(check, moved)))
     },
   }
 

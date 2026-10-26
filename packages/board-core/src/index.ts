@@ -165,9 +165,20 @@ export function unreleasedText(unreleased: readonly UnreleasedHold[]): string {
   return `The resource ledger did not release ${named}: ${unreleased.length === 1 ? 'it still counts' : 'they still count'} against the task's budget until ${unreleased.length === 1 ? 'it expires' : 'they expire'}, so the next attempt may be refused again before then.`
 }
 
-/** `board-task@1.0`; `board-task@1.1` once it carries a funding ask (`waiting.funding`) or a raise (`funding`). */
+/** Who set a {@link Defect} link: the task's filer, the lead, the reviewer, or the operator. */
+export type DefectBy = 'filed' | 'lead' | 'reviewer' | 'operator'
+/** The shortest and longest landing sha a {@link Defect} names (a git abbreviation to a SHA-256 object id). */
+export const DEFECT_SHA = { min: 7, max: 64 } as const
+/**
+ * The `defect` link of a task (`board-task@1.2`): it fixes a defect of `fixes`, a done task, in the
+ * change that landed at `sha`. Set when the task is filed (`TaskInput.fixes`) or later by the lead or
+ * the reviewer ({@link Board.linkDefect}); `system metrics` counts the fixed tasks as escaped defects.
+ */
+export interface Defect { fixes: string; sha: string; at: string; by: DefectBy }
+
+/** `board-task@1.0`; `board-task@1.1` once it carries a funding ask (`waiting.funding`) or a raise (`funding`); `board-task@1.2` once it carries a `defect` link. */
 export interface BoardTask {
-  schema: 'board-task@1.0' | 'board-task@1.1'
+  schema: 'board-task@1.0' | 'board-task@1.1' | 'board-task@1.2'
   taskId: string
   projectId: string
   milestone?: string
@@ -189,6 +200,8 @@ export interface BoardTask {
   cancellation?: { reason: CancelReason; note?: string; at: string }
   /** 1.1: every raise of `budget` an approved funding request applied, oldest first. */
   funding?: Funding[]
+  /** 1.2: the task this one fixes a defect of, and the landing sha of the change that held it. */
+  defect?: Defect
   createdAt: string
   updatedAt?: string
   lastDecision?: ArtifactRef
@@ -219,6 +232,8 @@ export interface TaskInput {
   budget?: BudgetLine[]
   /** Attempts allowed (default 3, at most 10). */
   maxAttempts?: number
+  /** The defect this task fixes: a done task of the project and the sha its change landed at (the task's `defect` link). */
+  fixes?: { taskId: string; sha: string }
 }
 
 export interface Claim { taskId: string; generation: number; leaseExpiresAt: string }
@@ -440,6 +455,14 @@ export abstract class Board extends Service {
    * naming every escape it counted, in the same transaction.
    */
   recordEscape?(input: { taskId: string; by: 'operator' | 'lead'; note: string; foundAt?: string }, at?: Date): Promise<{ escape: Escape; breaker?: Breaker }>
+
+  /**
+   * Link a task to the defect it fixes (optional; `board-task@1.2`): `fixes` is a done task of the same
+   * project, `sha` the landing sha of its change. Once per task (`invalid` otherwise, and for a task
+   * that is not of the project's, a `fixes` that is not done, a sha that is not 7 to 64 hex characters,
+   * or a task fixing itself); `by` is who set it. No state moves and no decision is made.
+   */
+  linkDefect?(taskId: string, defect: { fixes: string; sha: string; by: Exclude<DefectBy, 'filed'> }, at?: Date): Promise<BoardTask>
 
   /** The escapes recorded (of one project, or all), oldest first: what `system metrics` reads as escaped defects. */
   escapes?(projectId?: string): Promise<Escape[]>

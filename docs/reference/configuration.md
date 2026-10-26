@@ -322,6 +322,7 @@ No options.
 | `minFreeBytes` | number (0…) | `1073741824` | Free space under the DSH home below which health is degraded |
 | `driftWindowHours` | number (1…) | `24` | How long a provider UI change keeps health degraded |
 | `storeCheckMinutes` | number (1…) | `15` | Minutes the store integrity check result is reused (it blocks the host while it runs) |
+| `availabilitySeconds` | number (0…) | `60` | Seconds between reads of the roster that record a change of a Worker's availability in the event log, for the maturity metrics; 0 records none |
 
 ## `models`
 

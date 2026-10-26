@@ -13,7 +13,7 @@ import type { Envelope } from '@tsuuanmi/system-artifacts'
 import type { BoardTask, Project } from '@tsuuanmi/system-board-core'
 import type { Digests } from '@tsuuanmi/system-digest-core'
 import type {} from '@tsuuanmi/system-event-log'
-import type { ToolSpec } from '@tsuuanmi/system-gateway-core'
+import { type ToolSpec, WORKER_AVAILABLE_EVENT, WORKER_UNAVAILABLE_EVENT } from '@tsuuanmi/system-gateway-core'
 import { ADVICE_EVENT, ADVICE_OUTCOME_EVENT, countedWhole, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDrawOf, reconciledBy, SchemaRegistry, USAGE_UNKNOWN_EVENT, usageUnknownOf } from '@tsuuanmi/system-libs'
 import { ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import { z as zod } from 'zod'
@@ -379,6 +379,8 @@ async function metrics(ctx: Context, input: MetricsInput, now: Date = new Date()
 
   // The escaped defects recorded against auto-accepted results (D93): read when the board records them.
   const escapes = board.escapes ? await board.escapes(projectId) : undefined
+  // Worker availability over time, whenever recorded (a Worker serves every project, so not scoped): the state each was left in before the window, then each change.
+  const availability = [WORKER_UNAVAILABLE_EVENT, WORKER_AVAILABLE_EVENT].flatMap((type) => readEvents(ctx, { type }))
 
   // Records before the lead principal name the operator whoever used the token (the lead's scripts used it): said, never migrated (ADR-0076).
   const before = [...verdictBy.entries()].filter(([, d]) => d.deciderType === 'operator' && d.deciderVersion === '1' && inWindow(d.createdAt)).length
@@ -387,7 +389,7 @@ async function metrics(ctx: Context, input: MetricsInput, now: Date = new Date()
 
   return buildMetrics(period, {
     asOf, tasks, requests, usage, events, decisions, runDecisions, verdictBy, readyAt, usageUnknown, draws, notes,
-    ...(escapes ? { escapes } : {}),
+    ...(escapes ? { escapes } : {}), defectLinks: true, availability,
     ...(truncatedRuns.length ? { truncatedRuns } : {}), ...(unreadDecisions ? { unreadDecisions } : {}), ...(readyReadFrom ? { readyReadFrom } : {}),
   }, projectId)
 }
