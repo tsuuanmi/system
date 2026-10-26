@@ -16,7 +16,7 @@ import { checksFor, landingTargets } from './checks.ts'
 import { DOSSIER_CAPABILITY, type TaskDossiers } from './dossiers.ts'
 import { type Draft, draftOf, guidesFor, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
 import { awaitCall, settleCalls, waitsOnCall } from './continuations.ts'
-import { authorDraft, commitFixed, commitReviewed, continued, waitForAuthor } from './fix-sessions.ts'
+import { authorDraft, commitFixed, commitReviewed, continued, waitForAuthor, waitForSelfReview } from './fix-sessions.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
 import { heldNow, release } from './hold.ts'
 import { admissionInfrastructure, executionInfrastructure, sourceGone } from './infrastructure.ts'
@@ -848,6 +848,16 @@ export class Engine {
             }
             off = await leaveSession(this, run, node, spec, draft, record.requirement, own, error, keep, failed, waiting.handoff)
           }
+          // A self-review whose author's account cannot take it now waits for it, bounded, spending no attempt.
+          let selfWait = ''
+          if (!off && spec.selfReview !== undefined && error instanceof AdmissionFailure) {
+            const waiting = waitForSelfReview(this, run, node, spec, error, lease)
+            if ('waited' in waiting) {
+              done()
+              return
+            }
+            selfWait = `; ${waiting.why}`
+          }
           if (off && 'admitted' in off) {
             admitted = off.admitted
             moved = off
@@ -864,7 +874,7 @@ export class Engine {
             // A Worker that would otherwise take it is unavailable: the infrastructure's failure, not the attempt's (ADR-0069).
             const down = admissionInfrastructure(node, error)
             const unmoved = off && 'why' in off ? off.why : ''
-            return failAttempt(this, run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${team}${error.message}${hint}${unwaited}${unmoved}` },
+            return failAttempt(this, run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${team}${error.message}${hint}${unwaited}${unmoved}${selfWait}` },
               { sent: false, decisions: [error.decision], ...(down ? { infrastructure: down } : {}) }, lease)
           }
         }

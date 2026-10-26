@@ -40,6 +40,14 @@ const TEMPLATES: Record<string, NodeTemplate[]> = {
   ],
 }
 
+/** As algorithm-development since T267: the author's own review, on the author's account, before anything else. */
+const SELF: Record<string, NodeTemplate[]> = {
+  selfcheck: [
+    { nodeId: 'develop:1', objective: 'Change add()', prompt: 'Develop: {{input}}', capabilities: ['develop'], tier: 'standard', conversation: 'persistent', acceptance: 'acceptance.answer' },
+    { nodeId: 'selfreview:1', objective: 'Review your own change', prompt: 'Self-review: {{input}}', dependsOn: ['develop:1'], capabilities: ['review'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', selfReview: 'develop:1' },
+  ],
+}
+
 /** One start as the scripted runtime saw it: the prompt it read, the session's turns before it, and the conversation it resumed. */
 type Seen = WorkerStart & { prompt: string; before: string[]; resumed?: string }
 
@@ -161,7 +169,7 @@ async function boot(config: { fixSessionWaitMinutes?: number } = {}) {
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}),
     ctx.plugin({ name: 'author-workers', inject: ['workers', 'artifacts'], apply: (c: Context) => void c.workers.register(workers.source()) }),
-    ctx.plugin(Workflow, { retryDelayMs: 100, templates: TEMPLATES, ...config }),
+    ctx.plugin(Workflow, { retryDelayMs: 100, templates: { ...TEMPLATES, ...SELF }, ...config }),
   ]
   await Promise.all(fibers)
   onTestFinished(async () => {
@@ -275,6 +283,29 @@ describe('one task, one author session (board T232)', () => {
     expect(fix.prompt).toContain('changed add()')
     // Nothing was sent while it waited: one fix in all.
     expect(workers.seen.filter((s) => s.prompt.includes('Fix the blocking findings'))).toHaveLength(1)
+  })
+
+  it('waits for the author\'s account while it cannot take the self-review, recorded, spending no attempt, then runs it there (T267 hotfix, 2026-10-26)', async () => {
+    const { ctx, workers } = await boot({ fixSessionWaitMinutes: 0.05 })
+    // The author's account reviews too (its read-only role); it is out of quota for a moment once the change is written.
+    const author = { ...AUTHOR, capabilities: [...AUTHOR.capabilities, ...REVIEWER.capabilities] }
+    workers.workers = [author, REVIEWER]
+    const scripted = workers as unknown as { answer: (prompt: string, before: string[]) => string }
+    const answer = scripted.answer.bind(workers)
+    scripted.answer = (prompt, before) => {
+      if (prompt.startsWith('Develop: ')) {
+        workers.workers = [{ ...author, state: 'quota-exhausted' }, REVIEWER]
+        setTimeout(() => { workers.workers = [author, REVIEWER] }, 1000)
+      }
+      return answer(prompt, before)
+    }
+    const { runId } = ctx.workflow.start({ template: 'selfcheck', input: 'Fix add()', classification: 'public' })
+    const done = await finished(ctx, runId)
+    expect(done.status).toBe('completed')
+    const [wait] = decisions(ctx, runId, 'workflow.self-review-wait')
+    expect(wait).toMatchObject({ outcome: { option: 'wait', detail: { selfReviewOf: 'develop:1', fixSessionWaitMinutes: 0.05 } } })
+    const self = done.nodes.find((n) => n.nodeId === 'selfreview:1')!
+    expect(self).toMatchObject({ state: 'COMPLETED', worker: 'w:author', attempt: 1 })
   })
 
   it('hands a lost author session off, recorded, its brief carrying the session\'s earlier turns', async () => {

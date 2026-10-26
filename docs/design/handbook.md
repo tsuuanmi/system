@@ -556,7 +556,9 @@ acceptance checks did not. It is replaced by two things that run before the inde
    earlier results or decisions, and not the caller's input. Its important findings are verified as a
    review's are (ADR-0075), and the confirmed ones grow a fix that continues the author's session, answered and re-reviewed before the independent review starts,
    with no approval gate (the author answering its own review). It counts for no tier, provider
-   family, or acceptance.
+   family, or acceptance. When the author's account cannot take it now (busy, resting, or not back
+   yet after a restart), it waits for that account, bounded by `fixSessionWaitMinutes`, recorded as a
+   `workflow.self-review-wait` decision and spending no attempt; only past the bound does it fail.
 
 ## Measures (I1)
 

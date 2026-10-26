@@ -38,6 +38,8 @@ import type { NodeRecord, NodeRow, RunRow, WorkflowError } from './types.ts'
 
 /** The decider of a fix's path to its author's session. */
 export const FIX_SESSION = { type: 'rule', id: 'workflow.fix-session', version: '1' } as const
+/** The bounded wait of a self-review for its author's account (T267 hotfix). */
+export const SELF_REVIEW_WAIT = { type: 'rule', id: 'workflow.self-review-wait', version: '1' } as const
 /** The decider of a review cycle's commits in the run's worktree. */
 export const FIX_COMMIT = { type: 'rule', id: 'workflow.fix-commit', version: '1' } as const
 
@@ -224,4 +226,43 @@ export async function commitFixed(e: Engine, run: RunRow, node: NodeRow, spec: R
   const body = e.ctx.artifacts.get(result)?.body as { schema?: string; workspace?: string; subject?: GitSubject } | undefined
   if (!body?.schema?.startsWith('agent-result@') || !body.workspace || body.subject?.type !== 'git-head') return
   await commitTree(e, run, node, 'fixed', body.workspace, body.subject, `system: ${node.node_id} of run ${run.run_id}, the fix of review ${spec.fixOf}'s blocking findings`, [result])
+}
+
+/**
+ * A self-review whose author's account cannot take it now (busy, resting, or not yet back after a
+ * restart) waits for it, bounded by `fixSessionWaitMinutes` from the first wait, recorded once as a
+ * `wait` decision, sending nothing and spending no attempt. Past the bound the caller fails it as
+ * before. Without this, a self-review refused for a moment failed as config_error and spent the
+ * attempt (2026-10-26: T275 and T279 lost their last attempts at a live update's restart).
+ */
+export function waitForSelfReview(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, refused: AdmissionFailure, lease: () => Lease): { waited: true } | { why: string } {
+  const minutes = e.config.fixSessionWaitMinutes ?? 60
+  const first = decided(e, run, node, 'route', SELF_REVIEW_WAIT.id, 'wait').find((b) => b.outcome?.detail?.attempt === node.attempt)
+  const since = typeof first?.outcome?.detail?.since === 'string' ? first.outcome.detail.since : new Date().toISOString()
+  const until = Date.parse(since) + minutes * 60_000
+  const said = errorLine(refused.message)
+  if (Date.now() >= until) return { why: `the self-review waited for its author's account from ${since}, ${minutes} minute(s) at most (fixSessionWaitMinutes)` }
+  const decision = first ? undefined : e.ctx.artifacts.recordDecision({
+    decisionType: 'route',
+    question: `When does self-review ${node.node_id} of run ${run.run_id} run on the account of ${spec.selfReview}?`,
+    inputs: [refused.decision],
+    candidates: [
+      { option: 'run', selected: false, reasons: [clampText(`not run now: its author's account cannot take it (${said})`, 300)] },
+      { option: 'wait', selected: true, reasons: [`it waits for that account until ${new Date(until).toISOString()} (fixSessionWaitMinutes ${minutes}), sending nothing and spending no attempt`] },
+    ],
+    decider: { ...SELF_REVIEW_WAIT },
+    outcome: { option: 'wait', detail: { selfReviewOf: spec.selfReview, since, until: new Date(until).toISOString(), attempt: node.attempt, fixSessionWaitMinutes: minutes } },
+    deterministic: true,
+  }, PRODUCER(run, node)).id as ArtifactRef
+  const next = new Date(Math.min(until, Date.now() + LOOK_MS)).toISOString()
+  const error: WorkflowError = { kind: admissionKind(refused), disposition: 'BACKOFF', message: `self-review ${node.node_id} waits for its author's account until ${new Date(until).toISOString()} (${said})` }
+  e.ctx.store.transaction(() => {
+    e.writeNode(node, { state: 'READY', execution_id: null, worker: null, not_before: next, error: JSON.stringify(error), decisions: JSON.stringify([refused.decision]) }, (r) => {
+      const waiting: NodeRecord = { ...r, ...(decision ? { lastDecision: decision } : {}) }
+      delete waiting.execution
+      return waiting
+    }, lease)
+    if (decision) e.ctx.eventLog.append({ type: 'workflow.node.waiting', runId: run.run_id, nodeId: node.node_id, decision, data: { until: new Date(until).toISOString(), since, attempt: node.attempt } })
+  })
+  return { waited: true }
 }
