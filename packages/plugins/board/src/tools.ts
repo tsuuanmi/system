@@ -1,8 +1,10 @@
 /**
  * The `board_*` MCP tools (reference/schemas.md#mcp-tools-board_-approvals_-resources_). The
  * lead's are client scope; `board_pause`, `board_resume`, and `board_close` are operator scope,
- * because a project's state moves only from the operator's channel (INV-6). Each call's input and
- * structured output are validated against `schemas/mcp-board.v1.json` (1.2) `$defs/<tool>-input`
+ * because a project's state moves only from the operator's channel (INV-6). `board_escape` and
+ * `board_breaker_reset` (the auto-accept circuit breaker, D93) are the lead's or the operator's, and
+ * the caller's token says which it was. Each call's input and
+ * structured output are validated against `schemas/mcp-board.v1.json` (1.3) `$defs/<tool>-input`
  * and `-output`; a refused input executes nothing, and a tool that changes the board checks the
  * output it would give inside the move's store transaction, before it commits, so an output its
  * schema refuses (a defect) leaves the board as it was. No tool starts, submits, accepts, blocks, or
@@ -10,24 +12,28 @@
  * `task`), so one attempt has one writer (INV-15).
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { BoardError, type BoardTask, type CharterInput, type Claim, type Project, type TaskInput } from '@tsuuanmi/system-board-core'
+import { BoardError, type BoardTask, type Breaker, type CharterInput, type Claim, type Escape, type Project, type TaskInput } from '@tsuuanmi/system-board-core'
 import { outline, reply, type ToolContext, type ToolHandler, type ToolScope, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
 import type { Chartered, Checked, Closed, Renewed, StoreBoard } from './index.ts'
 
-export const BOARD_TOOLS = ['board_projects', 'board_charter', 'board_brief', 'board_tasks', 'board_task', 'board_propose', 'board_claim', 'board_update', 'board_cancel', 'board_pause', 'board_resume', 'board_close'] as const
+export const BOARD_TOOLS = ['board_projects', 'board_charter', 'board_brief', 'board_tasks', 'board_task', 'board_propose', 'board_claim', 'board_update', 'board_cancel', 'board_pause', 'board_resume', 'board_close', 'board_escape', 'board_breakers', 'board_breaker_reset'] as const
 type BoardTool = typeof BOARD_TOOLS[number]
 
-/** Who may call each tool: pausing, resuming, and closing a project are the operator's moves (INV-6). */
+/**
+ * Who may call each tool: pausing, resuming, and closing a project are the operator's moves (INV-6).
+ * An escape and a breaker's reset are the lead's or the operator's: who it was is the caller's token.
+ */
 const SCOPES: Record<BoardTool, ToolScope> = {
   board_projects: 'client', board_charter: 'client', board_brief: 'client', board_tasks: 'client', board_task: 'client', board_propose: 'client', board_claim: 'client',
   board_update: 'client', board_cancel: 'client', board_pause: 'operator', board_resume: 'operator', board_close: 'operator',
+  board_escape: 'client', board_breakers: 'client', board_breaker_reset: 'client',
 }
 
 const schemas = new SchemaRegistry()
-/** The tools' schema: 1.1 adds the operator's project moves, 1.2 `board_propose`'s `maxAttempts`. */
-const MCP_BOARD = 'mcp-board@1.2'
+/** The tools' schema: 1.1 adds the operator's project moves, 1.2 `board_propose`'s `maxAttempts`, 1.3 the circuit breaker's tools. */
+const MCP_BOARD = 'mcp-board@1.3'
 /** The `$defs` name of a tool's input or output: underscores written as hyphens. */
 const defOf = (tool: BoardTool, part: 'input' | 'output'): string => `${tool.replaceAll('_', '-')}-${part}`
 
@@ -93,6 +99,13 @@ export const INPUTS: Record<BoardTool, ToolSpec['inputSchema']> = {
   board_pause: { projectId: id() },
   board_resume: { projectId: id() },
   board_close: { projectId: id(), outcome: zod.enum(['achieved', 'stopped']).describe('achieved: its criteria are met; stopped: it ends without them') },
+  board_escape: {
+    taskId: id().describe('The done task whose auto-accepted result held the defect'),
+    note: zod.string().min(1).max(1000).describe('What escaped, and where it was found'),
+    foundAt: timestamp().optional().describe('When it was found (default now); never in the future'),
+  },
+  board_breakers: { projectId: id().optional().describe('One project\'s breakers; every project\'s when absent') },
+  board_breaker_reset: { projectId: id(), branch: zod.string().min(1).max(200).describe('The landing branch auto-accept turns on again for') },
 }
 
 const DESCRIPTIONS: Record<BoardTool, string> = {
@@ -108,11 +121,21 @@ const DESCRIPTIONS: Record<BoardTool, string> = {
   board_pause: 'Pause an active project: until it is resumed no task of it is claimed or started and no proposed task is put to the policy; a running attempt goes on to its outcome, and every wait keeps its expiry. Recorded as a board decision.',
   board_resume: 'Resume a paused project: its proposed tasks go through the gate on the board\'s next sweep, and its ready tasks may be claimed again. Recorded as a board decision.',
   board_close: 'Close an active or paused project as achieved or stopped; refused while one of its tasks runs or is in review. Its open tasks are cancelled (project-closed), the approval requests they and a pending amendment waited on are withdrawn, and the project takes no task again. Recorded as a board decision.',
+  board_escape: 'Record a defect found after a result the auto-accept rule accepted (a done task whose last decision is rule board.auto-accept), once per task, as the caller (the operator, else the lead). At the line (board.autoAccept.breaker, default 2 escapes in 7 days) for the result\'s project and landing branch, auto-accept turns off for them: a board decision names every escape counted, and results are held for the operator until the operator or the lead turns it on again with board_breaker_reset. system metrics reads the escapes as escaped defects.',
+  board_breakers: 'List where the auto-accept circuit breaker turned auto-accept off: per project and landing branch, the escapes it counted, its decision, and whether the line holds now (fewer escapes than the line in its window). A breaker never resets by itself.',
+  board_breaker_reset: 'Turn auto-accept on again for a project and landing branch whose breaker tripped, as the caller (the operator, else the lead): only once the line holds (fewer escapes than the line within its window now), refused otherwise. Recorded as a board decision naming the trip\'s.',
 }
 
 const summary = (t: BoardTask) => ({
   taskId: t.taskId, title: t.title, state: t.state, ...(t.milestone ? { milestone: t.milestone } : {}), ...(t.holder ? { holder: t.holder.owner } : {}),
   ...(t.run ? { runId: t.run.runId } : {}), ...(t.waiting ? { waitingFor: t.state === 'waiting-for-approval' ? 'approval' : t.state === 'review' ? 'operator' : 'input' } : {}), ...(t.updatedAt ? { updatedAt: t.updatedAt } : {}),
+})
+/** A breaker as the tools give it (`$defs/breaker`): its escapes by task, when found, and what was noted; the count now and whether the line holds. */
+const breakerOut = (b: Breaker) => ({
+  breakerId: b.breakerId, projectId: b.projectId, branch: b.branch, state: b.state, line: b.line, trippedAt: b.trippedAt, decision: b.decision,
+  escapes: b.escapes.map((e) => ({ taskId: e.taskId, foundAt: e.foundAt, note: e.note })),
+  ...(b.now ? { counted: b.now.counted, lineHolds: b.now.lineHolds } : {}),
+  ...(b.reset ? { reset: b.reset } : {}),
 })
 /** The milestone being worked on: the first funded one, else the first planned. */
 const currentMilestone = (p: Project) => (p.milestones.find((m) => m.state === 'funded') ?? p.milestones.find((m) => m.state === 'planned'))?.id
@@ -232,6 +255,17 @@ function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }): Reco
       const out = ({ project, cancelled }: Closed) => ({ projectId: project.projectId, state: 'closed', outcome: project.closure!.outcome, revision: project.revision, decision: project.closure!.decision, cancelled })
       return out(await board.closeProject(String(args.projectId), args.outcome as 'achieved' | 'stopped', new Date(), sees(check, out)))
     },
+    board_escape: async (args, { scope }, check) => {
+      // Who recorded it is who called: the operator's token, else the lead's (a client).
+      const out = ({ escape, breaker }: { escape: Escape; breaker?: Breaker }) => ({
+        escapeId: escape.escapeId, taskId: escape.taskId, projectId: escape.projectId, branch: escape.branch, foundAt: escape.foundAt, recordedBy: escape.recordedBy,
+        ...(breaker ? { breaker: breakerOut(breaker) } : {}),
+      })
+      const input = { taskId: String(args.taskId), by: scope === 'operator' ? 'operator' as const : 'lead' as const, note: String(args.note), ...(typeof args.foundAt === 'string' ? { foundAt: new Date(args.foundAt).toISOString() } : {}) }
+      return out(await board.recordEscape(input, new Date(), sees(check, out)))
+    },
+    board_breakers: async (args) => ({ breakers: (await board.breakers(typeof args.projectId === 'string' ? args.projectId : undefined, new Date())).map(breakerOut) }),
+    board_breaker_reset: async (args, { scope }, check) => breakerOut(await board.resetBreaker(String(args.projectId), String(args.branch), scope === 'operator' ? 'operator' : 'lead', new Date(), sees(check, breakerOut))),
   }
 
   /** A task's output after a move: its id, state, and revision. */

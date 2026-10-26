@@ -7,7 +7,8 @@
     "node": "^24.18.1 || >=26.5.1"
   },
   "scripts": {
-    "check": "\"$npm_execpath\" run check:docs && \"$npm_execpath\" run check:secrets && \"$npm_execpath\" run check:schemas && \"$npm_execpath\" run check:migrations && \"$npm_execpath\" run check:tiers && \"$npm_execpath\" run check:reference && \"$npm_execpath\" run check:packages && \"$npm_execpath\" run check:manifests && \"$npm_execpath\" run check:traceability && \"$npm_execpath\" run lint && \"$npm_execpath\" run typecheck",
+    "check": "\"$npm_execpath\" run check:docs && \"$npm_execpath\" run check:secrets && \"$npm_execpath\" run check:schemas && \"$npm_execpath\" run check:migrations && \"$npm_execpath\" run check:tiers && \"$npm_execpath\" run check:reference && \"$npm_execpath\" run check:packages && \"$npm_execpath\" run check:manifests && \"$npm_execpath\" run check:traceability && \"$npm_execpath\" run lint && \"$npm_execpath\" run typecheck && \"$npm_execpath\" run check:reviewer-eval",
+    "check:reviewer-eval": "node --import tsx scripts/experiments/reviewer-eval.ts gate",
     "check:docs": "node --import tsx scripts/check-docs.ts",
     "check:secrets": "node --import tsx scripts/check-secrets.ts",
     "check:schemas": "node --import tsx scripts/check-schemas.ts",

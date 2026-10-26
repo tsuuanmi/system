@@ -1,0 +1,17 @@
+web-ui: Home grouped by project, filtered to one project (T253)
+
+Home takes ?project=<id> and shows only that project's group, its cards, and
+its tile counts.
+
+diff --git a/packages/plugins/web-ui/src/assets.ts b/packages/plugins/web-ui/src/assets.ts
+--- a/packages/plugins/web-ui/src/assets.ts
++++ b/packages/plugins/web-ui/src/assets.ts
+@@ -1604,7 +1604,6 @@
+     const availability = c ? availabilityChips(roster, describing) : el('p', { class: 'unknown' }, 'Workers unknown: the roster could not be read.')
+     // Recent runs: the newest 5 rows, then "Show all N" (T239, as T186's lists).
+     const RECENT_HEAD = ['Run', 'Status', 'Progress', 'Started']
+-    // Filtered to one project (T253), only the runs of its board tasks.
+-    const recent = homeProject ? runs.filter((run) => run.task && taskProject.get(run.task.taskId) === homeProject) : runs
++    const recent = runs
+     const [recentBody, recentMore] = capped('recent', el('tbody', { id: 'recent-list' }), recent.slice(0, RECENT), (run) => labelled(RECENT_HEAD, el('tr', {},
+       el('td', {}, runLink(run, runTitle(run))),

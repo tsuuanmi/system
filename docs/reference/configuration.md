@@ -172,6 +172,9 @@
 | `autoAccept` | object | `{}` | System accepts a result without holding it for the operator when the run's last review approved it, its required checks passed on it, and it lands on a listed branch (D80, ADR-0067); default off |
 | `autoAccept.projects` | string[] | `[]` | Project ids whose results System accepts without the operator when the conditions hold |
 | `autoAccept.branches` | string[] | `[]` | Branches such a result may land on (the repository's checked-out branch the landing merges into) |
+| `autoAccept.breaker` | object | `{"escapes":2,"days":7}` | The circuit breaker (D93): auto-accept turns itself off for a project and branch at this many escaped defects in the window, and turns on again only by the operator or the lead once the line holds |
+| `autoAccept.breaker.escapes` | number (1…100) | `2` | Escaped defects of auto-accepted results, of one project and branch, at which auto-accept for them turns off |
+| `autoAccept.breaker.days` | number (1…90) | `7` | The rolling window the escapes are counted in, in days |
 
 ## `browser-patchright`
 

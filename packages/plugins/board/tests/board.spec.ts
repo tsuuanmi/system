@@ -787,6 +787,132 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
         .toEqual([expect.stringMatching(/have no check-run record among its inputs/)])
     })
 
+    describe('the circuit breaker (D93, ADR-0067 amendment)', () => {
+      const day = (n: number): Date => at(n * 24 * 60)
+      const booted = async (board: Config = AUTO) => {
+        const b = await boot({ board })
+        const { ctx } = b
+        await active(ctx)
+        const review = assessed(ctx, 'approve')
+        const evidence = checkRun(ctx, { tests: 'passed', lint: 'passed' })
+        /** A result the rule accepts on its own, or the task held when the rule does not apply. */
+        const accepted = async (title: string): Promise<BoardTask> => {
+          const t = await inReview(ctx, title)
+          return ctx.board.accept(t.taskId, engineAcceptance(ctx, t.taskId, t.r, { checks: { review: true, tests: true, lint: true }, review, evidence, branch: 'dev' }), at(5))
+        }
+        return { b, ctx, accepted }
+      }
+
+      it('trips at two escaped defects of auto-accepted results in 7 days, on a decision naming the escapes it counted, and holds the next result for the operator with the reason', async () => {
+        const { ctx, accepted } = await booted()
+        const [a, b, c] = [await accepted('a'), await accepted('b'), await accepted('c')]
+        expect([a.state, b.state, c.state]).toEqual(['done', 'done', 'done'])
+        const first = await ctx.board.recordEscape!({ taskId: a.taskId, by: 'lead', note: 'the fix named npm_config_ only' }, day(1))
+        expect(first.breaker).toBeUndefined()
+        expect(await ctx.board.breakers!('p2', day(1))).toEqual([])
+        // A second escape 6 days later is inside the window of the first: the line (2 in 7 days) is reached.
+        const second = await ctx.board.recordEscape!({ taskId: b.taskId, by: 'operator', note: 'the report channel cannot be reopened' }, day(7))
+        expect(second.breaker).toMatchObject({ state: 'tripped', projectId: 'p2', branch: 'dev', line: { escapes: 2, days: 7 }, trippedAt: day(7).toISOString(), now: { counted: 2, lineHolds: false } })
+        expect(second.breaker!.escapes.map((e) => [e.taskId, e.recordedBy])).toEqual([[a.taskId, 'lead'], [b.taskId, 'operator']])
+        const decision = ctx.artifacts.get(second.breaker!.decision)?.body as { decisionType: string; decider: { id: string }; inputs: string[]; outcome: { option: string; detail: { escapes: Array<{ taskId: string; note: string }> } } }
+        expect(decision).toMatchObject({ decisionType: 'board', decider: { id: 'board.auto-accept-breaker' }, outcome: { option: 'auto-accept off' } })
+        expect(decision.outcome.detail.escapes.map((e) => e.taskId)).toEqual([a.taskId, b.taskId])
+        expect(decision.inputs).toEqual(expect.arrayContaining([a.lastDecision, b.lastDecision]))
+        // Auto-accept for the project and branch is off: the next result is held, saying why.
+        const held = await accepted('d')
+        expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review' } })
+        expect(autoReasons(ctx, held)).toEqual([expect.stringMatching(/the auto-accept breaker is tripped for p2 on dev since .*: 2 escaped defect\(s\) counted \(decision .*only the operator or the lead turns it on again/)])
+        // Recording a third does not trip it twice.
+        expect((await ctx.board.recordEscape!({ taskId: c.taskId, by: 'lead', note: 'a third' }, day(7))).breaker).toBeUndefined()
+        expect(await ctx.board.breakers!('p2', day(7))).toHaveLength(1)
+        expect((await ctx.board.escapes!('p2')).map((e) => e.taskId)).toEqual([a.taskId, b.taskId, c.taskId])
+      })
+
+      it('does not trip on escapes further apart than the window, or on a task the rule did not accept, or twice for one task', async () => {
+        const { ctx, accepted } = await booted()
+        const [a, b] = [await accepted('a'), await accepted('b')]
+        await ctx.board.recordEscape!({ taskId: a.taskId, by: 'lead', note: 'one' }, day(1))
+        expect((await ctx.board.recordEscape!({ taskId: b.taskId, by: 'lead', note: 'two, 8 days later' }, day(9))).breaker).toBeUndefined()
+        expect(await ctx.board.breakers!('p2', day(9))).toEqual([])
+        await expect(ctx.board.recordEscape!({ taskId: a.taskId, by: 'lead', note: 'again' }, day(9))).rejects.toMatchObject({ failure: 'invalid', message: expect.stringMatching(/already recorded/) })
+        const held = await inReview(ctx, 'held')
+        await expect(ctx.board.recordEscape!({ taskId: held.taskId, by: 'lead', note: 'not accepted' }, day(9))).rejects.toMatchObject({ failure: 'invalid', message: expect.stringMatching(/was not accepted by the auto-accept rule/) })
+        await expect(ctx.board.recordEscape!({ taskId: held.taskId, by: 'agent' as 'lead', note: 'x' }, day(9))).rejects.toMatchObject({ failure: 'invalid' })
+      })
+
+      it('never turns itself on again: not with time, not on a sweep; the operator or the lead does, once the line holds, on a decision naming the trip', async () => {
+        const { ctx, accepted } = await booted()
+        const [a, b] = [await accepted('a'), await accepted('b')]
+        await ctx.board.recordEscape!({ taskId: a.taskId, by: 'lead', note: 'one' }, day(1))
+        const { breaker } = await ctx.board.recordEscape!({ taskId: b.taskId, by: 'lead', note: 'two' }, day(2))
+        // Sixty days on and a sweep later the line holds, and auto-accept is still off.
+        await ctx.board.sweep(day(60))
+        expect(await ctx.board.breakers!('p2', day(60))).toMatchObject([{ breakerId: breaker!.breakerId, state: 'tripped', now: { counted: 0, lineHolds: true } }])
+        expect(await accepted('after-sweep')).toMatchObject({ state: 'review', waiting: { reason: 'operator-review' } })
+        // While the line does not hold, not even the operator turns it on.
+        await expect(ctx.board.resetBreaker!('p2', 'dev', 'operator', day(3))).rejects.toMatchObject({ failure: 'invalid', message: expect.stringMatching(/the line does not hold: 2 escaped defect\(s\) in the last 7 days/) })
+        // Only the operator or the lead; and only a breaker that is tripped.
+        await expect(ctx.board.resetBreaker!('p2', 'dev', 'agent' as 'lead', day(60))).rejects.toMatchObject({ failure: 'invalid' })
+        await expect(ctx.board.resetBreaker!('p2', 'main', 'lead', day(60))).rejects.toMatchObject({ failure: 'invalid-transition' })
+        const reset = await ctx.board.resetBreaker!('p2', 'dev', 'lead', day(60))
+        expect(reset).toMatchObject({ state: 'reset', reset: { at: day(60).toISOString(), by: 'lead' } })
+        expect(ctx.artifacts.get(reset.reset!.decision)?.body).toMatchObject({ decider: { id: 'board.auto-accept-breaker' }, inputs: [breaker!.decision], outcome: { option: 'auto-accept on', detail: { by: 'lead', trip: breaker!.decision } } })
+        expect(await ctx.board.breakers!('p2', day(60))).toEqual([])
+        expect(await accepted('after-reset')).toMatchObject({ state: 'done' })
+        await expect(ctx.board.resetBreaker!('p2', 'dev', 'lead', day(60))).rejects.toMatchObject({ failure: 'invalid-transition' })
+      })
+
+      it('is reached through the board tools: the lead or the operator records an escape and resets the breaker as the caller, every output valid against mcp-board 1.3, and a refused call changes nothing', async () => {
+        const { b, ctx, accepted } = await booted()
+        const call = caller(b)
+        const [a, c] = [await accepted('a'), await accepted('c')]
+        // The tools read now: only Date is faked, at fixed instants after the results were accepted.
+        vi.useFakeTimers({ toFake: ['Date'] })
+        onTestFinished(() => {
+          vi.useRealTimers()
+        })
+        vi.setSystemTime(new Date('2026-10-27T00:00:00.000Z'))
+        // The lead's token records it as the lead's; the operator's as the operator's.
+        const first = await ok(call('board_escape', { taskId: a.taskId, note: 'pnpm 12 ignores the npm_config_ name', foundAt: '2026-10-26T09:00:00.000Z' }))
+        expect(first).toMatchObject({ taskId: a.taskId, projectId: 'p2', branch: 'dev', foundAt: '2026-10-26T09:00:00.000Z', recordedBy: 'lead' })
+        expect(first).not.toHaveProperty('breaker')
+        expect(await ok(call('board_breakers', { projectId: 'p2' }))).toEqual({ breakers: [] })
+        const second = await ok(call('board_escape', { taskId: c.taskId, note: 'the report channel cannot be reopened', foundAt: '2026-10-26T10:00:00.000Z' }, 'operator'))
+        expect(second).toMatchObject({ recordedBy: 'operator', breaker: { projectId: 'p2', branch: 'dev', state: 'tripped', line: { escapes: 2, days: 7 }, escapes: [{ taskId: a.taskId }, { taskId: c.taskId }] } })
+        expect(ctx.artifacts.get(second.breaker.decision)?.body).toMatchObject({ decider: { id: 'board.auto-accept-breaker' }, outcome: { option: 'auto-accept off' } })
+        const listed = await ok(call('board_breakers', {}))
+        expect(listed.breakers).toHaveLength(1)
+        expect(listed.breakers[0]).toMatchObject({ breakerId: second.breaker.breakerId, counted: 2, lineHolds: false })
+        // Refused, nothing changes: a task the rule did not accept, a second escape of one task, an input its schema refuses.
+        const held = await inReview(ctx, 'held')
+        expect((await call('board_escape', { taskId: held.taskId, note: 'x' })).content[0]?.text).toMatch(/^invalid: .*was not accepted by the auto-accept rule/)
+        expect((await call('board_escape', { taskId: a.taskId, note: 'again' })).content[0]?.text).toMatch(/^invalid: an escape of .* is already recorded/)
+        expect((await call('board_escape', { taskId: a.taskId, note: '' })).content[0]?.text).toMatch(/^invalid input, nothing done/)
+        expect((await call('board_escape', { taskId: a.taskId, note: 'x', by: 'operator' })).content[0]?.text).toMatch(/^invalid input, nothing done/)
+        expect(await ctx.board.escapes!('p2')).toHaveLength(2)
+        // A reset while the line does not hold is refused, the breaker still tripped; a branch with none tripped too.
+        expect((await call('board_breaker_reset', { projectId: 'p2', branch: 'dev' })).content[0]?.text).toMatch(/^invalid: the line does not hold/)
+        expect((await call('board_breaker_reset', { projectId: 'p2', branch: 'main' }, 'operator')).content[0]?.text).toMatch(/^invalid-transition: /)
+        expect(await ctx.board.breakers!('p2')).toHaveLength(1)
+        // A sweep two weeks on leaves it tripped; once the window has passed and the line holds, the operator's token turns it on, recorded as the operator's.
+        vi.setSystemTime(new Date('2026-11-10T00:00:00.000Z'))
+        await ctx.board.sweep(new Date())
+        expect(await ok(call('board_breakers', { projectId: 'p2' }))).toMatchObject({ breakers: [{ state: 'tripped', counted: 0, lineHolds: true }] })
+        const reset = await ok(call('board_breaker_reset', { projectId: 'p2', branch: 'dev' }, 'operator'))
+        expect(reset).toMatchObject({ state: 'reset', reset: { by: 'operator', at: '2026-11-10T00:00:00.000Z' }, counted: 0, lineHolds: true })
+        expect(ctx.artifacts.get(reset.reset.decision)?.body).toMatchObject({ outcome: { option: 'auto-accept on', detail: { by: 'operator' } } })
+        expect(await ok(call('board_breakers', { projectId: 'p2' }))).toEqual({ breakers: [] })
+      })
+
+      it('uses the configured line, refuses a malformed one, and keeps the default of 2 in 7 days without one', async () => {
+        const { ctx, accepted } = await booted({ autoAccept: { projects: ['p2'], branches: ['dev'], breaker: { escapes: 1, days: 1 } } })
+        const a = await accepted('a')
+        expect((await ctx.board.recordEscape!({ taskId: a.taskId, by: 'lead', note: 'one is the line' }, day(1))).breaker).toMatchObject({ line: { escapes: 1, days: 1 } })
+        expect(autoAcceptOf({ projects: ['p'], branches: ['dev'] })).toEqual({ projects: ['p'], branches: ['dev'] })
+        for (const breaker of [{ escapes: 0, days: 7 }, { escapes: 2, days: 91 }, { escapes: 1.5, days: 7 }]) expect(() => autoAcceptOf({ projects: ['p'], branches: ['dev'], breaker })).toThrow(TypeError)
+      })
+    })
+
     it('holds for the lead or the operator a result whose check passed without running its browser tests, naming the check and what did not run; a plain pass is accepted as before (T247, T255)', async () => {
       const { ctx } = await boot({ board: AUTO, eventLog: true })
       await active(ctx)

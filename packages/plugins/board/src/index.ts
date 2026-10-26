@@ -14,7 +14,7 @@ import { type ApprovalRequest, type AutonomyVerdict, type Check, type Mode, type
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import {
-  type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type BudgetLine, type CancelReason, type Charter, type CharterInput, type Claim, FREE_RETRIES_DEFAULT, FREE_RETRIES_MAX, freeRetriesOf, fundingVersion,
+  type ActionClass, type ArtifactRef, Board, BoardError, type Breaker, BREAKER_DEFAULT, type BreakerLine, type Escape, type BoardTask, type BudgetLine, type CancelReason, type Charter, type CharterInput, type Claim, FREE_RETRIES_DEFAULT, FREE_RETRIES_MAX, freeRetriesOf, fundingVersion,
   type InfrastructureFailure, infrastructureProblem, type Project, type ProjectState, REOPEN_REASON_MAX, type Reopening, renderTasks, type RunOutcome, type Subject, type TaskInput, type TaskState, TERMINAL, type Unit, type UnreleasedHold, unreleasedProblem, unreleasedText, type WaitReason,
 } from '@tsuuanmi/system-board-core'
 import type {} from '@tsuuanmi/system-gateway-core'
@@ -68,6 +68,12 @@ export interface Config {
 export interface AutoAccept {
   projects: string[]
   branches: string[]
+  /**
+   * The circuit breaker's line (ADR-0067 amendment, D93; default 2 escaped defects in 7 days): at
+   * that many escapes of auto-accepted results of a project and branch within the window,
+   * auto-accept for them turns off, until the operator or the lead turns it on once the line holds.
+   */
+  breaker?: BreakerLine
 }
 
 /** A page of a listing, and the cursor of the next one (absent on the last). */
@@ -141,6 +147,23 @@ const MIGRATIONS = [{
   // attempts (ADR-0069): bounded by maxFreeRetries (INV-9), kept beside the record, never in it.
   version: 3,
   sql: 'ALTER TABLE board_tasks ADD COLUMN free_retries INTEGER NOT NULL DEFAULT 0;',
+}, {
+  // The auto-accept circuit breaker (ADR-0067 amendment, D93): the escaped defects the operator or
+  // the lead recorded against auto-accepted results (one per task), and the breakers they tripped:
+  // at most one open (not reset) per project and branch. A reset is a row's own update, never time's.
+  version: 4,
+  sql: `CREATE TABLE board_escapes (
+    escape_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, branch TEXT NOT NULL, task_id TEXT NOT NULL UNIQUE,
+    acceptance TEXT NOT NULL, found_at TEXT NOT NULL, recorded_at TEXT NOT NULL, recorded_by TEXT NOT NULL, note TEXT NOT NULL
+  );
+  CREATE INDEX board_escapes_window ON board_escapes (project_id, branch, found_at);
+  CREATE TABLE board_breakers (
+    breaker_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, branch TEXT NOT NULL, tripped_at TEXT NOT NULL, decision TEXT NOT NULL,
+    line_escapes INTEGER NOT NULL, line_days INTEGER NOT NULL, escapes TEXT NOT NULL,
+    reset_at TEXT, reset_by TEXT, reset_decision TEXT,
+    CHECK ((reset_at IS NULL) = (reset_by IS NULL) AND (reset_at IS NULL) = (reset_decision IS NULL))
+  );
+  CREATE UNIQUE INDEX board_breakers_open ON board_breakers (project_id, branch) WHERE reset_at IS NULL;`,
 }]
 
 type Changes<T> = { [K in keyof T]?: T[K] | undefined }
@@ -161,6 +184,13 @@ interface Held { verdict: AutonomyVerdict; pendingChecks: Check[]; seconds: numb
 interface AutoAccepted { verdict: AutonomyVerdict; review: ArtifactRef; evidence?: ArtifactRef; checks: Check[]; branch: string }
 /** What the board does with an acceptance decision: hold it for the operator, apply it by the auto-accept rule, or apply it as it is (neither). */
 interface Gate { held?: Held; auto?: AutoAccepted }
+/** A `board_escapes` row. */
+interface EscapeRow { escape_id: string; project_id: string; branch: string; task_id: string; acceptance: string; found_at: string; recorded_at: string; recorded_by: string; note: string }
+/** A `board_breakers` row. */
+interface BreakerRow {
+  breaker_id: string; project_id: string; branch: string; tripped_at: string; decision: string; line_escapes: number; line_days: number; escapes: string
+  reset_at: string | null; reset_by: string | null; reset_decision: string | null
+}
 /** A `board_client_requests` row: what a retry-safe call made. */
 interface PriorRequest { project_id: string; task_id: string | null; approval_request: string | null; charter_version: number | null }
 /** A charter request settled by the sweep: the project as it now is, and the tasks it cancelled. */
@@ -200,8 +230,12 @@ export function autoAcceptOf(config: AutoAccept | undefined): AutoAccept | undef
     if (bad !== undefined) throw new TypeError(`board.autoAccept.${key}: ${JSON.stringify(bad)} is not a ${key === 'projects' ? 'project id' : 'branch name'}`)
     if (new Set(list).size !== list.length) throw new TypeError(`board.autoAccept.${key} names one twice`)
   }
+  const line = config.breaker
+  if (line !== undefined && (!isObject(line) || !Number.isInteger(line.escapes) || line.escapes < 1 || line.escapes > 100 || !Number.isInteger(line.days) || line.days < 1 || line.days > 90)) {
+    throw new TypeError('board.autoAccept.breaker is { escapes: 1 to 100, days: 1 to 90 }')
+  }
   // Both lists are needed: a project with no branch, or a branch with no project, accepts nothing.
-  return config.projects.length && config.branches.length ? { projects: [...config.projects], branches: [...config.branches] } : undefined
+  return config.projects.length && config.branches.length ? { projects: [...config.projects], branches: [...config.branches], ...(line ? { breaker: { escapes: line.escapes, days: line.days } } : {}) } : undefined
 }
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const resourceOf = (taskId: string): string => `board-task:${taskId}`
@@ -277,6 +311,10 @@ export class StoreBoard extends Board {
     autoAccept: z.object({
       projects: z.array(z.string().pattern(PROJECT_ID)).default([]).description('Project ids whose results System accepts without the operator when the conditions hold'),
       branches: z.array(z.string().pattern(BRANCH)).default([]).description('Branches such a result may land on (the repository\'s checked-out branch the landing merges into)'),
+      breaker: z.object({
+        escapes: z.natural().min(1).max(100).default(BREAKER_DEFAULT.escapes).description('Escaped defects of auto-accepted results, of one project and branch, at which auto-accept for them turns off'),
+        days: z.natural().min(1).max(90).default(BREAKER_DEFAULT.days).description('The rolling window the escapes are counted in, in days'),
+      }).default({ ...BREAKER_DEFAULT }).description('The circuit breaker (D93): auto-accept turns itself off for a project and branch at this many escaped defects in the window, and turns on again only by the operator or the lead once the line holds'),
     }).description('System accepts a result without holding it for the operator when the run\'s last review approved it, its required checks passed on it, and it lands on a listed branch (D80, ADR-0067); default off'),
   })
 
@@ -982,6 +1020,135 @@ export class StoreBoard extends Board {
         throw new BoardError('invalid', `${digest} digests ${sources.length} artifact(s), not exactly the ${artifacts.length} of ${taskId}'s result`)
       }
       return this.commit(current, { changes: { result: { ...task.result, digest } } }, at)
+    })
+  }
+
+  // --- the auto-accept circuit breaker (ADR-0067 amendment, D93) ---
+
+  /** The breaker's line: the configured one, else 2 escapes in 7 days. */
+  private line(): BreakerLine {
+    return this.autoAccept?.breaker ?? BREAKER_DEFAULT
+  }
+
+  private escapeOf(row: EscapeRow): Escape {
+    return {
+      escapeId: row.escape_id, projectId: row.project_id, branch: row.branch, taskId: row.task_id, acceptance: row.acceptance as ArtifactRef,
+      foundAt: row.found_at, recordedAt: row.recorded_at, recordedBy: row.recorded_by as Escape['recordedBy'], note: row.note,
+    }
+  }
+
+  /** Escapes of a project and branch found within `days` days up to and including `at`, oldest first. */
+  private escapesIn(projectId: string, branch: string, days: number, at: Date): Escape[] {
+    const from = new Date(at.getTime() - days * 24 * 3600 * 1000).toISOString()
+    const rows = this.ctx.store.db.prepare('SELECT * FROM board_escapes WHERE project_id = ? AND branch = ? AND found_at > ? AND found_at <= ? ORDER BY found_at, escape_id')
+      .all(projectId, branch, from, at.toISOString()) as unknown as EscapeRow[]
+    return rows.map((r) => this.escapeOf(r))
+  }
+
+  private breakerOf(row: BreakerRow, at?: Date): Breaker {
+    const ids = JSON.parse(row.escapes) as string[]
+    const escapes = ids.map((id) => this.escapeOf(this.ctx.store.db.prepare('SELECT * FROM board_escapes WHERE escape_id = ?').get(id) as unknown as EscapeRow))
+    const line = { escapes: Number(row.line_escapes), days: Number(row.line_days) }
+    const counted = at ? this.escapesIn(row.project_id, row.branch, line.days, at).length : undefined
+    return {
+      breakerId: row.breaker_id, projectId: row.project_id, branch: row.branch, state: row.reset_at === null ? 'tripped' : 'reset', line,
+      trippedAt: row.tripped_at, decision: row.decision as ArtifactRef, escapes,
+      ...(counted !== undefined ? { now: { counted, lineHolds: counted < line.escapes } } : {}),
+      ...(row.reset_at !== null ? { reset: { at: row.reset_at, by: row.reset_by as 'operator' | 'lead', decision: row.reset_decision as ArtifactRef } } : {}),
+    }
+  }
+
+  /** The project's and branch's breaker while tripped, else undefined. */
+  private openBreaker(projectId: string, branch: string): Breaker | undefined {
+    const row = this.ctx.store.db.prepare('SELECT * FROM board_breakers WHERE project_id = ? AND branch = ? AND reset_at IS NULL').get(projectId, branch) as unknown as BreakerRow | undefined
+    return row ? this.breakerOf(row) : undefined
+  }
+
+  /**
+   * An escaped defect of an auto-accepted result (D93). The task must be done on the auto-accept
+   * rule's own decision (`board.auto-accept`), which names the branch it landed on; one escape per
+   * task. When the escapes of that project and branch within the line's window reach the line, the
+   * breaker trips in the same transaction: a `board` decision (rule `board.auto-accept-breaker`)
+   * naming each escape it counted, after which auto-accept for them is held for the operator.
+   */
+  async recordEscape(input: { taskId: string; by: 'operator' | 'lead'; note: string; foundAt?: string }, at: Date = new Date(), check?: Checked<{ escape: Escape; breaker?: Breaker }>): Promise<{ escape: Escape; breaker?: Breaker }> {
+    if (input.by !== 'operator' && input.by !== 'lead') throw new BoardError('invalid', 'an escape is recorded by the operator or the lead')
+    if (typeof input.note !== 'string' || !input.note.trim() || [...input.note].length > 1000) throw new BoardError('invalid', 'an escape needs a note of 1 to 1000 characters saying what escaped')
+    const foundAt = input.foundAt ?? at.toISOString()
+    if (Number.isNaN(Date.parse(foundAt)) || new Date(foundAt).toISOString() !== foundAt || Date.parse(foundAt) > at.getTime()) throw new BoardError('invalid', `foundAt ${foundAt} is not an ISO instant that has passed`)
+    return this.ctx.store.transaction(() => {
+      const { task } = this.taskOf(input.taskId)
+      const decided = task.lastDecision ? this.ctx.artifacts.get(task.lastDecision) : undefined
+      const body = decided?.body as { decider?: { id?: string }; outcome?: { detail?: Record<string, unknown> } } | undefined
+      const branch = body?.outcome?.detail?.['branch']
+      if (task.state !== 'done' || body?.decider?.id !== 'board.auto-accept' || typeof branch !== 'string') {
+        throw new BoardError('invalid', `${input.taskId} was not accepted by the auto-accept rule (a done task whose last decision is rule board.auto-accept): only an auto-accepted result's escape counts`)
+      }
+      if (this.ctx.store.db.prepare('SELECT 1 FROM board_escapes WHERE task_id = ?').get(input.taskId)) throw new BoardError('invalid', `an escape of ${input.taskId} is already recorded`)
+      const escape: Escape = { escapeId: newId('escape'), projectId: task.projectId, branch, taskId: task.taskId, acceptance: task.lastDecision!, foundAt, recordedAt: at.toISOString(), recordedBy: input.by, note: input.note.trim() }
+      this.ctx.store.db.prepare('INSERT INTO board_escapes (escape_id, project_id, branch, task_id, acceptance, found_at, recorded_at, recorded_by, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(escape.escapeId, escape.projectId, escape.branch, escape.taskId, escape.acceptance, escape.foundAt, escape.recordedAt, escape.recordedBy, escape.note)
+      const line = this.line()
+      const counted = this.escapesIn(task.projectId, branch, line.days, at)
+      if (counted.length < line.escapes || this.openBreaker(task.projectId, branch)) return checkedBy(check, { escape })
+      const { project } = this.projectOf(task.projectId)
+      const decision = this.decision(project, undefined, {
+        from: 'auto-accept on', to: 'auto-accept off', rule: 'board.auto-accept-breaker',
+        question: `Does auto-accept stay on for ${task.projectId} on ${branch}, with ${counted.length} escaped defect(s) of auto-accepted results in ${line.days} days (the line is ${line.escapes})?`,
+        why: `${counted.length} escaped defect(s) of auto-accepted results landed on ${branch} were found within ${line.days} days, at or over the line of ${line.escapes}: ${counted.map((e) => `${e.taskId} (${e.foundAt}: ${e.note})`).join('; ')}`,
+        whyNot: 'the line is reached: results of this project and branch are held for the operator again, until the operator or the lead turns auto-accept on once the line holds; time alone never does',
+        inputs: [...new Set(counted.map((e) => e.acceptance))],
+        detail: { reason: 'auto-accept-breaker', branch, line, window: { days: line.days, until: at.toISOString() }, escapes: counted.map((e) => ({ escapeId: e.escapeId, taskId: e.taskId, foundAt: e.foundAt, recordedBy: e.recordedBy, note: e.note, acceptance: e.acceptance })) },
+      }, at)
+      const breakerId = newId('breaker')
+      this.ctx.store.db.prepare('INSERT INTO board_breakers (breaker_id, project_id, branch, tripped_at, decision, line_escapes, line_days, escapes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(breakerId, task.projectId, branch, at.toISOString(), decision, line.escapes, line.days, JSON.stringify(counted.map((e) => e.escapeId)))
+      return checkedBy(check, { escape, breaker: this.breakerOf(this.ctx.store.db.prepare('SELECT * FROM board_breakers WHERE breaker_id = ?').get(breakerId) as unknown as BreakerRow, at) })
+    })
+  }
+
+  /** Every escape recorded, of one project or all, oldest found first. */
+  async escapes(projectId?: string): Promise<Escape[]> {
+    const rows = (projectId === undefined
+      ? this.ctx.store.db.prepare('SELECT * FROM board_escapes ORDER BY found_at, escape_id LIMIT 10000').all()
+      : this.ctx.store.db.prepare('SELECT * FROM board_escapes WHERE project_id = ? ORDER BY found_at, escape_id LIMIT 10000').all(projectId)) as unknown as EscapeRow[]
+    return rows.map((r) => this.escapeOf(r))
+  }
+
+  /** The tripped breakers, of one project or all, with the escapes counted in their window as of `at`. */
+  async breakers(projectId?: string, at: Date = new Date()): Promise<Breaker[]> {
+    const rows = (projectId === undefined
+      ? this.ctx.store.db.prepare('SELECT * FROM board_breakers WHERE reset_at IS NULL ORDER BY tripped_at, breaker_id').all()
+      : this.ctx.store.db.prepare('SELECT * FROM board_breakers WHERE reset_at IS NULL AND project_id = ? ORDER BY tripped_at, breaker_id').all(projectId)) as unknown as BreakerRow[]
+    return rows.map((r) => this.breakerOf(r, at))
+  }
+
+  /**
+   * Turn auto-accept on again for a project and branch: by the operator or the lead, only while a
+   * breaker is tripped for them and the line holds (fewer escapes than the line within its window
+   * as of `at`). Recorded as a `board` decision naming the trip's. Never done by the sweep or by time.
+   */
+  async resetBreaker(projectId: string, branch: string, by: 'operator' | 'lead', at: Date = new Date(), check?: Checked<Breaker>): Promise<Breaker> {
+    if (by !== 'operator' && by !== 'lead') throw new BoardError('invalid', 'the breaker is turned on again by the operator or the lead')
+    return this.ctx.store.transaction(() => {
+      const open = this.openBreaker(projectId, branch)
+      if (!open) throw new BoardError('invalid-transition', `the auto-accept breaker is not tripped for ${projectId} on ${branch}`)
+      const counted = this.escapesIn(projectId, branch, open.line.days, at)
+      if (counted.length >= open.line.escapes) {
+        throw new BoardError('invalid', `the line does not hold: ${counted.length} escaped defect(s) in the last ${open.line.days} days, the line is ${open.line.escapes}; auto-accept stays off for ${projectId} on ${branch}`)
+      }
+      const { project } = this.projectOf(projectId)
+      const decision = this.decision(project, undefined, {
+        from: 'auto-accept off', to: 'auto-accept on', rule: 'board.auto-accept-breaker',
+        question: `Does auto-accept turn on again for ${projectId} on ${branch}, with ${counted.length} escaped defect(s) in ${open.line.days} days (the line is ${open.line.escapes})?`,
+        why: `the ${by} turned it on: the line holds, ${counted.length} escaped defect(s) in the last ${open.line.days} days, fewer than ${open.line.escapes}`,
+        whyNot: `the breaker tripped at ${open.trippedAt} (decision ${open.decision}) and stays tripped until the operator or the lead says otherwise`,
+        inputs: [open.decision],
+        detail: { reason: 'auto-accept-breaker-reset', branch, by, line: open.line, counted: counted.length, trip: open.decision },
+      }, at)
+      this.ctx.store.db.prepare('UPDATE board_breakers SET reset_at = ?, reset_by = ?, reset_decision = ? WHERE breaker_id = ? AND reset_at IS NULL')
+        .run(at.toISOString(), by, decision, open.breakerId)
+      return checkedBy(check, this.breakerOf(this.ctx.store.db.prepare('SELECT * FROM board_breakers WHERE breaker_id = ?').get(open.breakerId) as unknown as BreakerRow, at))
     })
   }
 
@@ -1710,7 +1877,7 @@ export class StoreBoard extends Board {
     if (heavy) return { held: { verdict, pendingChecks: [], seconds: await seconds(), heavy } }
     // The auto-accept rule (D80, ADR-0067) is for a listed project's results that land: on a git working tree.
     if (!this.autoAccept?.projects.includes(task.projectId) || result.subject.type !== 'git-head') return {}
-    const judged = this.autoAccepted(result, acceptance, read)
+    const judged = this.autoAccepted(task.projectId, result, acceptance, read)
     if ('reasons' in judged) return { held: { verdict, pendingChecks: [], seconds: await seconds(), autoAccept: judged.reasons } }
     return { auto: { verdict, ...judged } }
   }
@@ -1756,7 +1923,7 @@ export class StoreBoard extends Board {
    *   listed.
    * Otherwise every condition that does not hold, as a reason.
    */
-  private autoAccepted(result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef, read: Acceptance): Omit<AutoAccepted, 'verdict'> | { reasons: string[] } {
+  private autoAccepted(projectId: string, result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef, read: Acceptance): Omit<AutoAccepted, 'verdict'> | { reasons: string[] } {
     const envelope = this.ctx.artifacts.get(acceptance)!
     const body = envelope.body as { inputs?: string[]; decider?: { type?: string }; outcome?: { detail?: Record<string, unknown> } }
     const detail = body.outcome?.detail ?? {}
@@ -1808,6 +1975,11 @@ export class StoreBoard extends Board {
     const branch = typeof landing?.['branch'] === 'string' ? landing['branch'] : undefined
     if (branch === undefined) reasons.push('no landing target is known for the result (outcome.detail.landing.branch)')
     else if (!this.autoAccept!.branches.includes(branch)) reasons.push(`it lands on ${branch}, not on a listed branch (${this.autoAccept!.branches.join(', ')})`)
+    // The circuit breaker (D93): once tripped for this project and branch, auto-accept stays off until the operator or the lead turns it on.
+    if (branch !== undefined) {
+      const open = this.openBreaker(projectId, branch)
+      if (open) reasons.push(`the auto-accept breaker is tripped for ${projectId} on ${branch} since ${open.trippedAt}: ${open.escapes.length} escaped defect(s) counted (decision ${open.decision}); only the operator or the lead turns it on again, once the line (${open.line.escapes} in ${open.line.days} days) holds`)
+    }
 
     if (reasons.length) return { reasons }
     return { review: reviewRef!, ...(passed.length ? { evidence: evidenceRef! } : {}), checks: passed, branch: branch! }

@@ -368,8 +368,12 @@ export async function metrics(ctx: Context, input: MetricsInput, now: Date = new
   const [first] = ctx.eventLog.query({ limit: 1 })
   if (first && first.seq > 1 && Date.parse(first.at) > since) notes.push(`the event log keeps entries from ${first.at} on (retention): runs, landings, and stalls before then are not counted`)
 
+  // The escaped defects recorded against auto-accepted results (D93): read when the board records them.
+  const escapes = board.escapes ? await board.escapes(projectId) : undefined
+
   return buildMetrics(period, {
     asOf, tasks, requests, usage, events, decisions, runDecisions, readyAt, usageUnknown, draws, notes,
+    ...(escapes ? { escapes } : {}),
     ...(truncatedRuns.length ? { truncatedRuns } : {}), ...(unreadDecisions ? { unreadDecisions } : {}), ...(readyReadFrom ? { readyReadFrom } : {}),
   }, projectId)
 }

@@ -148,6 +148,11 @@ charters, and their tasks.
   tool that changes the board checks the output it would give inside the move's transaction,
   before it commits (each such method takes an optional `check`), so an output its schema refuses
   (a defect) is refused with nothing moved, and a request the move opened is withdrawn.
+  - `board_escape`, `board_breakers`, and `board_breaker_reset` (`mcp-board` 1.3, D93,
+    [ADR-0067](../../../docs/decisions/adr/0067-system-accepts-a-listed-branchs-result-on-its-review-and-checks.md)):
+    the lead or the operator records a defect found in an auto-accepted result, which trips the
+    auto-accept circuit breaker at `autoAccept.breaker`'s line, lists the breakers tripped, and turns
+    auto-accept on again once the line holds; who it was is the caller's token, never an argument;
   - `board_propose` takes the attempts the task gets (`maxAttempts`, 1 to 10, `mcp-board` 1.2);
     without it, the task gets the configuration's `templateAttempts` for its template, else
     `maxAttempts` (3) ([attempts](../../../docs/design/board.md#attempts));

@@ -1,5 +1,5 @@
 import type { ApprovalRequest } from '@tsuuanmi/system-approvals-core'
-import type { BoardTask } from '@tsuuanmi/system-board-core'
+import type { BoardTask, Escape } from '@tsuuanmi/system-board-core'
 import { type QuotaDraw, SchemaRegistry } from '@tsuuanmi/system-libs'
 import type { UsageRecord } from '@tsuuanmi/system-resources-core'
 import { describe, expect, it } from 'vitest'
@@ -297,6 +297,23 @@ describe('the maturity metrics, computed (docs/design/maturity-metrics.md)', () 
       expect(m.reason, id).toMatch(/\w/)
       expect(m.l3.status, id).toBe('not-read')
     }
+  })
+
+  it('reads escaped defects from the escapes the board recorded against auto-accepted results: those found in the window over the results merged in it, a lower bound, the count the breaker trips on (D93)', () => {
+    const escape = (n: number, foundAt: string): Escape => ({
+      escapeId: `escape-${n}`, projectId: 'p1', branch: 'dev', taskId: `t${n}`, acceptance: ref(60 + n), foundAt, recordedAt: foundAt, recordedBy: 'lead', note: `defect ${n}`,
+    })
+    // Two found in the window, one before it: two escapes over the two results merged in the window (t1, t2).
+    const read = buildMetrics(WINDOW, { ...month(), escapes: [escape(1, at(-3)), escape(2, at(8)), escape(3, at(9))] }, 'p1')
+    const m = metricOf(read.metrics, 'escaped-defects')
+    expect(m).toMatchObject({ state: 'measured', unit: 'per-100-landed', value: 100, figures: { escapes: 2 }, sample: 2, sampleOf: 'results merged', bound: 'lower' })
+    expect(m.l3.status).toBe('misses')
+    expect(() => schemas.assertDef('mcp-report@1.6', 'metrics-output', read)).not.toThrow()
+    // None recorded: 0 over two merged results is a measured 0 (a lower bound); the board recording nothing at all is not measurable.
+    expect(metricOf(buildMetrics(WINDOW, { ...month(), escapes: [] }, 'p1').metrics, 'escaped-defects')).toMatchObject({ state: 'measured', value: 0 })
+    // Nothing merged in the window: nothing to divide by, and the count is still said.
+    const none = metricOf(buildMetrics(WINDOW, { ...month(), events: [], escapes: [escape(2, at(8))] }, 'p1').metrics, 'escaped-defects')
+    expect(none).toMatchObject({ state: 'not-measurable', reason: expect.stringMatching(/^1 escaped defect\(s\)/) })
   })
 
   it('reads L3 as not shown, with every reason: too few tasks, the lines missed, the bounds, and the metrics not measurable', () => {

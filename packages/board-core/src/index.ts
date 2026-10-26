@@ -44,6 +44,40 @@ export interface Reopening {
   reason: string
 }
 
+/** The line of the auto-accept circuit breaker (ADR-0067, D93): it trips at `escapes` escaped defects within `days` days. */
+export interface BreakerLine { escapes: number; days: number }
+/** The default line: 2 escaped defects in 7 days. */
+export const BREAKER_DEFAULT: BreakerLine = { escapes: 2, days: 7 }
+/** A defect found after an auto-accepted result landed, recorded by the operator or the lead against the task whose result it was in. */
+export interface Escape {
+  escapeId: string
+  projectId: string
+  branch: string
+  taskId: string
+  /** The auto-accepting `board` decision of the task (rule `board.auto-accept`). */
+  acceptance: ArtifactRef
+  foundAt: string
+  recordedAt: string
+  recordedBy: 'operator' | 'lead'
+  note: string
+}
+/** Where auto-accept stands for one project and branch once the breaker has tripped. */
+export interface Breaker {
+  breakerId: string
+  projectId: string
+  branch: string
+  state: 'tripped' | 'reset'
+  line: BreakerLine
+  trippedAt: string
+  /** The `board` decision (rule `board.auto-accept-breaker`) that turned auto-accept off, naming the escapes it counted. */
+  decision: ArtifactRef
+  /** The escapes it counted. */
+  escapes: Escape[]
+  /** Escapes of the project and branch within the line's window now, and whether the line holds (fewer than the line). */
+  now?: { counted: number; lineHolds: boolean }
+  reset?: { at: string; by: 'operator' | 'lead'; decision: ArtifactRef }
+}
+
 export type Unit = 'tokens' | 'usd' | 'turns' | 'runs' | 'minutes'
 export interface BudgetLine { pool: string; unit: Unit; amount: number }
 export type CheckKind = 'tests' | 'typecheck' | 'lint' | 'schema' | 'quote-check' | 'review' | 'operator'
@@ -389,6 +423,28 @@ export abstract class Board extends Service {
    * says why. The attempt the result was made in is already counted; the reopening counts none.
    */
   abstract reopen?(taskId: string, back: Reopening, at?: Date): Promise<BoardTask>
+
+  /**
+   * Record a defect found after a task's auto-accepted result landed (optional; not yet in a contract
+   * version, ADR-0067 amendment, D93). Only for a done task whose last decision is the auto-accept
+   * rule's (`invalid` otherwise, and once per task). When the project and branch have escapes at the
+   * line within its window, auto-accept for them turns off (the breaker trips) on a `board` decision
+   * naming every escape it counted, in the same transaction.
+   */
+  recordEscape?(input: { taskId: string; by: 'operator' | 'lead'; note: string; foundAt?: string }, at?: Date): Promise<{ escape: Escape; breaker?: Breaker }>
+
+  /** The escapes recorded (of one project, or all), oldest first: what `system metrics` reads as escaped defects. */
+  escapes?(projectId?: string): Promise<Escape[]>
+
+  /** The tripped breakers (of one project, or all), each with the count now; a breaker never resets by itself. */
+  breakers?(projectId?: string, at?: Date): Promise<Breaker[]>
+
+  /**
+   * Turn auto-accept on again for a project and branch, by the operator or the lead, and only once
+   * the line holds: fewer escapes than the line within its window as of `at` (`invalid` otherwise).
+   * Recorded as a `board` decision naming the trip's. Nothing else turns it on: not the sweep, not time.
+   */
+  resetBreaker?(projectId: string, branch: string, by: 'operator' | 'lead', at?: Date): Promise<Breaker>
 
   /**
    * Make every move that is due at `at`: tasks whose dependencies are done become ready or wait

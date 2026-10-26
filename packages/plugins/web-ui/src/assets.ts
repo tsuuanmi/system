@@ -1642,6 +1642,12 @@ export const APP_JS = `'use strict'
     // Each group's cards (T253), headed by its project's name: its approvals, its reviews, its runs needing attention, and,
     // for a project, its weekly report and its metrics, under Reports.
     const cardGroups = []
+    const breakerNotes = (key) => {
+      const p = (projects || []).find((x) => x.projectId === key)
+      return ((p && p.autoAcceptBreakers) || []).map((b) => el('p', { class: 'state failed', role: 'status', 'aria-label': 'Auto-accept is off on ' + b.branch },
+        'Auto-accept is off on ' + b.branch + ': ' + qty(b.escapes.length, 'escaped defect') + ' counted (the line is ' + b.line.escapes + ' in ' + b.line.days + ' days). Results are held for you. It turns on again only by you or the lead, once the line holds' + (b.now && b.now.lineHolds ? ' (it holds now).' : '.'),
+        el('span', { class: 'muted' }, ' ' + b.escapes.map((e) => e.taskId).join(', '))))
+    }
     for (const g of shownGroups) {
       const calm = !g.requests.length && !g.reviews.length && !g.runs.length
       // What is in no project has a group only while something of it waits; a project's group stays, its Reports with it.
@@ -1649,6 +1655,8 @@ export const APP_JS = `'use strict'
       const s = g.slug
       cardGroups.push(el('section', { class: 'group', id: 'group-' + s, tabindex: '-1', 'aria-label': g.key ? 'Project ' + g.name : 'Not in a project' },
         g.key ? el('div', { class: 'line group-head' }, el('h2', { class: 'group-title' }, g.name), reportsLink(g.key, g.name)) : el('h2', { class: 'group-title' }, g.name),
+        // Auto-accept turned off by its circuit breaker (D93): each branch, the escaped defects it counted, and who turns it on again.
+        g.key ? breakerNotes(g.key) : null,
         calm ? el('p', { class: 'muted' }, 'Nothing needs you here.') : null,
         g.requests.length ? await approvals(q, [...g.batches, ...(g.loose.length ? [{ requests: g.loose }] : [])], 'approvals-' + s, 'h3') : null,
         g.reviews.length ? reviewed.sectionOf(g.reviews, 'reviews-' + s, 'h3', false) : null,

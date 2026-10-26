@@ -108,6 +108,49 @@ What constrains a fix:
 - A restart after the rule accepted is reconciled by the engine as an applied acceptance
   (`result.acceptance`), never applied twice (INV-4).
 
+## Amendment: the circuit breaker (T268, D93, 2026-10-26)
+
+Auto-accept had no brake: it kept accepting however many of its accepted results turned out
+defective. Anthropic's "Solving code review" says they still lack a circuit breaker that tightens
+approval when escaped defects rise; this amends the rule with one. Nothing else in it changes.
+
+- **An escape.** A defect found after an auto-accepted result landed, recorded by the operator or
+  the lead against the task whose result held it (`recordEscape`; one per task, with a note and
+  when it was found). Only a done task whose last decision is the rule's own (`board.auto-accept`,
+  which names the branch it landed on) takes one: a result the operator accepted, or any other, is
+  not what the line is about.
+- **The line.** `board.autoAccept.breaker: { escapes, days }`, default 2 escapes in 7 days (1 to 100
+  in 1 to 90), counted per project and landing branch over a rolling window. At that many, in the
+  transaction that recorded the last, the breaker trips.
+- **What a trip does.** Auto-accept for that project and branch turns off: every result that would
+  be accepted by the rule is held for the operator, the reason naming the breaker, its decision, and
+  the line. Other branches and projects are unaffected. It is recorded as a `board` decision of rule
+  `board.auto-accept-breaker` (`auto-accept off`) whose inputs are the escaped tasks' accepting
+  decisions and whose detail lists every escape it counted (INV-13). Home says *Auto-accept is off
+  on <branch>* in the project's group, with the line and the tasks counted.
+- **It does not reset by itself.** No sweep, no passing time, no later accepted result turns it on.
+  Only the operator or the lead does (`resetBreaker`), and only once the line holds again: fewer
+  escapes than the line within the window as of that moment. Until then even the operator's reset is
+  refused, so the operator who wants the rule back sooner changes the line in the configuration, a
+  decision of its own. A reset is a `board` decision (`auto-accept on`) naming the trip's.
+- **State.** Escapes and breakers are board tables (store migration 4); at most one breaker per
+  project and branch is open.
+- **The metric.** `system metrics` reads the same recorded escapes: *Escaped defects per 100
+  landed* is the escapes found in its window over the results merged in it, with the count as
+  `figures.escapes`, a lower bound (only defects recorded against auto-accepted results count). The
+  breaker counts the same table over its own window; a board that records no escapes leaves the
+  metric not measurable.
+- **The surface.** MCP `board_escape` records an escape, `board_breakers` lists the breakers
+  tripped, and `board_breaker_reset` turns auto-accept on again (`mcp-board` 1.3). Each is the lead's
+  or the operator's, and which one is the caller's token, never an argument (INV-6). Each output is
+  checked against its schema before the move commits.
+
+The reviewer is checked the same way: [a reviewer eval](../../validation/experiments/reviewer-eval.md)
+runs System's own reviewer, as the board's `review:1` runs, on past escapes and clean changes.
+`pnpm check` fails on any change to the reviewer's instructions, subject block, parser, steps, or
+set until the eval has run on it and is recorded no worse than before
+([runbook](../../operations/runbooks.md#run-the-reviewer-eval)).
+
 ## Rejected alternatives
 
 The options above; also: deciding the rule in the engine (the board is what holds a review, and a

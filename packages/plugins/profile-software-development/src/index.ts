@@ -106,7 +106,7 @@ const DEVELOP_PROMPT = [
  * and wording are `nit`s; a defect the change did not introduce is `pre-existing`. The engine has a
  * second reviewer verify each important finding, and only a confirmed one grows a fix.
  */
-const REVIEW_PROMPT = [
+export const REVIEW_PROMPT = [
   'Review this change as an independent reviewer: you see the task, its acceptance criteria, and the exact change, never its developer\'s conversation.',
   'Judge whether the change does what the task asks, correctly, and nothing beyond it. A defect, a change the task does not need, or a test or benchmark weakened, skipped, or made unreliable is an important finding, with its file, line, and evidence of what fails; style, naming, and wording are nits; a defect the change did not introduce is pre-existing.',
   'You read and judge the change; you never run the project\'s tests or builds: its author ran the required checks and showed their output in the task\'s dossier, and the run\'s required checks run again at acceptance. A command you could not run is not a finding about the change; an environment limit is at most a nit.',

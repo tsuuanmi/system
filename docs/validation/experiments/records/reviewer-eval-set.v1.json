@@ -1,0 +1,100 @@
+{
+  "record": "reviewer-eval-set",
+  "setId": "reviewer-escapes",
+  "version": 1,
+  "summary": "Changes System's own reviewer let through (escapes found on 2026-10-26, each a commit pair: the defective change and its fix, with the important finding a review of the defective change must make), and clean changes it must leave without an important finding. Run by scripts/experiments/reviewer-eval.ts on System's reviewer, as the board's review:1 runs, on every change to the review template, its prompts, or the reviewer's tier (docs/validation/experiments/reviewer-eval.md).",
+  "repository": "https://github.com/tsuuanmi/system",
+  "important": ["important"],
+  "labelling": {
+    "rule": "An escape is a defect found after the change was made, fixed by a later change; its expected finding names the file the fix changed and the words a finding of it uses (a regular expression over the finding's claim and evidence). What a case reviews is a change that introduces the defect, narrowed to the files the defect is in: the defective commit against its parent (on its run branch when it never landed); or, when the defect was a state of the code no single commit introduced, the fix reverted against the fixed tree; or, when no commit ever held it, a patch of the records directory rebuilt from the fixing commit. The reviewer is given the case's `request` (what the change was asked to do, as its task said it), never the defect. A clean case is a change no later change was needed to fix as of 2026-10-26: it must get no finding at the important severity. Every ref is a pinned commit or a patch file, never a search.",
+    "proposedBy": { "who": "lead session (the pairs, answered to T268's attempt 1) and the T268 Worker (the requests, paths, and expected findings)", "note": "the lead confirms each expected finding against its fix before the first recorded run" },
+    "confirmedBy": null
+  },
+  "cases": [
+    {
+      "caseId": "t235-npm-config-name",
+      "kind": "escape",
+      "task": "T235",
+      "title": "A check's no-install environment named only npm_config_*, which pnpm 12 ignores",
+      "request": "An acceptance check never hangs on a dependency change: a result's checks run with pnpm offline and never start an install inside the Worker's confinement.",
+      "change": { "rev": "479ce7e2", "paths": ["packages/plugins/agent-workers/src/checks.ts"] },
+      "fix": { "rev": "5332fecd" },
+      "provenance": "T235's Worker result, branch system/run/run_1cf19d48db96256a; never landed as it was. Narrowed to checks.ts, whose checkEnvironment() names only npm_config_*: the whole of agent-workers/src is over the run tool's input bound",
+      "expected": { "path": "packages/plugins/agent-workers/src/", "claim": "npm_config|pnpm_config|pnpm 1[12]|ignore" }
+    },
+    {
+      "caseId": "check-starts-install-in-confinement",
+      "kind": "escape",
+      "task": "T238",
+      "title": "A check that started a pnpm install inside the confinement and hung with no network (T228's change adding a workspace package triggered it)",
+      "request": "Run a result's acceptance checks (lint, typecheck, tests) in the Worker's confinement on the exact result, with no network, each to an exit code.",
+      "change": { "revertOf": "5332fecd", "paths": ["packages/plugins/agent-workers/src/checks.ts"] },
+      "fix": { "rev": "5332fecd" },
+      "provenance": "the defect is the check environment as it stood at 43c61b00 (before T235), which no single commit introduced: the case is 5332fecd's change to checks.ts (the check environment) reverted against the tree it fixed, the whole of agent-workers/src being over the run tool's input bound; T228's own result is 3b535c30, its hung attempt 98907533 on branch system/run/run_2fd828d2bae7d595",
+      "expected": { "path": "packages/plugins/agent-workers/src/", "claim": "install|hang|network|offline|verify-deps" }
+    },
+    {
+      "caseId": "regenerate-without-no-install-environment",
+      "kind": "escape",
+      "task": "T235",
+      "title": "A regenerate step that ran without the no-install environment, so pnpm could start an install",
+      "request": "An acceptance check never hangs on a dependency change: checks, and the commands that make a repository's generated files again, run with pnpm offline and never start an install.",
+      "change": { "revertOf": "8eb36439", "paths": ["packages/plugins/agent-workers/src/regenerate.ts"] },
+      "fix": { "rev": "8eb36439" },
+      "provenance": "the defect is regenerate.ts as 5332fecd left it, running the generated-files commands with a plain childEnvironment(): 5332fecd's own diff does not touch regenerate.ts, so the case is 8eb36439's change to regenerate.ts reverted against the tree it fixed",
+      "expected": { "path": "packages/plugins/agent-workers/src/regenerate\\.ts", "claim": "regenerat|generated|install|verify-deps|offline|environment|childEnvironment" }
+    },
+    {
+      "caseId": "t247-proc-fd-report-channel",
+      "kind": "escape",
+      "task": "T247",
+      "title": "A report channel opened through /proc/self/fd, which a confined process cannot reopen",
+      "request": "A Worker runs the browser tests in its confinement, and a skipped browser test is never read as a pass: the check reports what it did not run.",
+      "change": { "rev": "effbbc75", "paths": ["packages/agent-runtime-core/src/", "packages/plugins/agent-workers/src/", "packages/plugins/runtime-claude-agent-sdk/src/", "packages/plugins/runtime-codex-sdk/src/"] },
+      "fix": { "rev": "096d6b6d" },
+      "provenance": "T247's Worker result, branch system/run/run_4d923dd6f9076413; never landed as it was",
+      "expected": { "path": "packages/(agent-runtime-core|plugins/(agent-workers|runtime-[a-z-]+))/", "claim": "/proc|descriptor|\\bfd\\b|reopen" }
+    },
+    {
+      "caseId": "t253-home-filter-lists-other-projects",
+      "kind": "escape",
+      "task": "T253",
+      "title": "Home's view filtered to one project still listed other projects' runs",
+      "request": "Home across projects: grouped by project, with a project switcher; filtered to one project (?project=<id>), Home shows only that project's work.",
+      "change": { "patch": "reviewer-eval-t253-defective.patch" },
+      "fix": { "rev": "20fe4c45" },
+      "provenance": "no commit holds the defective version (the lead fixed it inside 20fe4c45): the patch is 20fe4c45's recent-runs filter reverted, as a fixture, against the file as it is now",
+      "expected": { "path": "packages/plugins/web-ui/src/", "claim": "other project|every project|filter|all projects|homeProject|recent runs" }
+    },
+    {
+      "caseId": "clean-t250-worktrees-remove-bound",
+      "kind": "clean",
+      "task": "T250",
+      "title": "system worktrees remove no longer fails past 32 finished worktrees (decision reasons bound)",
+      "request": "system worktrees remove works for more than 32 finished worktrees: the decision's reasons stay within their bound.",
+      "change": { "rev": "ba9a904b", "paths": ["packages/plugins/agent-workers/src/", "packages/cli/src/"] },
+      "fix": null,
+      "expected": null
+    },
+    {
+      "caseId": "clean-t255-auto-accept-browser-tests",
+      "kind": "clean",
+      "task": "T255",
+      "title": "Auto-accept holds a result whose browser tests did not run",
+      "request": "The board's auto-accept rule holds, for the lead or the operator, a result whose check passed without running its browser tests, naming the check and what did not run.",
+      "change": { "rev": "adbfeef1", "paths": ["packages/plugins/board/src/"] },
+      "fix": null,
+      "expected": null
+    },
+    {
+      "caseId": "clean-t258-agent-side-cleanup",
+      "kind": "clean",
+      "task": "T258",
+      "title": "Clean-up of the agent side: legacy paths, dead code, unused tests",
+      "request": "Clean up the agent side: remove legacy paths and dead code, with no change in behaviour.",
+      "change": { "rev": "7e4e00ea", "paths": ["packages/plugins/agent-workers/src/"] },
+      "fix": null,
+      "expected": null
+    }
+  ]
+}

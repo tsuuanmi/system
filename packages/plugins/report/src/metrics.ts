@@ -7,7 +7,7 @@
  * changes what System does.
  */
 import type { ApprovalRequest } from '@tsuuanmi/system-approvals-core'
-import type { BoardTask } from '@tsuuanmi/system-board-core'
+import type { BoardTask, Escape } from '@tsuuanmi/system-board-core'
 import type { QuotaDraw } from '@tsuuanmi/system-libs'
 import type { UsageRecord } from '@tsuuanmi/system-resources-core'
 import { LIVENESS_EVENTS, type DecisionRead, type Period, type Recorded } from './report.ts'
@@ -119,6 +119,11 @@ export interface MetricSources {
   usageUnknown?: number
   /** What the agent runs of the window drew from their accounts' windows (`quota.draw`), each a valid `quota-draw@1.0`. */
   draws?: QuotaDraw[]
+  /**
+   * The escaped defects the operator or the lead recorded against auto-accepted results (the board's
+   * `escapes`, D93), in scope; absent when the board records none (the metric is then not measurable).
+   */
+  escapes?: readonly Escape[]
   /** Runs read whose decisions may not all have been read (more than one read holds): their people's decisions are a lower bound. */
   truncatedRuns?: readonly string[]
   /** Why decisions people made on runs in the window may not all have been read, when they may not. */
@@ -413,8 +418,24 @@ export function buildMetrics(period: Period, sources: MetricSources, projectId?:
     }))
 
   // Escaped defects, Worker availability, quota idle: the records they need do not exist yet.
-  drafts.push(unmeasurable('escaped-defects', 'Escaped defects per 100 landed', 'per-100-landed',
-    'no record links a fix to the task whose landed change it fixes (PROP-0016\'s `defect` link on a task is not built), and a revert is not recorded: a task\'s title naming another is not evidence of a defect', ['workflow.task.landing', 'the board']))
+  const escapeSources = ['the board (recorded escapes of auto-accepted results)', 'workflow.task.landing (merged)']
+  if (sources.escapes === undefined) {
+    drafts.push(unmeasurable('escaped-defects', 'Escaped defects per 100 landed', 'per-100-landed',
+      'the board records no escapes (no `escapes` read), and nothing else links a fix to the task whose landed change it fixes: a task\'s title naming another is not evidence of a defect', escapeSources))
+  } else {
+    // The escapes the operator or the lead recorded against auto-accepted results, found in the window: the count the
+    // auto-accept circuit breaker trips on (board.autoAccept.breaker, default 2 in 7 days; read this over 7 days).
+    const found = sources.escapes.filter((e) => inWindow(e.foundAt))
+    const landed = landedTasks.size
+    drafts.push(!landed
+      ? unmeasurable('escaped-defects', 'Escaped defects per 100 landed', 'per-100-landed',
+        `${found.length} escaped defect(s) of auto-accepted results were recorded in the window, and no result was merged in it to divide by`, escapeSources)
+      : measured({
+        id: 'escaped-defects', name: 'Escaped defects per 100 landed', unit: 'per-100-landed', value: round((found.length / landed) * 100, 2),
+        figures: { escapes: found.length }, sample: landed, sampleOf: 'results merged',
+        reason: 'only defects the operator or the lead recorded against auto-accepted results count: a defect in a result they accepted by hand is not recorded, so the value is a lower bound', bound: 'lower', sources: escapeSources,
+      }))
+  }
   drafts.push(unmeasurable('worker-availability', 'Worker availability', 'share',
     'when a Worker could not take work, and when it could again, is not recorded over time: the roster reads availability now only (PROP-0016 I3 and I4)', ['the roster (now only)']))
   drafts.push(measuredCost(sources.usage.filter((u) => inWindow(u.observedAt)), (sources.draws ?? []).filter((d) => inWindow(d.observedAt)), sources.usageUnknown ?? 0, finished.length))

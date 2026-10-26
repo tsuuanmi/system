@@ -3598,3 +3598,84 @@ checkout of the `system` repository; it writes under the eval's directory only.
 | `the eval clone … holds uncommitted changes` | something wrote in the clone: it is the eval's alone. Look, then `git -C <clone> stash` or reset it |
 | a trial not counted: `the eval clone was pinned at …` or `does not descend from the base` | the run's worktree was not cut from the task's base (the clone moved before the run's first step): run the trial again in a new eval |
 | a trial not counted: `the grader's setup failed` | the offline install could not run in the grading worktree: the store lacks a package of that commit's lockfile; install once online in your checkout, then grade again |
+
+## Run the reviewer eval
+
+The [reviewer eval](../validation/experiments/reviewer-eval.md) runs System's own reviewer on past
+escapes and clean changes. The helper is `node --import tsx scripts/experiments/reviewer-eval.ts`
+(`rev` below), from a checkout of the `system` repository, with the host running.
+
+**When.** `pnpm check` runs `check:reviewer-eval` (`rev gate`). It fails when the reviewer is not
+the one the last recorded run measured. That covers the board reviewer's instructions
+(`REVIEW_PROMPT`), the subject block the engine appends, the parser that reads its assessment, the
+capabilities, tier, and conversation of its `review:1` steps, and the set. The failure names each
+part that changed, and the change is not kept until the eval has run on it and is recorded. The
+Workers and models a deployment routes the review to are configuration, not code: after changing
+the reviewer Workers' rows or their models, run it too. Every recorded run lists the Workers that
+served it.
+
+1. **The set is sound:** `rev check` says `ok`. The defective versions of most escapes sit on run
+   branches that never landed on `dev` (`system/run/run_1cf19d48db96256a`,
+   `system/run/run_4d923dd6f9076413`, and the others the set's `provenance` names). The clone the
+   eval reads must have them: run it from your checkout, or fetch those branches into the clone.
+   `rev resolve --repo <clone>` shows each case's diff and the size of its review input.
+2. **Run:** `rev run --repo <clone> --out <dir under $TMPDIR> --record`. Each run is a fresh
+   execution with its own id, printed first. Every case's run key is that execution's, so a new run
+   never returns an earlier execution's review. `--execution <id>` resumes one whose cases did not
+   all finish, and a record never names an execution twice. Each case runs on System's reviewer as
+   the board's `review:1` does: MCP `run` of `agent-review` at the board reviewer's tier (its
+   `review` and `local-data` capabilities, so the same reviewer Workers). It is refused when
+   `agent-review` cannot serve that configuration (other capabilities, or a tier it cannot take).
+   A case whose step the host served at another minimum tier is not counted: that host runs another
+   build, so restart it on this one. The reviewer is given the board reviewer's instructions,
+   the task, and the engine's subject block with the change, then `result` until it ends (at most
+   `--minutes`, default 30, a case). Its assessment is read with the engine's own parser. The report
+   gives recall (escapes found, of those run) and the false-important rate (clean changes with an
+   important finding, of those run), per case, with the cases not run and why. `--min-recall` and
+   `--max-false-important` exit 1 below a bar. `rev input <caseId> --repo <clone>` prints what the
+   reviewer is given, and `rev score <dir>` reads findings already written again.
+3. **Record:** with `--record` the run writes `docs/validation/experiments/records/reviewer-eval-gate.json`
+   (the reviewer's fingerprint, the execution, what the run measured, and the Worker, tier, and
+   model that served each case). It does so
+   only when every case ran and the run is no worse than the last recorded one: recall not lower,
+   false-important rate not higher. Commit that file with the change; `pnpm check` passes again.
+   A regression is not recorded: read the case's findings in `--out` before deciding the change.
+4. **Grow the set** with every escape. When a defect is found after a result landed, or a run's
+   defective result is fixed before it lands, add an `escape` case: the change that introduces the
+   defect (its commit, or the fix reverted against the fixed tree, narrowed to the defect's paths),
+   its fix, the task's own words as `request`, and the finding a review must make (a file pattern
+   and a claim pattern). Keep the defective commit reachable (its run branch), and for an
+   auto-accepted result record the escape on the board ([the circuit breaker](#auto-accept-circuit-breaker)).
+   A changed set changes the fingerprint: the run that records it measures the new case too.
+
+| It says | Do |
+|---|---|
+| `the set cannot be used` | the record is malformed: the problems are listed; fix the set |
+| `the change is not had: … is not a commit of this repository` (a case not run) | the clone lacks the commit: fetch the run branch it is on |
+| `the review input is … characters, over the run tool's 32000` | narrow the case's `paths` to the files the defect is in |
+| `… waits on the operator` | the review stopped at a tool call or a gate: decide it, then run again |
+| `not recorded: … did not run` or `recall fell` | a recorded run runs every case and is no worse than the last: fix the cause, or keep the reviewer as it was |
+
+## Auto-accept circuit breaker
+
+Auto-accept ([ADR-0067](../decisions/adr/0067-system-accepts-a-listed-branchs-result-on-its-review-and-checks.md))
+turns itself off for a project and branch when defects found after landing reach the line
+(default 2 in 7 days; `board.autoAccept.breaker: { escapes, days }`). A defect escapes when it is
+found in a result the rule accepted, which only the operator or the lead can say: record it against
+the task whose result held it with MCP `board_escape` (`taskId`, `note`: what escaped, `foundAt`
+when it was found). It is recorded as the caller's: the lead's client token, or the operator's.
+When the line is reached the board records a `board` decision of rule
+`board.auto-accept-breaker` that names every escape it counted, Home says *Auto-accept is off on
+<branch>* in the project's group, and each result that would have been accepted is held for the
+operator, its reason naming the breaker.
+
+Nothing turns it on but a person: not time, not a sweep. MCP `board_breakers` lists the breakers
+tripped, the escapes each counted, and whether the line holds now. Once the line holds again
+(fewer escapes than the line within the window, counted as of now), the operator or the lead calls
+`board_breaker_reset` (`projectId`, `branch`), which records a decision naming the trip's. Until
+then it is refused, the operator's too.
+
+`system metrics` reads the same recorded escapes: its *Escaped defects per 100 landed* is the
+escapes found in the window over the results merged in it, with the count as `figures.escapes` (a
+lower bound: only defects recorded against auto-accepted results count). Read it over the
+breaker's window, `system metrics --days 7`, to see what the breaker counts.

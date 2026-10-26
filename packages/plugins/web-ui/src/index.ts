@@ -492,7 +492,12 @@ export function apply(ctx: Context, config: Config = {}): void {
       const listed: Array<Record<string, unknown>> = []
       for (const project of await board.projects()) {
         const tasks = await board.tasks({ projectId: project.projectId, states: [...ALL_STATES] })
-        listed.push({ ...projectOf(project, tasks.filter((t) => OPEN_STATES.includes(t.state))), ...cardsOf(tasks, (runId) => ctx.workflow.landing(runId)) })
+        // Where the auto-accept circuit breaker has turned auto-accept off for the project (D93): shown on Home, turned on by the operator or the lead only.
+        const tripped = board.breakers ? await board.breakers(project.projectId, new Date()) : []
+        listed.push({
+          ...projectOf(project, tasks.filter((t) => OPEN_STATES.includes(t.state))), ...cardsOf(tasks, (runId) => ctx.workflow.landing(runId)),
+          autoAcceptBreakers: tripped.map((b) => ({ branch: b.branch, trippedAt: b.trippedAt, decision: b.decision, line: b.line, escapes: b.escapes.map((e) => ({ taskId: e.taskId, foundAt: e.foundAt, note: e.note })), ...(b.now ? { now: b.now } : {}) })),
+        })
       }
       // A stable sort: in creation order, the closed ones last.
       listed.sort((a, b) => Number(a.state === 'closed') - Number(b.state === 'closed'))

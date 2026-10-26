@@ -1,0 +1,12 @@
+---
+"@tsuuanmi/system-board": minor
+"@tsuuanmi/system-board-core": minor
+"@tsuuanmi/system-web-ui": minor
+"@tsuuanmi/system-report": minor
+"@tsuuanmi/system-profile-software-development": minor
+---
+
+A reviewer eval from today's escapes, and an auto-accept circuit breaker (T268, D93, ADR-0067 amended):
+- `scripts/experiments/reviewer-eval.ts` runs System's own reviewer, as the board's `review:1` runs (MCP `run` of `agent-review`, the board reviewer's instructions, the engine's subject block, its assessment read with the engine's parser, counting its `important` findings as `review:1` reports them, ADR-0075), on past changes that let a defect escape and on clean changes, and reports recall and the false-important rate. The escapes are the T235 `npm_config_` name pnpm 12 ignores, a check that started an install in the confinement, the regenerate step without the no-install environment, T247's `/proc/self/fd` report channel, and T253's Home listing other projects' runs. Each is a pinned commit pair with its expected important finding, reviewed as a change that introduces the defect: the commit against its parent, the fix reverted against its tree, or a rebuilt patch, on the defect's paths. `pnpm check` (`check:reviewer-eval`) fails on any change to the reviewer's instructions, subject block, parser, `review:1` steps, or the set until the eval has run on it and is recorded (`run --record`, every case run, no worse than the last). Runbook: "Run the reviewer eval". `profile-software-development` exports `REVIEW_PROMPT`.
+- The board's `autoAccept` takes a `breaker: { escapes, days }` (default 2 in 7 days). MCP `board_escape` (the lead or the operator, by its token) records a defect found in an auto-accepted result; at the line, auto-accept for that project and branch turns off on a `board` decision (rule `board.auto-accept-breaker`) naming the escapes it counted, and the next result is held for the operator with the reason. It never resets by itself: `board_breaker_reset`, by the operator or the lead, once the line holds again; `board_breakers` lists the breakers tripped (`mcp-board` 1.3). Store migration 4 adds the escapes and breakers. Home shows *Auto-accept is off on <branch>* in the project's group.
+- `system metrics` reads the recorded escapes: *Escaped defects per 100 landed* is the escapes found in the window over the results merged in it (`figures.escapes`, a lower bound), instead of "not measurable", when the board records escapes.

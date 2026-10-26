@@ -285,6 +285,27 @@ Scope: `client`
 | `clientRequestId` | string |  | Retry-safe request key |
 | `waitSeconds` | integer |  | Seconds to wait for the run to finish (default 45) |
 
+## `board_breaker_reset`
+
+Turn auto-accept on again for a project and landing branch whose breaker tripped, as the caller (the operator, else the lead): only once the line holds (fewer escapes than the line within its window now), refused otherwise. Recorded as a board decision naming the trip's.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `projectId` | string | yes |  |
+| `branch` | string | yes | The landing branch auto-accept turns on again for |
+
+## `board_breakers`
+
+List where the auto-accept circuit breaker turned auto-accept off: per project and landing branch, the escapes it counted, its decision, and whether the line holds now (fewer escapes than the line in its window). A breaker never resets by itself.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `projectId` | string |  | One project's breakers; every project's when absent |
+
 ## `board_brief`
 
 One page for an agent new to a project: its intent, what is in progress, what waits, what is next, and what to read first.
@@ -344,6 +365,18 @@ Scope: `operator`
 |---|---|---|---|
 | `projectId` | string | yes |  |
 | `outcome` | "achieved" \| "stopped" | yes | achieved: its criteria are met; stopped: it ends without them |
+
+## `board_escape`
+
+Record a defect found after a result the auto-accept rule accepted (a done task whose last decision is rule board.auto-accept), once per task, as the caller (the operator, else the lead). At the line (board.autoAccept.breaker, default 2 escapes in 7 days) for the result's project and landing branch, auto-accept turns off for them: a board decision names every escape counted, and results are held for the operator until the operator or the lead turns it on again with board_breaker_reset. system metrics reads the escapes as escaped defects.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `taskId` | string | yes | The done task whose auto-accepted result held the defect |
+| `note` | string | yes | What escaped, and where it was found |
+| `foundAt` | string |  | When it was found (default now); never in the future |
 
 ## `board_pause`
 
