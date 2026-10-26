@@ -2,9 +2,9 @@ import { type Browser, chromium, type Page } from 'patchright-core'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
 import { APP_CSS, APP_JS, PAGE } from '../src/assets.ts'
-import { testChrome } from '../../browser-patchright/tests/support.ts'
+import { headlessIt, headlessLaunchOptions } from '../../browser-patchright/tests/support.ts'
 import { activeProject, readyTask } from '../../workflow/conformance/workflow.ts'
-import { BEFORE_WORDS, inBrowser, noteWords, opened, overflow, sectionsWithoutHeading, shoot, wordsInSight } from './glance.ts'
+import { BEFORE_WORDS, noteWords, opened, overflow, sectionsWithoutHeading, shoot, wordsInSight } from './glance.ts'
 import { boot, OPERATOR, reviewed } from './store-backed.ts'
 import { descriptionOf } from './wording.ts'
 
@@ -29,7 +29,7 @@ async function busyBoard() {
 }
 
 const launch = async (): Promise<Browser> => {
-  const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+  const browser = await chromium.launch(headlessLaunchOptions())
   onTestFinished(() => browser.close())
   return browser
 }
@@ -78,7 +78,7 @@ describe('web UI: one spacing scale, one type scale (T239)', () => {
 })
 
 describe('web UI: clearer at a glance (T239)', () => {
-  inBrowser('holds the Board\'s first screen at 1280×800 to at most half the words it held before T239; the Board and Reviews as the design note shows them', async () => {
+  headlessIt('holds the Board\'s first screen at 1280×800 to at most half the words it held before T239; the Board and Reviews as the design note shows them', async () => {
     const { origin, pages } = await busyBoard()
     const browser = await launch()
     let words = 0
@@ -95,7 +95,7 @@ describe('web UI: clearer at a glance (T239)', () => {
     expect(words, `the Board's first screen: ${words} words, ${BEFORE_WORDS.board} before T239`).toBeLessThanOrEqual(Math.floor(BEFORE_WORDS.board / 2))
   })
 
-  inBrowser('heads every section of every page, and on a 360 px phone scrolls no page sideways and keeps every button within the screen', async () => {
+  headlessIt('heads every section of every page, and on a 360 px phone scrolls no page sideways and keeps every button within the screen', async () => {
     const { origin, pages } = await busyBoard()
     const browser = await launch()
     for (const width of [1280, 360]) {
@@ -118,7 +118,7 @@ describe('web UI: clearer at a glance (T239)', () => {
     }
   })
 
-  inBrowser('says what a button does as its tooltip, shown on keyboard focus and on hover, within the screen, hidden by Escape, and its accessible description all along', async () => {
+  headlessIt('says what a button does as its tooltip, shown on keyboard focus and on hover, within the screen, hidden by Escape, and its accessible description all along', async () => {
     const { origin } = await busyBoard()
     const browser = await launch()
     for (const width of [1280, 360]) {
@@ -171,7 +171,7 @@ describe('web UI: the operator\'s iPhone 16 Pro (T240)', () => {
     expect(APP_CSS).toMatch(/@media \(pointer: coarse\) \{\s*:root \{ --small: 13px; --body: 16px; --large: 20px; \}/)
   })
 
-  inBrowser('on the phone at 402 and 360 px: no page scrolls sideways, every target is at least 44 by 44 px, no field is under 16 px, the sticky header clears the Dynamic Island, and a table below 600 px is a list of cards', async () => {
+  headlessIt('on the phone at 402 and 360 px: no page scrolls sideways, every target is at least 44 by 44 px, no field is under 16 px, the sticky header clears the Dynamic Island, and a table below 600 px is a list of cards', async () => {
     const { origin, pages } = await busyBoard()
     const browser = await launch()
     for (const width of [402, 360]) {
@@ -212,7 +212,7 @@ describe('web UI: the operator\'s iPhone 16 Pro (T240)', () => {
     }
   })
 
-  inBrowser('opens a row\'s tooltips on a tap of its "?", where nothing hovers, and closes them on a second tap, a tap outside, or Escape; a word\'s "?" the same', async () => {
+  headlessIt('opens a row\'s tooltips on a tap of its "?", where nothing hovers, and closes them on a second tap, a tap outside, or Escape; a word\'s "?" the same', async () => {
     const { origin } = await busyBoard()
     const browser = await launch()
     const page = await phone(browser, origin)

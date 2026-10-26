@@ -3,7 +3,7 @@ import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import type { WorkChange } from '@tsuuanmi/system-workers-core'
 import { chromium } from 'patchright-core'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
+import { headlessIt, headlessLaunchOptions } from '../../browser-patchright/tests/support.ts'
 import type { ArtifactRef } from '@tsuuanmi/system-board-core'
 import { activeProject } from '../../workflow/conformance/workflow.ts'
 import { acceptanceOf, checkStates, requiredChecks } from '../src/index.ts'
@@ -233,7 +233,7 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     expect(assessments.moreAtLeast).toBeUndefined()
   })
 
-  it.runIf(canRunBrowser)('reads a review that failed once per run and result: the 5-second refresh never reads it again, the operator\'s Read it again does (T128a)', async () => {
+  headlessIt('reads a review that failed once per run and result: the 5-second refresh never reads it again, the operator\'s Read it again does (T128a)', async () => {
     const booted = await boot()
     const { ctx } = booted
     await activeProject(ctx)
@@ -249,7 +249,7 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     }
     onTestFinished(() => void (artifacts.list = list))
     const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
@@ -264,7 +264,7 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     await expect.poll(() => reads, { timeout: 15_000 }).toBe(2)
   }, 90_000)
 
-  it.runIf(canRunBrowser)('shows a review card with what changed (the stat, each file folded, a long one with show all), the reviewer\'s verdict, the run\'s report, and the checks not run in warning; after Accept, where the result stands on its way in (T122, ADR-0060)', async () => {
+  headlessIt('shows a review card with what changed (the stat, each file folded, a long one with show all), the reviewer\'s verdict, the run\'s report, and the checks not run in warning; after Accept, where the result stands on its way in (T122, ADR-0060)', async () => {
     const booted = await boot()
     const { ctx } = booted
     await activeProject(ctx)
@@ -272,7 +272,7 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     changes(ctx, run.runId)
     assessment(ctx, run.runId)
     const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
@@ -358,7 +358,7 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     expect(await page.getByRole('region', { name: 'Accepted, on their way in' }).count()).toBe(0)
   }, 90_000)
 
-  it.runIf(canRunBrowser)('says a required check the run recorded as failed, and the board still holds pending, failed — never also not run (T160)', async () => {
+  headlessIt('says a required check the run recorded as failed, and the board still holds pending, failed — never also not run (T160)', async () => {
     const booted = await boot()
     const { ctx } = booted
     await activeProject(ctx)
@@ -378,7 +378,7 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     }
     onTestFinished(() => void (store.get = get))
     const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)

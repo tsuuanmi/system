@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { chromium } from 'patchright-core'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
+import { headlessIt, headlessLaunchOptions } from '../../browser-patchright/tests/support.ts'
 import { worker } from '../../../workers-core/conformance/workers.ts'
 import { activeProject, readyTask } from '../../workflow/conformance/workflow.ts'
 import { boot, OPERATOR, reviewed } from './store-backed.ts'
@@ -179,7 +179,7 @@ describe('web UI: since you last looked, who would take a step, and a run as it 
     expect(seen.count).toBe(3)
   })
 
-  it.runIf(canRunBrowser)('leads a failed run on Home\'s Since you last looked with the run page\'s plain-words reason, the system\'s own text folded under it (T160)', async () => {
+  headlessIt('leads a failed run on Home\'s Since you last looked with the run page\'s plain-words reason, the system\'s own text folded under it (T160)', async () => {
     const { ctx, workers } = await boot()
     workers.reply = () => ({ fail: 'reauth_required', disposition: 'USER_ACTION', sent: false })
     const failed = ctx.workflow.start({ template: 'solo', input: 'Compare the CDN offers', classification: 'public' })
@@ -189,7 +189,7 @@ describe('web UI: since you last looked, who would take a step, and a run as it 
     // What the failure asks of the operator, in the run page's words for its disposition.
     const next = ({ USER_ACTION: 'it needs you', BACKOFF: 'it is tried again later', CODE_FIX: 'it needs a fix in the code or configuration', NONE: 'nothing more happens' } as Record<string, string>)[error.disposition]
     const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
@@ -214,7 +214,7 @@ describe('web UI: since you last looked, who would take a step, and a run as it 
     expect(await status.innerText()).toContain(`: ${reason} — ${error.message}`)
   }, 90_000)
 
-  it.runIf(canRunBrowser)('shows on Home what happened since the operator last looked, until marked as seen; names the waiting count in the window\'s title; the start names who would likely take it; a running run\'s page and card say where it is, and a stall (T124)', async () => {
+  headlessIt('shows on Home what happened since the operator last looked, until marked as seen; names the waiting count in the window\'s title; the start names who would likely take it; a running run\'s page and card say where it is, and a stall (T124)', async () => {
     const booted = await boot()
     const { ctx, workers } = booted
     await activeProject(ctx)
@@ -225,7 +225,7 @@ describe('web UI: since you last looked, who would take a step, and a run as it 
     const run = await ctx.workflow.start({ template: 'solo', input: 'research', classification: 'public', task: { taskId: busy.taskId } })
     await vi.waitFor(() => expect(ctx.workflow.get(run.runId)?.nodes[0]?.state).toBe('RUNNING'), { timeout: 10_000 })
     const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)

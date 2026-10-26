@@ -60,6 +60,8 @@ type Outcome = 'passed' | 'failed' | 'error'
 class Checker {
   readonly steps: CheckStep[] = []
   outcomes: Record<string, Outcome> = { tests: 'passed', lint: 'passed' }
+  /** What a check's command reported it did not run, by check. */
+  notRun: Record<string, string> = {}
   refuse: Checked | undefined
   /** The repository's checked-out branch the run's worktree was cut from, as the source tells it (`changes`); none when unset. */
   base: string | undefined
@@ -89,7 +91,10 @@ class Checker {
           kind: 'evidence', bodySchema: 'check-run@1.0', classification: step.classification, producer: { type: 'system', ref: 'checker' }, runId: step.runId,
           body: { schema: 'check-run@1.0', runId: step.runId, repository: step.workspace, workspace: step.workspace, subject: { type: 'git-head', ...step.subject }, setup: sha256('setup'), checks: results },
         }).id
-        return { outcome: 'checked', results, evidence }
+        return { outcome: 'checked', results: results.map((r) => {
+          const notRun = this.notRun[r.check]
+          return notRun ? { ...r, notRun } : r
+        }), evidence }
       },
     })
   }
@@ -188,6 +193,19 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
     expect(acceptance.inputs).toContain(evidence)
     expect(ctx.artifacts.get(evidence as ArtifactRef)).toMatchObject({ kind: 'evidence', bodySchema: 'check-run@1.0' })
     expect(done.result?.acceptance).toBeDefined()
+  })
+
+  it('tells the review, among the acceptance\'s reasons, that a passed check did not run its browser tests, never reading their absence as a pass (T247)', async () => {
+    const checker = new Checker()
+    checker.notRun = { tests: 'its browser tests (12 browser tests skipped: no usable Chrome)' }
+    const { ctx, task } = await boot(checker)
+    const { taskId, runId } = await task()
+    await settled(ctx, taskId)
+    const acceptance = acceptanceOf(ctx, runId)
+    expect(acceptance.outcome.detail['checks']).toEqual({ tests: true, lint: true })
+    const reasons = acceptance.candidates.find((c) => c.selected)!.reasons
+    expect(reasons).toContainEqual('its tests check passed without running its browser tests (12 browser tests skipped: no usable Chrome): its outcome says nothing of those')
+    expect(reasons.filter((r) => r.includes('without running'))).toHaveLength(1)
   })
 
   it('sends a result whose check failed back as another attempt: a failed check is work for the lead, never the operator\'s (REQ-WF-15, INV-2)', async () => {

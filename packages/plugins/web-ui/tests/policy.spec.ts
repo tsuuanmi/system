@@ -2,7 +2,7 @@ import type { ApprovalRequest, AutonomyPolicy, PolicyChange } from '@tsuuanmi/sy
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { chromium } from 'patchright-core'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
+import { headlessIt, headlessLaunchOptions } from '../../browser-patchright/tests/support.ts'
 import { activeProject } from '../../workflow/conformance/workflow.ts'
 import { type Booted, boot, bundlePolicies, OPERATOR } from './store-backed.ts'
 import { decisionsIn, descriptionOf } from './wording.ts'
@@ -185,11 +185,11 @@ describe('web UI: a policy change the queue proposed itself', () => {
 })
 
 describe('web UI: the policy page in a real browser', () => {
-  it.runIf(canRunBrowser)('says in the queue entry that the queue, not the operator, proposed a change, and why', async () => {
+  headlessIt('says in the queue entry that the queue, not the operator, proposed a change, and why', async () => {
     const booted = await boot({ approvals: REPEATED })
     const change = await queueProposes(booted)
     const origin = `http://127.0.0.1:${(booted.ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
@@ -200,10 +200,10 @@ describe('web UI: the policy page in a real browser', () => {
     await expect.poll(() => page.locator('main').innerText()).toContain('(proposed by the queue)')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('shows the policy in force and a diff of a proposed version, proposes it, shows the change in the queue entry, and shows it in force once approved there', async () => {
+  headlessIt('shows the policy in force and a diff of a proposed version, proposes it, shows the change in the queue entry, and shows it in force once approved there', async () => {
     const booted = await boot()
     const origin = `http://127.0.0.1:${(booted.ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/?view=policy#token=${OPERATOR}`)
@@ -259,11 +259,11 @@ describe('web UI: the policy page in a real browser', () => {
     expect(await page.locator('details', { hasText: 'Exact set' }).textContent()).toMatch(/The change pch-\S+ you approved, kept while the configuration it came from is unchanged\./)
   }, 60_000)
 
-  it.runIf(canRunBrowser)('decides an asked change on the policy page itself: its card, with Approve and Deny, above the policy, and its history row linking to it (T95, T97)', async () => {
+  headlessIt('decides an asked change on the policy page itself: its card, with Approve and Deny, above the policy, and its history row linking to it (T95, T97)', async () => {
     const booted = await boot()
     const { change, request } = await propose(booted, merging('forbid'), 'no merges for now')
     const origin = `http://127.0.0.1:${(booted.ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/?view=policy#token=${OPERATOR}`)
@@ -309,10 +309,10 @@ describe('web UI: the policy page in a real browser', () => {
     expect(await waiting.count()).toBe(0)
   }, 60_000)
 
-  it.runIf(canRunBrowser)('edits the policy as a form: a mode per action class, the classes that always ask fixed at ask with why, the commands as lines, the expiry and batch numbers; the JSON follows under Advanced, and the proposal is the queue\'s to validate (T116)', async () => {
+  headlessIt('edits the policy as a form: a mode per action class, the classes that always ask fixed at ask with why, the commands as lines, the expiry and batch numbers; the JSON follows under Advanced, and the proposal is the queue\'s to validate (T116)', async () => {
     const booted = await boot()
     const origin = `http://127.0.0.1:${(booted.ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     await page.goto(`${origin}/ui/?view=policy#token=${OPERATOR}`)

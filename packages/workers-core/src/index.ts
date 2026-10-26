@@ -520,6 +520,12 @@ export interface CheckResult {
   outcome: 'passed' | 'failed' | 'error'
   exitCode?: number
   reason: string
+  /**
+   * What the command itself reported it did not run, though it exited (a `passed` or `failed`
+   * check): its browser tests, with why (no usable browser there). Its outcome says nothing of
+   * those tests, and a review is told so (T247).
+   */
+  notRun?: string
 }
 
 /**

@@ -804,6 +804,13 @@ export interface Confinement {
   readOnly: readonly string[]
   /** Paths under a hidden directory bound back writable (the child's own home, a writable workspace). */
   writable: readonly string[]
+  /**
+   * Non-secret values the child is given inside (bubblewrap `--setenv`), over any of its
+   * environment: where a path bound back lies when the variable that would name it is scrubbed
+   * (`SYSTEM_BROWSERS_DIR`, the managed Chrome under a custom `DSH_HOME`, T247). Never a secret,
+   * nor a variable a shell runs code from.
+   */
+  env?: Readonly<Record<string, string>>
 }
 
 const real = (path: string): string | undefined => {
@@ -916,6 +923,10 @@ export function confinedCommand(command: string, args: readonly string[], confin
     return [view.writable ? '--bind' : '--ro-bind', source, view.path]
   })
   if (options.chdir !== undefined && !isAbsolute(options.chdir)) throw new Error(`read confinement refused: the start directory ${options.chdir} is not absolute`)
+  const values = Object.entries(confinement.env ?? {})
+  for (const [name] of values) {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(name) || isShellStartupVariable(name) || ['TMPDIR', 'TMP', 'TEMP'].includes(name)) throw new Error(`read confinement refused: the confinement's value ${name} is not a name it may set`)
+  }
   const mounts = [
     ...(tmp !== undefined ? [{ path: tmp, args: ['--tmpfs', tmp] }] : []),
     ...hidden.filter((h) => h.dir || !options.nested).map((h) => ({ path: h.path, args: h.dir ? ['--tmpfs', h.path] : ['--ro-bind', '/dev/null', h.path] })),
@@ -925,6 +936,7 @@ export function confinedCommand(command: string, args: readonly string[], confin
   const argv = [
     '--die-with-parent', '--unshare-pid', ...(options.network === false ? ['--unshare-net'] : []), '--new-session', ...root, '--proc', '/proc',
     ...mounts.flatMap((m) => m.args), ...views.flat(), ...(options.chdir !== undefined ? ['--chdir', options.chdir] : []),
+    ...values.flatMap(([name, value]) => ['--setenv', name, value]),
     ...['TMPDIR', 'TMP', 'TEMP'].flatMap((name) => ['--setenv', name, PRIVATE_TMP]),
   ]
   return { command: confinement.bwrap, args: [...argv, '--', command, ...args] }

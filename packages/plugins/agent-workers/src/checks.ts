@@ -9,8 +9,9 @@
  * exit code 0 and fails on any other, only when its command was positively started and the tree it ran
  * on is still the subject afterwards; anything else is an `error`, which neither passes nor fails
  * (INV-2): among them an infrastructure failure (the confinement did not start the command, or the
- * command itself reported, on its own channel, that a nested bubblewrap it needed was refused); any
- * other nonzero exit is the check's own failure. Each check that ran is stored with its outcome, bound
+ * command itself reported, in its report file, that a nested bubblewrap it needed was refused); any
+ * other nonzero exit is the check's own failure. A command that reports its browser tests did not run
+ * there keeps its outcome, and its reason and answer say so (T247). Each check that ran is stored with its outcome, bound
  * to the subject, its argv, and the setup, and reused, never run again on that subject; one a crash or
  * a stop interrupted is an `error`, and one that ended before a stop keeps what it came to: neither is
  * run again to replace it (INV-4). What ran is recorded as one `check-run@1.0` evidence
@@ -30,7 +31,7 @@ import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type { Checked, CheckResult, CheckStep, RunCheck } from '@tsuuanmi/system-workers-core'
 import { CHECKS } from './gate.ts'
-import { confineIn, type Confined, NESTED_REFUSED, noInstallEnvironment, runBounded, type Setup, WorktreeSetups } from './setup.ts'
+import { BROWSER_TESTS_NOT_RUN, confineIn, type Confined, NESTED_REFUSED, noInstallEnvironment, runBounded, type Setup, WorktreeSetups } from './setup.ts'
 import type { Worktrees } from './worktrees.ts'
 
 /**
@@ -66,6 +67,8 @@ interface CheckRecord {
   signal?: string
   durationMs?: number
   output?: { tail: string; bytes: number; sha256: string }
+  /** What the command reported it did not run (its browser tests, with why); kept in the store, said in `reason` in the evidence. */
+  notRun?: string
 }
 
 type Allowed = { check: RunCheck; line: string; argv: string[]; autonomy: ArtifactRef }
@@ -174,7 +177,7 @@ export class RunChecks {
     if (allowed.length) await this.execute(found, setup!, step, allowed, records, signal)
     const results: CheckResult[] = names.map((check) => {
       const r = records.get(check)!
-      return { check, outcome: r.outcome, ...(r.exitCode !== undefined ? { exitCode: r.exitCode } : {}), reason: r.reason }
+      return { check, outcome: r.outcome, ...(r.exitCode !== undefined ? { exitCode: r.exitCode } : {}), reason: r.reason, ...(r.notRun ? { notRun: r.notRun } : {}) }
     })
     if (!allowed.length) return { outcome: 'checked', results }
     const evidence = this.ctx.artifacts.put({
@@ -182,7 +185,12 @@ export class RunChecks {
       body: {
         schema: 'check-run@1.0', runId: step.runId, repository: found.repository, workspace: found.path,
         subject: { type: 'git-head', ref: step.subject.ref, version: step.subject.version }, setup: setup!.hash,
-        checks: names.map((check) => ({ ...records.get(check)!, reason: records.get(check)!.reason.slice(0, CHECK_REASON_CHARS) })),
+        // check-run@1.0 says what did not run in the reason; the field is the store's and the answer's.
+        checks: names.map((check) => {
+          const record: CheckRecord = { ...records.get(check)! }
+          delete record.notRun
+          return { ...record, reason: record.reason.slice(0, CHECK_REASON_CHARS) }
+        }),
       },
       inputs: [...new Set([...allowed.map((a) => a.autonomy), ...(again ? [again] : [])])],
       classification: step.classification, producer: { type: 'system', ref: 'agent-workers' }, runId: step.runId,
@@ -314,7 +322,7 @@ export class RunChecks {
     const watch = new StallWatch(this.ctx, { runId, check: a.check, line: a.line, workspace: path, subject: tree, deadline: new Date(started + setup.checkTimeoutSeconds * 1000).toISOString() }, setup.checkStallSeconds)
     let ended
     try {
-      ended = await runBounded(confined.command(a.argv), env, signal ? AbortSignal.any([signal, deadline]) : deadline, true, () => watch.heard())
+      ended = await runBounded(confined.command(a.argv), env, signal ? AbortSignal.any([signal, deadline]) : deadline, { report: confined.report! }, () => watch.heard())
     } catch (error) {
       return { record: { ...base, outcome: 'error', reason: `its command (${a.line}) ${(error as Error).message.replace(/^its commands /, '')}` }, unstarted: true }
     } finally {
@@ -344,13 +352,19 @@ export class RunChecks {
     }
     if (deadline.aborted) return { record: { ...ran, outcome: 'error', reason: `its command (${a.line}) did not finish within ${setup.checkTimeoutSeconds} s; it was stopped${watch.quietFrom ? `, having printed nothing since ${watch.quietFrom}` : ''}` } }
     if (ended.code === null) return { record: { ...ran, outcome: 'error', reason: `its command (${a.line}) ended on signal ${ended.signal ?? 'unknown'}` } }
-    if (ended.code === 0) return { record: { ...ran, outcome: 'passed', reason: `its command (${a.line}) exited 0 on ${tree}` } }
+    // What it reported is not known: neither its exit nor its silence says that all its tests ran (T247).
+    if (ended.reportUnread) return { record: { ...ran, outcome: 'error', reason: `its command (${a.line}) exited with code ${ended.code} on ${tree}, but its report file could not be read (${ended.reportUnread}): what it reported is not known, an infrastructure failure, neither passed nor failed` } }
+    // Tests the command reported it could not run there: its exit says nothing of them, and the review is told (T247).
+    const skipped = browserTestsNotRun(ended.report)
+    const notRun = skipped !== undefined ? { notRun: `its browser tests${skipped ? ` (${skipped})` : ''}` } : {}
+    const unrun = skipped !== undefined ? `; it reported that its browser tests did not run${skipped ? ` (${skipped})` : ''}, so its exit says nothing of them` : ''
+    if (ended.code === 0) return { record: { ...ran, outcome: 'passed', reason: `its command (${a.line}) exited 0 on ${tree}${unrun}`, ...notRun } }
     // Only the command's own report says a nonzero exit is the host's: any other is the check's failure.
     const refused = nestedRefused(ended.report)
     if (refused !== undefined) {
       return { record: { ...ran, outcome: 'error', reason: `its command (${a.line}) exited with code ${ended.code} on ${tree} and reported a nested bubblewrap refused${refused ? ` (${refused})` : ''}: an infrastructure failure, neither passed nor failed` } }
     }
-    return { record: { ...ran, outcome: 'failed', reason: `its command (${a.line}) exited with code ${ended.code} on ${tree}` } }
+    return { record: { ...ran, outcome: 'failed', reason: `its command (${a.line}) exited with code ${ended.code} on ${tree}${unrun}`, ...notRun } }
   }
 }
 
@@ -432,13 +446,26 @@ class StallWatch {
 
 /**
  * The detail of a `nested-confinement-refused[: <detail>]` line a check's command reported on its own
- * channel (the descriptor `SYSTEM_CHECK_REPORT_FD` names, ./setup.ts); undefined when it reported none.
+ * channel (the report file `SYSTEM_CHECK_REPORT_PATH` names, ./setup.ts); undefined when it reported none.
  */
 function nestedRefused(report: string | undefined): string | undefined {
+  return reported(report, NESTED_REFUSED)
+}
+
+/**
+ * The detail of a `browser-tests-not-run[: <detail>]` line a check's command reported on its own
+ * channel: its browser tests were skipped where it ran, and why. Undefined when it reported none.
+ */
+function browserTestsNotRun(report: string | undefined): string | undefined {
+  return reported(report, BROWSER_TESTS_NOT_RUN)
+}
+
+/** The detail of the first `<word>[: <detail>]` line of `report` (at most 300 characters); undefined when none. */
+function reported(report: string | undefined, word: string): string | undefined {
   for (const line of (report ?? '').split('\n')) {
     const text = line.trim()
-    if (text === NESTED_REFUSED) return ''
-    if (text.startsWith(`${NESTED_REFUSED}:`)) return text.slice(NESTED_REFUSED.length + 1).trim().slice(0, 300)
+    if (text === word) return ''
+    if (text.startsWith(`${word}:`)) return text.slice(word.length + 1).trim().slice(0, 300)
   }
   return undefined
 }

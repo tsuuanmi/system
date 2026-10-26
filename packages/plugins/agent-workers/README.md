@@ -413,11 +413,15 @@ The **`agents` Worker source**: agent runtimes as Workers
       Each command starts through a fixed launcher (System's own Node, bound back
       read-only) that spawns it and says on fd 3 `started` once the exec itself
       succeeded, or `exec-failed <code>` (a missing `#!` interpreter among them);
-      the command may report on the descriptor `SYSTEM_CHECK_REPORT_FD` names
-      (fd 4). Exit 0 is `passed`, any other code (127 too) `failed`; a command
-      never executed, a nonzero
-      exit whose command reported `nested-confinement-refused: <detail>` there,
-      a timeout, or a signal is an `error`; after each, the tree is captured
+      the command may report in its report file, the path
+      `SYSTEM_CHECK_REPORT_PATH` names (fresh, owner-only, in the check's private
+      directory, bound writable at its own path, read once it ended; T247).
+      Exit 0 is `passed`, any other code (127 too) `failed`; a command never
+      executed, a nonzero exit whose command reported
+      `nested-confinement-refused: <detail>` there, a report file that cannot be
+      read, a timeout, or a signal is an `error`; a check that reported
+      `browser-tests-not-run: <detail>` keeps its outcome, its reason and answer
+      (`notRun`) saying what did not run; after each, the tree is captured
       again, and a check that changed it is an `error`, the later ones not run;
     - each check that ran is stored (`agent_check_runs`: run, worktree, subject,
       check, argv, setup hash; `started`, then `done` with its record) and its

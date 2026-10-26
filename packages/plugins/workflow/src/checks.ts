@@ -156,7 +156,11 @@ async function runRequiredChecks(
   for (const r of checked.results) {
     if (!required.includes(r.check)) continue
     if (r.outcome === 'error') notes.push(`its ${r.check} check did not run to an exit code on the result (${r.reason}); it stays pending`)
-    else checks[r.check] = r.outcome === 'passed'
+    else {
+      checks[r.check] = r.outcome === 'passed'
+      // A pass that did not run every test says so to the review, never read as covering them (T247).
+      if (r.notRun) notes.push(`its ${r.check} check ${r.outcome} without running ${r.notRun}: its outcome says nothing of those`)
+    }
   }
   return {
     subject: tree.subject, checks, notes, ...(checked.evidence ? { evidence: checked.evidence as ArtifactRef } : {}),

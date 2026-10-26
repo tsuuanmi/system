@@ -7,11 +7,11 @@ import WebServer from '@deepseek-ai/dsh-host-webserver'
 import type { ApprovalRequest, Verdict, VerdictResult } from '@tsuuanmi/system-approvals-core'
 import { type Browser, chromium, type Page } from 'patchright-core'
 import { describe, expect, it, onTestFinished } from 'vitest'
-import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
+import { headlessIt, headlessLaunchOptions } from '../../browser-patchright/tests/support.ts'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import * as WebUi from '../src/index.ts'
 import { lanWebServer } from '../../../gateway-core/tests/lan.ts'
-import { BEFORE_WORDS, inBrowser, noteWords, opened, shoot, wordsInSight } from './glance.ts'
+import { BEFORE_WORDS, noteWords, opened, shoot, wordsInSight } from './glance.ts'
 import { decisionsIn, descriptionOf } from './wording.ts'
 
 const RUN = {
@@ -360,9 +360,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(none).toMatchObject({ workers: { unknown: 'the Worker registry (ctx.workers) is not mounted' } })
   })
 
-  it.runIf(canRunBrowser)('renders the Workers tab in a real browser: counts, the Workers by account under its header, each card calm (what it is for, its status, what it does now) with every unknown, derived, or technical fact folded under its details (T85, T119)', async () => {
+  headlessIt('renders the Workers tab in a real browser: counts, the Workers by account under its header, each card calm (what it is for, its status, what it does now) with every unknown, derived, or technical fact folded under its details (T85, T119)', async () => {
     const { origin, token } = await boot({ roster: true })
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await pinnedPage(browser)
     await page.goto(`${origin}/ui/#token=${token}`)
@@ -411,9 +411,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await page.locator('main').innerText()).not.toContain('null')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('shows each window of an account\'s pool as "5 h · used X % · resets HH:MM" with a small bar, when it was read under the account\'s details, at its limit first, and what its reading does not give as unknown, with why (ADR-0059, T116, T171)', async () => {
+  headlessIt('shows each window of an account\'s pool as "5 h · used X % · resets HH:MM" with a small bar, when it was read under the account\'s details, at its limit first, and what its reading does not give as unknown, with why (ADR-0059, T116, T171)', async () => {
     const { origin, token } = await boot({ roster: true, pools: true })
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await pinnedPage(browser)
     await page.goto(`${origin}/ui/?view=workers#token=${token}`)
@@ -459,9 +459,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await page.locator('main').innerText()).not.toContain('null')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('shows the approval queue in a real browser and approves a batch on the subjects it shows', async () => {
+  headlessIt('shows the approval queue in a real browser and approves a batch on the subjects it shows', async () => {
     const { origin, token, approvals } = await boot({ approvals: true })
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
@@ -525,9 +525,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await page.getByRole('alert').innerText()).toContain('what it asks about changed since the page showed it')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('keeps a press on Approve when a refresh lands between pressing and releasing: the click is not lost (T84)', async () => {
+  headlessIt('keeps a press on Approve when a refresh lands between pressing and releasing: the click is not lost (T84)', async () => {
     const { origin, token, approvals } = await boot({ approvals: true })
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
@@ -551,10 +551,10 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(approvals().calls[0]![0]).toEqual([{ requestId: 'apr-3', subject: QUEUE[2]!.subject, verdict: 'approved' }])
   }, 60_000)
 
-  it.runIf(canRunBrowser)('shows a verdict that was not recorded as an alert that stays through refreshes until dismissed (INV-2, T84)', async () => {
+  headlessIt('shows a verdict that was not recorded as an alert that stays through refreshes until dismissed (INV-2, T84)', async () => {
     const { origin, token, approvals } = await boot({ approvals: true })
     approvals().failure = new Error('the store is busy')
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
@@ -584,9 +584,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     nodes: [], error: { kind: 'timeout', disposition: 'NONE', message: `scripted timeout ${i + 1}` },
   }))
 
-  it.runIf(canRunBrowser)('keeps every fact of an approval card under its Details, closed by default, and reaches every button by keyboard, those inside Details once it is opened', async () => {
+  headlessIt('keeps every fact of an approval card under its Details, closed by default, and reaches every button by keyboard, those inside Details once it is opened', async () => {
     const { origin, token } = await boot({ approvals: true })
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
@@ -645,11 +645,11 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(inside).toContain('Copy request ID')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('shows at most 5 rows in Since you last looked and in Runs needing attention, each with a Show all that reaches every row and stays through the refresh', async () => {
+  headlessIt('shows at most 5 rows in Since you last looked and in Runs needing attention, each with a Show all that reaches every row and stays through the refresh', async () => {
     const { origin, token, workflow } = await boot({ approvals: true })
     const now = Date.now()
     workflow.extra = failedRuns(now)
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     await page.goto(`${origin}/ui/#token=${token}`)
@@ -685,9 +685,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await expect.poll(() => runs.count()).toBe(5)
   }, 60_000)
 
-  it.runIf(canRunBrowser)('heads every page with its title and one short sentence at most', async () => {
+  headlessIt('heads every page with its title and one short sentence at most', async () => {
     const { origin, token } = await boot({ roster: true })
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
@@ -704,9 +704,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     }
   }, 60_000)
 
-  it.runIf(canRunBrowser)('opens on a dashboard: what waits for you, each linked to its section, the Workers at a glance, the runs that need a look with their action, and the recent runs (T97)', async () => {
+  headlessIt('opens on a dashboard: what waits for you, each linked to its section, the Workers at a glance, the runs that need a look with their action, and the recent runs (T97)', async () => {
     const { origin, token } = await boot({ approvals: true, roster: true })
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
@@ -745,9 +745,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await row.textContent()).toContain('template investigate · run run_abc')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('has one navigation on every page, the current page marked, and each page a title with a few words of what it is for (T97, T171)', async () => {
+  headlessIt('has one navigation on every page, the current page marked, and each page a title with a few words of what it is for (T97, T171)', async () => {
     const { origin, token } = await boot({ approvals: true, roster: true })
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
@@ -776,9 +776,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await page.locator('main').innerText()).not.toContain('← ')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('shows a run as a status chip and where it is, what you can do, the answer, and its steps as a timeline in words, the decisions, spec, and ids folded (T97, T171)', async () => {
+  headlessIt('shows a run as a status chip and where it is, what you can do, the answer, and its steps as a timeline in words, the decisions, spec, and ids folded (T97, T171)', async () => {
     const { origin, token, workflow } = await boot({ roster: true })
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/?run=run_abc#token=${token}`)
@@ -831,9 +831,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await expect.poll(() => workflow.calls).toEqual([['stop', 'run_abc', 'stopped from the web UI']])
   }, 60_000)
 
-  it.runIf(canRunBrowser)('says on a run\'s page what happened to it in plain words: it started from the previous attempt\'s work, a team member\'s answer was sent again once, and its result was merged (ADR-0060, ADR-0061, ADR-0062, T141)', async () => {
+  headlessIt('says on a run\'s page what happened to it in plain words: it started from the previous attempt\'s work, a team member\'s answer was sent again once, and its result was merged (ADR-0060, ADR-0061, ADR-0062, T141)', async () => {
     const { origin, token } = await boot()
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/?run=run_carried#token=${token}`)
@@ -862,10 +862,10 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await steps.nth(1).locator('.state.failed').count()).toBe(0)
   }, 60_000)
 
-  it.runIf(canRunBrowser)('says on a Worker\'s card that the operator keeps it out of teams, and folds an engine that cannot tell under its details (D58, T141)', async () => {
+  headlessIt('says on a Worker\'s card that the operator keeps it out of teams, and folds an engine that cannot tell under its details (D58, T141)', async () => {
     const { origin, token, workflow } = await boot({ roster: true })
     workflow.excluded = { entries: ['plus'], workers: ['worker:plus/frontier', 'worker:plus/standard'] }
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await pinnedPage(browser)
     await page.goto(`${origin}/ui/?view=workers#token=${token}`)
@@ -897,7 +897,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await card.innerText()).toContain('Teams\nunknown (it could not be read: the router is busy)')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('names the same free, stalled, and no-quota Workers on Home as on the Workers page, from the one capacity summary, and never offers a Worker kept out of teams for team work (T152, D58, T160)', async () => {
+  headlessIt('names the same free, stalled, and no-quota Workers on Home as on the Workers page, from the one capacity summary, and never offers a Worker kept out of teams for team work (T152, D58, T160)', async () => {
     const { origin, token, ctx, workflow } = await boot({ roster: true })
     // A Worker of no account, free with no quota tracked, which the operator excludes from teams.
     const router = (ctx as unknown as { workers: StubRouter }).workers
@@ -906,7 +906,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const roster = await (await fetch(`${origin}/ui/api/roster`, { headers: { authorization: `Bearer ${token}` } })).json() as { now: { free: { value: { items: Array<{ worker: string; name: string }> } } } }
     const free = roster.now.free.value.items
     expect(free.map((f) => f.worker)).toEqual(['worker:local/economy'])
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await pinnedPage(browser)
     await page.goto(`${origin}/ui/#token=${token}`)
@@ -938,9 +938,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await lines()).toEqual(workers)
   }, 60_000)
 
-  it.runIf(canRunBrowser)('renders runs, steps, and decisions in a real browser, and approves a waiting plan', async () => {
+  headlessIt('renders runs, steps, and decisions in a real browser, and approves a waiting plan', async () => {
     const { origin, token, workflow } = await boot()
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
@@ -962,9 +962,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
 describe('web UI: clearer at a glance (T239)', () => {
   // Home, a run waiting on its plan, and Workers, over the queue's three requests and the roster's accounts with their quota,
   // at one fixed instant in UTC: each first screen at most half the words it held before T239 (BEFORE_WORDS, glance.ts).
-  inBrowser('holds the first screen (1280×800) of Home, a run, and Workers to at most half the words each held before T239', async () => {
+  headlessIt('holds the first screen (1280×800) of Home, a run, and Workers to at most half the words each held before T239', async () => {
     const { origin, token } = await boot({ approvals: true, roster: true, pools: true })
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const words: Record<string, number> = {}
     for (const width of [1280, 360]) {
@@ -988,9 +988,9 @@ describe('web UI: clearer at a glance (T239)', () => {
 describe('web UI: the operator\'s iPhone 16 Pro (T240)', () => {
   // A run waiting on its plan, on the phone in Safari: 402×874 CSS px at 3 device pixels each, touch, and the safe areas of
   // the Dynamic Island (62 px) and the home indicator (34 px).
-  inBrowser('puts a run\'s primary action in a bar at the bottom of the phone\'s screen, in reach of a thumb and above the home indicator, the page\'s last row clear of it', async () => {
+  headlessIt('puts a run\'s primary action in a bar at the bottom of the phone\'s screen, in reach of a thumb and above the home indicator, the page\'s last row clear of it', async () => {
     const { origin, token } = await boot({ approvals: true, roster: true, pools: true })
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const context = await browser.newContext({ viewport: { width: 402, height: 874 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, timezoneId: 'UTC', locale: 'en-GB' })
     const page = await context.newPage()
@@ -1025,9 +1025,9 @@ describe('web UI: the operator\'s iPhone 16 Pro (T240)', () => {
 describe('web UI: the shared building blocks and the production states (T172)', () => {
   const GLYPHS = ['●', '▲', '■', '◆', '○']
 
-  it.runIf(canRunBrowser)('builds every page from one status chip (a word and a symbol, never colour alone), one count with its unit, one relative time with its exact time on hover and focus, one fold closed by default, and one copy button for ids', async () => {
+  headlessIt('builds every page from one status chip (a word and a symbol, never colour alone), one count with its unit, one relative time with its exact time on hover and focus, one fold closed by default, and one copy button for ids', async () => {
     const { origin, token } = await boot({ approvals: true, roster: true })
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] })
     const page = await context.newPage()
@@ -1077,9 +1077,9 @@ describe('web UI: the shared building blocks and the production states (T172)', 
     if (await page.locator('code.copied').count()) expect(await page.locator('code.copied').innerText()).toBe('run_abc')
   }, 90_000)
 
-  it.runIf(canRunBrowser)('shows a skeleton while a page first loads, still under reduced motion, and puts the keyboard on Skip to content first (T170)', async () => {
+  headlessIt('shows a skeleton while a page first loads, still under reduced motion, and puts the keyboard on Skip to content first (T170)', async () => {
     const { origin, token, approvals } = await boot({ approvals: true })
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     let release!: () => void
     approvals().held = new Promise((resolve) => { release = resolve })
@@ -1110,9 +1110,9 @@ describe('web UI: the shared building blocks and the production states (T172)', 
     expect(await page.evaluate(() => getComputedStyle(document.activeElement!).outlineStyle)).toBe('solid')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('says the data is stale, and when it was read, when a refresh fails over a page already shown, and clears it once a refresh succeeds; a page that never loaded says so with Try again (T170)', async () => {
+  headlessIt('says the data is stale, and when it was read, when a refresh fails over a page already shown, and clears it once a refresh succeeds; a page that never loaded says so with Try again (T170)', async () => {
     const { origin, token, workflow } = await boot()
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/?run=run_abc#token=${token}`)

@@ -4,7 +4,7 @@ import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { chromium, type Page } from 'patchright-core'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
-import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
+import { headlessIt, headlessLaunchOptions } from '../../browser-patchright/tests/support.ts'
 import { activeProject, readyTask } from '../../workflow/conformance/workflow.ts'
 import { type Booted, boot, OPERATOR, reviewed } from './store-backed.ts'
 import { decisionsIn, descriptionOf } from './wording.ts'
@@ -134,13 +134,13 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     for (const move of ['close', 'pause', 'resume']) expect((await call(`projects/p1/${move}`, { revision: project.revision, outcome: 'achieved' })).status, move).toBe(409)
   })
 
-  it.runIf(canRunBrowser)('founds a project from the queue in a real browser: the charter says what approving and denying do, the approval is recorded and shown with its id, and the board activates the project (T84)', async () => {
+  headlessIt('founds a project from the queue in a real browser: the charter says what approving and denying do, the approval is recorded and shown with its id, and the board activates the project (T84)', async () => {
     const booted = await boot()
     const { ctx } = booted
     const { approvalRequest } = await ctx.board.charter({ projectId: 'p1', title: 'project p1', charter: CHARTER })
     for (const title of ['first', 'second']) await ctx.board.propose({ projectId: 'p1', title, goal: `do ${title}`, acceptance: [{ id: 'a1', statement: 'it answers' }], actionClass: 'read' })
     const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
@@ -182,14 +182,14 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await outcome.innerText()).toBe('')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('says on Home and above the Reviews when the first review held for the operator expires, in a real browser (T99 D6)', async () => {
+  headlessIt('says on Home and above the Reviews when the first review held for the operator expires, in a real browser (T99 D6)', async () => {
     const booted = await boot()
     const { ctx } = booted
     await activeProject(ctx)
     const { task } = await reviewed(ctx, 'Fix the slow image build')
     expect(task.waiting).toMatchObject({ reason: 'operator-review' })
     const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
@@ -199,7 +199,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await page.getByRole('region', { name: 'Reviews' }).textContent()).toMatch(/1 review is held for you; the first expires in \d+ (h|min|days) — .+\. Unanswered by then, its task waits for input, which nothing revives\./)
   }, 60_000)
 
-  it.runIf(canRunBrowser)('shows the Board as a Kanban: a column per state with one card per task, who works on it, its run, a project filter, and the moves in each project\'s header (T97)', async () => {
+  headlessIt('shows the Board as a Kanban: a column per state with one card per task, who works on it, its run, a project filter, and the moves in each project\'s header (T97)', async () => {
     const booted = await boot()
     const { ctx, workers } = booted
     await activeProject(ctx)
@@ -218,7 +218,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     const run = await ctx.workflow.start({ template: 'solo', input: 'research', classification: 'public', task: { taskId: busy.taskId } })
     await vi.waitFor(() => expect(ctx.workflow.get(run.runId)?.nodes[0]?.state).toBe('RUNNING'), { timeout: 10_000 })
     const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
@@ -265,7 +265,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await page.locator('details', { hasText: 'Done (' }).getAttribute('open')).toBeNull()
   }, 90_000)
 
-  it.runIf(canRunBrowser)('links each pending decision on the Board to its card: a charter, and a task waiting for approval (T97)', async () => {
+  headlessIt('links each pending decision on the Board to its card: a charter, and a task waiting for approval (T97)', async () => {
     const booted = await boot()
     const { ctx } = booted
     await activeProject(ctx)
@@ -274,7 +274,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     const waiting = (await ctx.board.task(merge.taskId))!.waiting!.approvalRequest!
     const { approvalRequest } = await ctx.board.charter({ projectId: 'docs', title: 'Handbook rewrite', charter: CHARTER })
     const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
@@ -299,7 +299,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await asked.innerText()).toContain('Asked by the board, for the task "Merge the login fix" of project project p1')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('shows a done task whose accepted result waits to merge under Needs your attention, with its merge request\'s Approve and Deny on the card, and the request in words on Home (ADR-0060, T141)', async () => {
+  headlessIt('shows a done task whose accepted result waits to merge under Needs your attention, with its merge request\'s Approve and Deny on the card, and the request in words on Home (ADR-0060, T141)', async () => {
     const booted = await boot()
     const { ctx } = booted
     await activeProject(ctx)
@@ -323,7 +323,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     const card = ((await listed(booted)).tasks as Array<Record<string, any>>).find((t) => t.taskId === task.taskId)
     expect(card).toMatchObject({ state: 'done', landing: { state: 'asked', branch, base: 'main', requestId: request.requestId } })
     const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
@@ -356,13 +356,13 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request ' + request.requestId)
   }, 60_000)
 
-  it.runIf(canRunBrowser)('pauses a project in a real browser only after a confirmation that says what a pause does, and closes it after one that counts what a close cancels; Cancel moves nothing', async () => {
+  headlessIt('pauses a project in a real browser only after a confirmation that says what a pause does, and closes it after one that counts what a close cancels; Cancel moves nothing', async () => {
     const booted = await boot()
     const { ctx } = booted
     await activeProject(ctx)
     await readyTask(ctx, 'ready')
     const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
@@ -485,7 +485,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await read(task.taskId)).toMatchObject({ state: 'ready', attempts: { count: 0 } })
   })
 
-  it.runIf(canRunBrowser)('starts a ready task from its Board card in a real browser after a confirmation that says what runs on which kind of Worker; the card moves to Working, and a task naming no template is refused with why (T116)', async () => {
+  headlessIt('starts a ready task from its Board card in a real browser after a confirmation that says what runs on which kind of Worker; the card moves to Working, and a task naming no template is refused with why (T116)', async () => {
     const booted = await boot()
     const { ctx, workers } = booted
     await activeProject(ctx)
@@ -493,7 +493,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await readyTask(ctx, 'Draft the pricing page copy')
     workers.reply = () => 'hold'
     const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
@@ -539,7 +539,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await expect.poll(() => page.getByRole('heading', { name: 'Write the release notes', exact: true }).count()).toBe(1)
   }, 60_000)
 
-  it.runIf(canRunBrowser)('lays every page out at 600 px in a real browser: no page wider than the screen, the Kanban columns stacked with readable cards, and the navigation wrapping whole links (T116)', async () => {
+  headlessIt('lays every page out at 600 px in a real browser: no page wider than the screen, the Kanban columns stacked with readable cards, and the navigation wrapping whole links (T116)', async () => {
     const booted = await boot()
     const { ctx, workers } = booted
     await activeProject(ctx)
@@ -549,7 +549,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await vi.waitFor(() => expect(ctx.workflow.get(done.runId)?.status).toBe('completed'), { timeout: 30_000 })
     workers.reply = () => 'hold'
     const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage({ viewport: { width: 600, height: 900 } })
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)

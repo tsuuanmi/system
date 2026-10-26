@@ -5,7 +5,7 @@
  * every agent child runs under (ADR-0024).
  * @module @tsuuanmi/system-agent-runtimes
  */
-import { accessSync, constants, existsSync, statSync } from 'node:fs'
+import { accessSync, constants, existsSync, realpathSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -20,9 +20,23 @@ export interface Config {
   bwrap?: string
   /** Paths agent Workers must not read, besides those always hidden. */
   hide?: string[]
-  /** Paths under a hidden directory agent Workers may read (default `$DSH_HOME/system/tools`). */
+  /** Paths under a hidden directory agent Workers may read (default {@link DEFAULT_READ_ONLY}). */
   readOnly?: string[]
 }
+
+/**
+ * Bound back read-only by default: the operator-installed agent CLIs, and the managed Chrome
+ * `system init` installs (`$DSH_HOME/system/browsers`, a browser build and nothing secret), so a
+ * Worker's own browser tests find the same Chrome as the host's, read-only, under the confinement.
+ */
+export const DEFAULT_READ_ONLY: readonly string[] = ['$DSH_HOME/system/tools', '$DSH_HOME/system/browsers']
+
+/**
+ * The variable that names, inside the confinement, where the managed Chrome is bound back
+ * (`$DSH_HOME/system/browsers`, a path and nothing secret): a child's `DSH_HOME` is scrubbed, so
+ * under a custom DSH home its browser tests find it only by this (T247).
+ */
+export const BROWSERS_DIR = 'SYSTEM_BROWSERS_DIR'
 
 /**
  * Always hidden from an agent child, when present: the DSH home (vault, key, tokens, store, login
@@ -74,7 +88,7 @@ export class AgentRuntimeRegistry extends AgentRuntimes {
   static Config: z<Config> = z.object({
     bwrap: z.string().description('The bubblewrap executable that confines agent Workers\' reads (default: found on PATH, a root-owned one first)'),
     hide: z.array(z.string()).default([]).description('Paths agent Workers must not read, besides those always hidden; $DSH_HOME expands'),
-    readOnly: z.array(z.string()).default(['$DSH_HOME/system/tools']).description('Paths under a hidden directory agent Workers may read (the operator-installed agent CLIs); $DSH_HOME expands'),
+    readOnly: z.array(z.string()).default([...DEFAULT_READ_ONLY]).description('Paths under a hidden directory agent Workers may read (the operator-installed agent CLIs, the managed Chrome); $DSH_HOME expands'),
   })
 
   private readonly providers = new Map<string, AgentRuntimeProvider>()
@@ -109,11 +123,17 @@ export class AgentRuntimeRegistry extends AgentRuntimes {
     // The defaults and registered secrets that exist now; an operator entry is kept as given,
     // so a typo shows in the probe's detail instead of passing silently.
     const present = [...alwaysHidden(), ...secretPaths()].filter((path) => existsSync(path))
+    const readOnly = [...(this.config.readOnly ?? DEFAULT_READ_ONLY).map(expand), ...(bind.readOnly ?? [])]
+    // Where the managed Chrome is, when it is bound back: DSH_HOME is scrubbed from a child's environment, a custom one too (T247).
+    const browsers = join(dshHome(), 'system', 'browsers')
+    // Bound back at its real path, so named by it.
+    const named = readOnly.includes(browsers) && existsSync(browsers) ? { env: { [BROWSERS_DIR]: realpathSync(browsers) } } : {}
     return {
       bwrap: this.bwrap,
       hide: [...new Set([...present, ...(this.config.hide ?? []).map(expand)])],
-      readOnly: [...(this.config.readOnly ?? ['$DSH_HOME/system/tools']).map(expand), ...(bind.readOnly ?? [])],
+      readOnly,
       writable: [...(bind.writable ?? [])],
+      ...named,
     }
   }
 }

@@ -216,6 +216,60 @@ absence of automation leaks are properties of the real browser.
   `SYSTEM_REQUIRE_BROWSER=1`, so a missing browser **fails** the run instead of
   skipping silently.
 
+### Real-browser tests in a Worker's confinement
+
+The web UI's browser tests run a **headless** Chrome: they need Chrome, not Xvfb, and they run
+inside a Worker's confinement as on the host (T247). What makes that so:
+
+- **Chrome is found there.** Inside the confinement `HOME` is the Worker's private home (an agent's
+  shell) or the daemon's (a check), and `DSH_HOME` is scrubbed, so `findTestChrome` in
+  [`support.ts`](../../packages/plugins/browser-patchright/tests/support.ts) looks for the managed
+  build (`.dsh/system/browsers`) and the developer cache (`.cache/system-chrome`) in the account's
+  own home too (the password database's, not `HOME`). The confinement binds
+  `$DSH_HOME/system/browsers` back read-only by default (agent-runtimes `readOnly`), a browser build
+  and nothing secret, and names where in `SYSTEM_BROWSERS_DIR`, set inside the confinement, which
+  the tests look in first: under a custom `DSH_HOME` no home holds it; a system Chrome or `~/.cache/system-chrome` is on the read-only host already.
+  A Chrome elsewhere under a hidden directory needs `CHROME_PATH` and a `readOnly` entry.
+- **Chrome's own sandbox is off.** Patchright adds `--no-sandbox` unless a launch asks for
+  `chromiumSandbox`, which the headless tests never do: the confinement (its own PID namespace, no
+  network in a check, the host read-only) isolates it, and a nested setuid or user-namespace sandbox
+  is what a confinement may refuse. The product's own launches keep Chrome's sandbox
+  (`IGNORED_DEFAULT_ARGS`).
+- **`/dev/shm` and fonts are there.** `/dev/shm` is hidden as a private tmpfs, which Chrome writes
+  its shared memory to; fontconfig reads `/etc/fonts` and `/usr/share/fonts` on the read-only host.
+  Chrome's profile is a temporary directory in the private `/tmp`.
+- **Chrome writes nothing under `HOME`.** A test launches it with `headlessLaunchOptions()`: its
+  own `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, and `XDG_DATA_HOME` in the temporary directory. Chrome
+  keeps its crash database under `XDG_CONFIG_HOME` (default `~/.config`), not its profile, and where
+  `HOME` is read-only (a check's host, an agent's private home) its crash handler exits
+  (`chrome_crashpad_handler: --database is required`) and takes Chrome with it.
+- **A skip says why, loudly.** A headless browser test is declared with `headlessIt(name, fn)`:
+  where no Chrome can run it is skipped with the note `browser tests did not run: <why>`, never
+  silently. Whether one can run is decided by doing it: a Chrome found is started once, headless, on
+  a blank page; a sandbox that forbids what Chrome needs (an agent's own Bash sandbox refuses unix
+  sockets: `socket() failed: Operation not permitted`) skips the tests with that line.
+  `SYSTEM_REQUIRE_BROWSER=1` (CI) runs them anyway, so there they fail instead. The suite's reporter ([`scripts/browser-skips.ts`](../../scripts/browser-skips.ts))
+  counts those skips and prints, as the run's last line, `!!! BROWSER TESTS DID NOT RUN: <n> browser
+  tests skipped: <why>. A pass of this run says nothing of them.` In a run's check it also appends
+  `browser-tests-not-run: <detail>` to the check's report file, the path `SYSTEM_CHECK_REPORT_PATH`
+  names (a file, so it reaches the suite through pnpm's lifecycle runner, which passes only fds 0
+  to 2): the check keeps its outcome, its reason says what did not run, and the acceptance's reasons
+  tell the review that the pass does not cover those tests
+  ([a run's checks](../design/agent-runtimes.md#a-runs-checks)). A report file it cannot write
+  fails the run (`!!! THE CHECK WAS NOT TOLD: …`), so the check never reads the skips' silence as a
+  pass.
+- **vite writes two places in the worktree:** its cache (`node_modules/.vite`) and its bundled
+  configuration (`node_modules/.vite-temp`). A check sees the worktree read-only, so a repository
+  whose checks run vitest names both in `checkScratch`, or vitest fails to start (`EROFS`).
+- [`confined-browser.spec.ts`](../../packages/plugins/web-ui/tests/confined-browser.spec.ts) runs
+  one web UI browser test with vitest under a check's confinement (the agents' read confinement, the
+  host read-only, no network, a private `/tmp`, vite's two directories as check scratch), started
+  through the check's own launcher with its report file, and asserts it passed, not skipped; then, with every Chrome hidden and through the whole chain a check
+  runs (the launcher, `pnpm run test:group surfaces -- <file> --testNamePattern <name>`, the runner,
+  vitest), that it was skipped with its reason, said at the end, and reported to the check. That
+  case needs the suite run under pnpm (`npm_execpath`), as CI and a check run it. It needs real bubblewrap and a Chrome on the host, as CI
+  has; under `SYSTEM_REQUIRE_BROWSER=1` a Chrome that cannot run fails it rather than skipping it.
+
 ## Test groups
 
 `pnpm test` runs the whole suite, at most 32 test files at once, one per CPU but one on a smaller

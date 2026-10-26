@@ -158,7 +158,7 @@
   check never sees another's); the tree is captured again after it as proof. A check passes only on
   a command its launcher positively executed (the exec itself acknowledged, not a lookup on
   `PATH`); one never executed (an interpreter its `#!` names that is missing among them), or a
-  nonzero exit whose command reports (on `SYSTEM_CHECK_REPORT_FD`) a nested bubblewrap refused, is an infrastructure `error`, held for the operator, never a failure that sends the work
+  nonzero exit whose command reports (in the report file `SYSTEM_CHECK_REPORT_PATH` names) a nested bubblewrap refused, is an infrastructure `error`, held for the operator, never a failure that sends the work
   back; no probe of the host turns another check's nonzero exit into an `error`. Each check's
   outcome is stored on its subject, argv, and setup before the acceptance is decided and reused
   after a restart; one a crash interrupted, or a stop (a lost lease) killed, is an `error`, and one

@@ -4,8 +4,6 @@
  */
 import { mkdirSync } from 'node:fs'
 import type { Page } from 'patchright-core'
-import { it } from 'vitest'
-import { canRunBrowser } from '../../browser-patchright/tests/support.ts'
 
 /**
  * The words on each page's first screen (1280×800) before T239, recorded once: the UI of commit 3b535c30 (its script and
@@ -14,15 +12,6 @@ import { canRunBrowser } from '../../browser-patchright/tests/support.ts'
  * the Board is layout.spec.ts's store-backed composition. T239 holds each page to at most half of its number.
  */
 export const BEFORE_WORDS = { home: 169, run: 98, workers: 146, board: 167 } as const
-
-/**
- * A test that needs a real browser. Where none can run (Xvfb and a modern Chrome, browser-patchright's tests/support.ts)
- * it is reported as skipped with why, never as passed; CI sets SYSTEM_REQUIRE_BROWSER=1, which fails instead.
- */
-export function inBrowser(name: string, test: () => Promise<void>, timeout?: number): void {
-  if (canRunBrowser) it(name, test, timeout)
-  else it.skip(`${name} [NOT RUN: no browser here; install Xvfb and a modern Chrome, or set CHROME_PATH]`, test)
-}
 
 /** Open a page of the UI and wait until it is read whole once (the header says when it was updated). */
 export async function opened(page: Page, url: string): Promise<void> {

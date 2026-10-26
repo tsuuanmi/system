@@ -564,7 +564,7 @@ worktreeSetup:
       lint: corepack pnpm lint
     checkTimeoutSeconds: 1800             # each check's deadline (1 to 3600)
     checkStallSeconds: 300                # no output this long: told as stalled (T235)
-    checkScratch: [node_modules/.vite]    # git-ignored paths a check may write: fresh, private, discarded
+    checkScratch: [node_modules/.vite, node_modules/.vite-temp]    # git-ignored paths a check may write (vite's cache, its bundled config): fresh, private, discarded
     dependencyFiles: [package.json, pnpm-lock.yaml]   # a result changing one sets the worktree up again (default: pnpm's)
 ```
 
@@ -603,14 +603,29 @@ worktreeSetup:
   missing is not started, while a command that runs and exits 127 by itself is `failed`. One whose
   launcher said nothing (bubblewrap refused, the launcher not run) or `exec-failed` is an `error`,
   an infrastructure failure, never a failed check; nothing is kept of it, so the next ask runs it.
-- **A nested confinement refused, as the command reports it:** a check's command is given a second
-  channel, the descriptor `SYSTEM_CHECK_REPORT_FD` names (fd 4). A test suite that tests
+- **A nested confinement refused, as the command reports it:** a check's command is given a report
+  file of its own, the path `SYSTEM_CHECK_REPORT_PATH` names (T247): a fresh, empty, owner-only
+  file in the check's private directory, bound writable at the same path (a mount point inside, so
+  the command can write it but never replace it), set by bubblewrap over the command's environment,
+  and read, its first 4096 bytes, once the command ended. A file, not a descriptor: every process the
+  command starts inherits the name, through any runner between them (pnpm's lifecycle runner passes
+  only fds 0 to 2), and opens it again; a pipe's `/proc/<pid>/fd` name cannot be reopened. A report
+  file that cannot be read after the command makes the check an `error` (what it reported is not
+  known). A test suite that tests
   confinement and finds its nested bubblewrap refused fails for the host, not for the code: it
-  writes a line `nested-confinement-refused: <detail>` there, and its nonzero exit is an `error`
+  appends a line `nested-confinement-refused: <detail>` there, and its nonzero exit is an `error`
   naming the refusal (exit 0 is still `passed`), so a result is held for the operator instead of
   sent back as another attempt. Nothing else makes a nonzero exit an `error`: no probe of the host
   stands for a command's own cause, so a lint or test that fails on defective code is `failed`
   wherever it ran. A false report can hold a failure, never pass it.
+- **Tests that did not run, as the command reports them** (T247): a line
+  `browser-tests-not-run: <detail>` in the same file says its browser tests were skipped where it
+  ran (no usable browser in the confinement). The check keeps its outcome (`passed` or `failed`);
+  its reason says what did not run, its answer carries it as `notRun`, and the engine adds to the
+  acceptance's reasons that the check's outcome says nothing of those tests, so a review never reads
+  their absence as a pass. The repository's suite writes the line from its reporter, and fails the
+  run when it cannot
+  ([testing](../engineering/testing.md#real-browser-tests-in-a-workers-confinement)).
 - **What counts:** exit 0 is `passed` and any other code `failed`, only when the command said it
   started and the tree, captured again after the command, is still the subject (the read-only view
   makes this the proof, not the guard); a tree that changed anyway is an `error`, and the later
@@ -655,7 +670,8 @@ worktreeSetup:
   state is never readable to an agent. `ctx.agentRuntimes.confinement()` names what to hide
   (the DSH home, the session's runtime directory, the temporary directories, credential
   stores, every path registered with `registerSecretPath`, and operator paths) and what to
-  bind back (the operator's tools read-only; the Worker's own home and its workspace as its
+  bind back (the operator's tools and the managed Chrome, `$DSH_HOME/system/tools` and
+  `$DSH_HOME/system/browsers`, read-only; the Worker's own home and its workspace as its
   sandbox allows; never a bind that holds a hidden path). Every runtime starts its agent under
   bubblewrap with that confinement (`confinedCommand`: its own PID namespace and session,
   `--die-with-parent`): Codex through an owner-only launcher (`writeLauncher`), ACP agents
@@ -675,6 +691,21 @@ worktreeSetup:
   Codex also runs with the terminal devices hidden ([Codex's gate](#codexs-gate)). Each probe
   reports `readsConfined`, proven positively on the host by `proveConfinement`, and the `agents`
   source checks it again before each run starts.
+- **A browser inside the confinement** (T247). A Worker's own browser tests (the web UI's, headless)
+  run on the same Chrome as the host's: a system Chrome or the developer cache on the host, which
+  the confinement leaves readable, or the managed build, bound back read-only by default and named
+  inside by `SYSTEM_BROWSERS_DIR` (the confinement's `env`, set with bubblewrap's `--setenv`: a
+  child's `DSH_HOME` is scrubbed, so under a custom DSH home nothing else says where it is). Chrome
+  starts without its own setuid or user-namespace sandbox (Patchright's `--no-sandbox`, the tests'
+  launches never ask for `chromiumSandbox`): the confinement already isolates it, in its own PID
+  namespace, and a check's has no network; a nested sandbox is what a host may refuse inside
+  bubblewrap. `/dev/shm` is hidden as a private tmpfs, where Chrome keeps its shared memory, and the
+  fonts are on the read-only host; the tests give Chrome its own XDG directories in the private
+  `/tmp`, since its crash handler cannot start under a read-only `HOME`. Where no Chrome can run
+  (none found, or one that does not start there), the tests are skipped, never silently:
+  each skip names why, the suite says so at its end, and a check reports it
+  ([a run's checks](#a-runs-checks)). How the tests find Chrome there:
+  [testing](../engineering/testing.md#real-browser-tests-in-a-workers-confinement).
 - **Egress** ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)). The
   agent runs here, but its model is remote. So the `agents` source checks each prompt with
   `ctx.egress` (Worker class `agent`) before the agent starts, keeps the decision id on the run,

@@ -2,13 +2,25 @@ import { execFileSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { affected, filters, graph, GROUPS, groupOf, packages } from './test-groups.ts'
+import { affected, filters, graph, GROUPS, groupOf, packages, splitArgs } from './test-groups.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const all = packages()
 const deps = graph(all)
 const names = Object.keys(GROUPS)
 const of = (...paths: string[]) => affected(paths, all, deps)
+
+describe('the runner\'s arguments (T247)', () => {
+  it('takes vitest\'s arguments after `--`, and for `group` also where a runner dropped the `--`: the names end at the first option or path', () => {
+    expect(splitArgs(['group', 'surfaces', '--', 'a/b.spec.ts', '-t', 'x'])).toEqual({ command: 'group', rest: ['surfaces'], extra: ['a/b.spec.ts', '-t', 'x'] })
+    expect(splitArgs(['group', 'surfaces', 'libs', 'a/b.spec.ts', '--testNamePattern', 'x'])).toEqual({ command: 'group', rest: ['surfaces', 'libs'], extra: ['a/b.spec.ts', '--testNamePattern', 'x'] })
+    expect(splitArgs(['group', 'surfaces', '--reporter=dot'])).toEqual({ command: 'group', rest: ['surfaces'], extra: ['--reporter=dot'] })
+    // A misspelt group is still a name, and still refused.
+    expect(splitArgs(['group', 'survaces'])).toEqual({ command: 'group', rest: ['survaces'], extra: [] })
+    // `affected` keeps its own options: only `--` gives vitest anything.
+    expect(splitArgs(['affected', '--base', 'main'])).toEqual({ command: 'affected', rest: ['--base', 'main'], extra: [] })
+  })
+})
 
 describe('test groups (docs/engineering/testing.md#test-groups)', () => {
   it('puts every workspace package in exactly one group, and every test file of the suite in exactly one group\'s filters', () => {

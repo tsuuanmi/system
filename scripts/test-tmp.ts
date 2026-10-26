@@ -56,14 +56,26 @@ export function stopUnder(parent: string, proc = '/proc'): number[] {
   return stopped
 }
 
-/** Remove the run parents under `root` whose run is gone; only `system-test-<pid>-…` names, never anything else. */
-export function sweepStale(root: string, isAlive: (pid: number) => boolean = alive, stop: (parent: string) => unknown = stopUnder): string[] {
+/**
+ * Remove the run parents under `root` whose run is gone; only `system-test-<pid>-…` names, never
+ * anything else. One that cannot be removed is left: in a nested confinement (a check's suite that
+ * runs vitest under bubblewrap, T247) the outer run's parent shows as the mount points of what it
+ * binds in, and its run, in another PID namespace, looks gone.
+ */
+export function sweepStale(
+  root: string, isAlive: (pid: number) => boolean = alive, stop: (parent: string) => unknown = stopUnder,
+  remove: (parent: string) => void = (parent) => rmSync(parent, { recursive: true, force: true }),
+): string[] {
   const removed: string[] = []
   for (const name of readdirSync(root)) {
     const pid = Number(new RegExp(`^${PREFIX}(\\d+)-`).exec(name)?.[1])
     if (!pid || isAlive(pid)) continue
     stop(join(root, name))
-    rmSync(join(root, name), { recursive: true, force: true })
+    try {
+      remove(join(root, name))
+    } catch {
+      continue
+    }
     removed.push(name)
   }
   return removed

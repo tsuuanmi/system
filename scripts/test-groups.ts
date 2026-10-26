@@ -226,10 +226,22 @@ function vitest(filterList: string[], extra: string[]): number {
   return spawnSync(process.execPath, [join(root, 'node_modules', 'vitest', 'vitest.mjs'), 'run', ...filterList, ...extra], { cwd: root, stdio: 'inherit' }).status ?? 1
 }
 
-function main(argv: string[]): number {
+/**
+ * The command, its own arguments, and vitest's (after `--`). A runner may drop the `--` (a package
+ * runner's `run <script> -- …`): for `group`, the group names then end at the first argument that is
+ * an option or a path (none is a group's name), and the rest are vitest's.
+ */
+export function splitArgs(argv: readonly string[]): { command: string | undefined; rest: string[]; extra: string[] } {
   const split = argv.indexOf('--')
-  const [command, ...rest] = split >= 0 ? argv.slice(0, split) : argv
-  const extra = split >= 0 ? argv.slice(split + 1) : []
+  if (split >= 0) return { command: argv[0], rest: argv.slice(1, split), extra: argv.slice(split + 1) }
+  const [command, ...rest] = argv
+  if (command !== 'group') return { command, rest, extra: [] }
+  const end = rest.findIndex((arg) => arg.startsWith('-') || /[/.]/.test(arg))
+  return end < 0 ? { command, rest, extra: [] } : { command, rest: rest.slice(0, end), extra: rest.slice(end) }
+}
+
+function main(argv: string[]): number {
+  const { command, rest, extra } = splitArgs(argv)
   const all = packages()
   if (command === 'group') {
     if (!rest.length) {

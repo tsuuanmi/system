@@ -687,6 +687,8 @@ export interface Confined {
   dispose(): void
   /** The confinement itself. */
   confinement: Confinement
+  /** A check's report file ({@link REPORT_PATH}), at the same path on the host and inside: `check` mode only. */
+  report?: string
 }
 
 /**
@@ -708,8 +710,8 @@ const LAUNCHED = 'system-check'
  * exec failed (no such command, an interpreter its `#!` names that is not there, not executable).
  * Node learns that from the exec itself (libuv's close-on-exec handshake), so an exec failure is
  * never mistaken for the command's own exit code, 127 or another. The command gets its fd 3 as
- * `/dev/null`, never the channel, and fd 4 ({@link REPORT_FD}) as it is; the launcher ends with the
- * command's exit code (128 + the signal when a signal ended it).
+ * `/dev/null`, never the channel; it reports on its report file ({@link REPORT_PATH}). The launcher
+ * ends with the command's exit code (128 + the signal when a signal ended it).
  */
 const LAUNCHER = [
   "'use strict'",
@@ -718,7 +720,7 @@ const LAUNCHER = [
   "const { signals } = require('node:os').constants",
   "const argv = process.argv.slice(process.argv.indexOf('system-check') + 1)",
   'const say = (text) => { try { writeSync(3, text) } catch {} }',
-  "const child = spawn(argv[0], argv.slice(1), { stdio: [0, 1, 2, openSync('/dev/null', 'r'), 4] })",
+  "const child = spawn(argv[0], argv.slice(1), { stdio: [0, 1, 2, openSync('/dev/null', 'r')] })",
   'let spawned = false',
   "child.once('spawn', () => { spawned = true; say('started') })",
   "child.on('error', (error) => {",
@@ -732,15 +734,19 @@ const LAUNCHER = [
 // The launcher names its marker and its start word as literals (no value is spliced into code); they must be these.
 if (!LAUNCHER.includes(`indexOf('${LAUNCHED}')`) || !LAUNCHER.includes(`say('${STARTED}')`)) throw new Error('agent-workers: the check launcher and its constants disagree')
 
+/** Node's arguments that start `argv` through the check {@link LAUNCHER}, as {@link confineIn} runs a check's command. */
+export const launcherArgs = (argv: readonly string[]): string[] => ['-e', LAUNCHER, '--', LAUNCHED, ...argv]
+
 /**
  * The confinement a repository's commands run in, in its worktree `worktree` (its real path): the
  * host read-only but the setup's private views, no network. A setup (`mode` `setup`) can write the
  * worktree. A check (`check`) sees it read-only, so it cannot change what it checks even for a while
  * (INV-5): only the setup's `checkScratch` paths are writable to it, each a fresh private directory
- * (git-ignored, so never in the subject), and its private `/tmp`; and each check's command starts
- * through {@link LAUNCHER} (System's own Node, bound back read-only), so the caller can tell a command
- * the kernel executed from one that never started. A check's confinement is made for one command:
- * its scratch directories are its own, and {@link Confined.dispose} discards them. The views are
+ * (git-ignored, so never in the subject), its private `/tmp`, and its report file
+ * ({@link reportChannel}); and each check's command starts through {@link LAUNCHER} (System's own
+ * Node, bound back read-only), so the caller can tell a command the kernel executed from one that
+ * never started. A check's confinement is made for one command: its scratch directories and its
+ * report file are its own, and {@link Confined.dispose} discards them. The views are
  * checked (never a path hidden from agents, nor over the worktree), the confinement proven, and the
  * views made in a fresh owner-only directory under `runDir`. Throws, naming the cause, when any of it
  * cannot be: nothing has run then.
@@ -792,12 +798,19 @@ export async function confineIn(ctx: Context, setup: Setup, worktree: string, ru
       return { source: dir, path, writable: true }
     })
     const options = { readOnly: true, network: false, chdir: worktree, views: [...views, ...scratchViews] } as const
+    if (mode === 'setup') {
+      return {
+        command: (argv) => confinedCommand(argv[0]!, argv.slice(1), confinement, options),
+        dispose: () => rmSync(scratch, { recursive: true, force: true }),
+        confinement,
+      }
+    }
+    const channel = reportChannel(scratch, confinement)
     return {
-      command: (argv) => mode === 'check'
-        ? confinedCommand(node, ['-e', LAUNCHER, '--', LAUNCHED, ...argv], confinement, options)
-        : confinedCommand(argv[0]!, argv.slice(1), confinement, options),
+      command: (argv) => confinedCommand(node, launcherArgs(argv), channel.confinement, { ...options, views: [...options.views, channel.view] }),
       dispose: () => rmSync(scratch, { recursive: true, force: true }),
       confinement,
+      report: channel.path,
     }
   } catch (error) {
     rmSync(scratch, { recursive: true, force: true })
@@ -882,21 +895,76 @@ export interface Ended {
   code: number | null; signal: string | null; output: string; bytes: number; sha256: string; started?: boolean
   /** `signal` killed it before it ended by itself: what it would have come to is not known. */
   stopped?: true
-  /** What it reported on {@link REPORT_FD} (a check's command; the first {@link REPORT_BYTES} bytes). */
+  /** What it wrote to its report file (a check's command; the first {@link REPORT_BYTES} bytes), when it wrote anything. */
   report?: string
+  /** Why its report file could not be read after it ended (a check's command): what it reported is not known. */
+  reportUnread?: string
 }
 
 /**
- * The descriptor a check's command reports an infrastructure failure on, named to it by
- * `SYSTEM_CHECK_REPORT_FD`: a line `nested-confinement-refused: <detail>` ({@link NESTED_REFUSED}) says
- * a nested bubblewrap it needed was refused, so its nonzero exit is the host's, not the check's
- * (./checks.ts). Writing it never makes a check pass.
+ * The variable that names a check's report file to its command, and so to every process it starts,
+ * whatever runner lies between them (pnpm's lifecycle runner passes only fds 0 to 2, so no descriptor
+ * would reach a suite it starts, T247): a line `nested-confinement-refused: <detail>`
+ * ({@link NESTED_REFUSED}) says a nested bubblewrap it needed was refused, so its nonzero exit is the
+ * host's, not the check's (./checks.ts); a line `browser-tests-not-run: <detail>`
+ * ({@link BROWSER_TESTS_NOT_RUN}) says what of it did not run. Writing either never makes a check pass.
  */
-export const REPORT_FD = 4
-/** The report of a nested bubblewrap refused inside a check's confinement ({@link REPORT_FD}). */
+export const REPORT_PATH = 'SYSTEM_CHECK_REPORT_PATH'
+/** The report of a nested bubblewrap refused inside a check's confinement ({@link REPORT_PATH}). */
 export const NESTED_REFUSED = 'nested-confinement-refused'
+/**
+ * The report of tests a check's command skipped because they could not run where it ran
+ * ({@link REPORT_PATH}): a line `browser-tests-not-run: <detail>` says its browser tests did not run
+ * (no usable browser in the confinement), so its exit says nothing of them and a review is told so
+ * (T247). It never changes the outcome.
+ */
+export const BROWSER_TESTS_NOT_RUN = 'browser-tests-not-run'
 /** How much of a check's report is kept. */
 const REPORT_BYTES = 4096
+
+/**
+ * A check's report channel (T247): a fresh, empty, owner-only regular file `report` in `dir` (the
+ * check's own private directory under the run's), bound writable at its own path (beside its scratch
+ * paths and its private `/tmp`, the only place it writes), and named in {@link REPORT_PATH}, which bubblewrap sets
+ * inside over whatever the command's environment says. A file, not a descriptor: any process the
+ * command starts opens it by its name, through any runner (a descriptor's `/proc/<pid>/fd` name does
+ * not reopen a pipe's socket). Being a mount point inside, it cannot be replaced there, only written;
+ * the host reads it once the command ended ({@link runBounded}).
+ */
+export function reportChannel(dir: string, confinement: Confinement): { path: string; view: { source: string; path: string; writable: true }; confinement: Confinement } {
+  const path = join(dir, 'report')
+  closeSync(openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600))
+  return { path, view: { source: path, path, writable: true }, confinement: { ...confinement, env: { ...confinement.env, [REPORT_PATH]: path } } }
+}
+
+/**
+ * The first {@link REPORT_BYTES} bytes of a check's report file, read as itself (O_NOFOLLOW, a
+ * plain file, never blocking): `report` when it holds anything, `reportUnread` when it cannot be read.
+ */
+function readReport(path: string): Pick<Ended, 'report' | 'reportUnread'> {
+  let fd: number
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  } catch (error) {
+    return { reportUnread: `${path}: ${(error as NodeJS.ErrnoException).code ?? (error as Error).message}` }
+  }
+  try {
+    if (!fstatSync(fd).isFile()) return { reportUnread: `${path} is not a plain file` }
+    const buffer = Buffer.alloc(REPORT_BYTES)
+    let read = 0
+    while (read < REPORT_BYTES) {
+      const n = readSync(fd, buffer, read, REPORT_BYTES - read, null)
+      if (!n) break
+      read += n
+    }
+    const report = buffer.subarray(0, read).toString('utf8')
+    return report ? { report } : {}
+  } catch (error) {
+    return { reportUnread: `${path}: ${(error as NodeJS.ErrnoException).code ?? (error as Error).message}` }
+  } finally {
+    closeSync(fd)
+  }
+}
 
 /**
  * Whether a check's command was executed, from what its launcher said on fd 3: not when it said
@@ -910,16 +978,17 @@ function launched(said: string): boolean {
 
 /**
  * Run a confined command to its end, or until `signal` stops it (SIGKILL; bubblewrap takes its
- * namespace with it). `acknowledged`: a check's launcher says on fd 3 whether its command was executed
- * ({@link confineIn}), and its end says whether it was ({@link launched}); it may report on {@link REPORT_FD}.
+ * namespace with it). `check`: a check's command ({@link confineIn} in `check` mode), whose launcher
+ * says on fd 3 whether its command was executed, and its end says whether it was ({@link launched});
+ * what it wrote to its report file `check.report` is read once it ended.
  * `onOutput` is called on each piece the command prints (a check's stall watch, ./checks.ts).
  */
-export function runBounded(command: { command: string; args: string[] }, env: Record<string, string>, signal: AbortSignal, acknowledged = false, onOutput?: () => void): Promise<Ended> {
+export function runBounded(command: { command: string; args: string[] }, env: Record<string, string>, signal: AbortSignal, check?: { report: string }, onOutput?: () => void): Promise<Ended> {
+  const acknowledged = check !== undefined
   return new Promise((resolvePromise, reject) => {
     let output = ''
     let bytes = 0
     let said = ''
-    let report = ''
     let stopped = false
     const hash = createHash('sha256')
     const keep = (chunk: Buffer): void => {
@@ -928,8 +997,8 @@ export function runBounded(command: { command: string; args: string[] }, env: Re
       hash.update(chunk)
       output = (output + chunk.toString('utf8')).slice(-64 * 1024)
     }
-    const stdio: StdioOptions = acknowledged ? ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe']
-    const child = spawn(command.command, command.args, { env: acknowledged ? { ...env, SYSTEM_CHECK_REPORT_FD: String(REPORT_FD) } : env, stdio })
+    const stdio: StdioOptions = acknowledged ? ['ignore', 'pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe']
+    const child = spawn(command.command, command.args, { env, stdio })
     const stop = (): void => {
       // Only a command still running is stopped by it: one that already exited ended by itself.
       if (child.exitCode === null && child.signalCode === null) stopped = true
@@ -939,15 +1008,8 @@ export function runBounded(command: { command: string; args: string[] }, env: Re
     else signal.addEventListener('abort', stop, { once: true })
     child.stdout!.on('data', keep)
     child.stderr!.on('data', keep)
-    // What the command says on its own channel: only the first bytes are kept.
-    if (acknowledged) {
-      const acknowledgement = child.stdio[3] as Readable
-      const reported = child.stdio[REPORT_FD] as Readable
-      acknowledgement.on('data', (chunk: Buffer) => void (said = (said + chunk.toString('utf8')).slice(0, 64)))
-      reported.on('data', (chunk: Buffer) => {
-        if (report.length < REPORT_BYTES) report = (report + chunk.toString('utf8')).slice(0, REPORT_BYTES)
-      })
-    }
+    // What the launcher says on its own channel: only the first bytes are kept.
+    if (acknowledged) (child.stdio[3] as Readable).on('data', (chunk: Buffer) => void (said = (said + chunk.toString('utf8')).slice(0, 64)))
     child.once('error', (error) => {
       signal.removeEventListener('abort', stop)
       reject(new Refusal(`its commands cannot start: ${(error as NodeJS.ErrnoException).code === 'ENOENT' ? `${command.command} is not installed` : error.message}`))
@@ -956,7 +1018,7 @@ export function runBounded(command: { command: string; args: string[] }, env: Re
       signal.removeEventListener('abort', stop)
       resolvePromise({
         code, signal: killed, output, bytes, sha256: hash.digest('hex'),
-        ...(acknowledged ? { started: launched(said), ...(report ? { report } : {}) } : {}), ...(stopped ? { stopped: true as const } : {}),
+        ...(check ? { started: launched(said), ...readReport(check.report) } : {}), ...(stopped ? { stopped: true as const } : {}),
       })
     })
   })

@@ -427,10 +427,10 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
     it('tells a command the confinement did not start, and a nested bubblewrap the command reports refused, from a failed check: each an error; any other nonzero exit stays failed (INV-2)', async () => {
       const repo = repository()
       commit(repo, {
-        // A suite of confinement tests whose nested bubblewrap the host refuses: it says so on its own channel.
+        // A suite of confinement tests whose nested bubblewrap the host refuses: it says so in its report file.
         'nested.mjs': [
-          "import { writeSync } from 'node:fs'",
-          "writeSync(Number(process.env.SYSTEM_CHECK_REPORT_FD), 'nested-confinement-refused: bwrap: setting up uid map: Permission denied\\n')",
+          "import { appendFileSync } from 'node:fs'",
+          "appendFileSync(process.env.SYSTEM_CHECK_REPORT_PATH, 'nested-confinement-refused: bwrap: setting up uid map: Permission denied\\n')",
           "console.error('confinement: bwrap could not start')",
           'process.exit(1)',
           '',
@@ -452,6 +452,72 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
           { check: 'lint', outcome: 'failed', exitCode: 3, reason: expect.stringContaining(`(${LINT}) exited with code 3`) },
         ],
       })
+    })
+
+    it('keeps a suite\'s outcome when it reports its browser tests did not run, and says so in its reason and answer, so a review never reads the pass as covering them (T247)', async () => {
+      const repo = repository()
+      commit(repo, {
+        // A suite whose browser tests were skipped where it ran (no usable Chrome): it passes, and says what did not run.
+        'skipped.mjs': [
+          "import { appendFileSync } from 'node:fs'",
+          "appendFileSync(process.env.SYSTEM_CHECK_REPORT_PATH, 'browser-tests-not-run: 3 browser tests skipped: no usable Chrome\\n')",
+          "console.log('tests: 40 passed, 3 skipped')",
+          '',
+        ].join('\n'),
+      })
+      const skipped = 'node skipped.mjs'
+      const { ctx, write, check } = await boot(repo, { checks: { tests: skipped, lint: LINT } }, [...SETUP, skipped, LINT])
+      const at = await write('run_unrun')
+      const checked = await check('run_unrun', at)
+      expect(checked).toMatchObject({
+        outcome: 'checked',
+        results: [
+          {
+            check: 'tests', outcome: 'passed', exitCode: 0, notRun: 'its browser tests (3 browser tests skipped: no usable Chrome)',
+            reason: expect.stringMatching(/exited 0 on git:\S+; it reported that its browser tests did not run \(3 browser tests skipped: no usable Chrome\), so its exit says nothing of them$/),
+          },
+          { check: 'lint', outcome: 'passed', exitCode: 0 },
+        ],
+      })
+      // A suite that reports nothing has no such word.
+      if (checked?.outcome !== 'checked') throw new Error('not checked')
+      expect(checked.results[1]).not.toHaveProperty('notRun')
+      // The evidence keeps to check-run@1.0: what did not run is in its reason.
+      const evidence = ctx.artifacts.get(checked.evidence as `sha256:${string}`)!
+      new SchemaRegistry().assert('check-run@1.0', evidence.body)
+      expect(evidenceOf(ctx, checked).checks[0]!.reason).toContain('its browser tests did not run (3 browser tests skipped: no usable Chrome)')
+      // Asked again, the stored record answers the same.
+      expect(await check('run_unrun', at, ['tests'])).toMatchObject({ results: [{ check: 'tests', outcome: 'passed', notRun: 'its browser tests (3 browser tests skipped: no usable Chrome)' }] })
+    })
+
+    it('hears the report of a suite started through a runner that passes only fds 0 to 2 (pnpm\'s lifecycle runner): its report file, by the name SYSTEM_CHECK_REPORT_PATH gives it, which the check cannot replace, only write (T247)', async () => {
+      const repo = repository()
+      commit(repo, {
+        // The runner: it starts the suite with stdio 'inherit', passing it fds 0 to 2 only.
+        'runner.mjs': "import { spawnSync } from 'node:child_process'\nprocess.exit(spawnSync(process.execPath, ['suite.mjs'], { stdio: 'inherit' }).status ?? 1)\n",
+        'suite.mjs': [
+          "import { appendFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'",
+          'const path = process.env.SYSTEM_CHECK_REPORT_PATH',
+          // A mount point inside: neither removed nor renamed over.
+          "for (const replace of [() => unlinkSync(path), () => { writeFileSync(path + '.new', ''); renameSync(path + '.new', path) }]) {",
+          "  try { replace(); console.log('replaced') } catch (error) { console.log('kept: ' + error.code) }",
+          '}',
+          "appendFileSync(path, 'browser-tests-not-run: 2 browser tests skipped: no usable Chrome\\n')",
+          "console.log('tests: 5 passed, 2 skipped')",
+          '',
+        ].join('\n'),
+      })
+      const runner = 'node runner.mjs'
+      const { ctx, write, check } = await boot(repo, { checks: { tests: runner } }, [...SETUP, runner])
+      const at = await write('run_runner')
+      const checked = await check('run_runner', at, ['tests'])
+      expect(checked).toMatchObject({
+        outcome: 'checked',
+        results: [{ check: 'tests', outcome: 'passed', exitCode: 0, notRun: 'its browser tests (2 browser tests skipped: no usable Chrome)' }],
+      })
+      const { tail } = evidenceOf(ctx, checked).checks[0]!.output!
+      expect(tail).not.toContain('replaced')
+      expect(tail.match(/kept: E[A-Z]+/g), tail).toHaveLength(2)
     })
 
     it('tells an executable whose #! interpreter is missing, found on its path but never executed, from a command that exits 127 by itself: the first an error, the second failed (INV-2)', async () => {

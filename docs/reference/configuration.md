@@ -30,7 +30,7 @@
 |---|---|---|---|
 | `bwrap` | string |  | The bubblewrap executable that confines agent Workers' reads (default: found on PATH, a root-owned one first) |
 | `hide` | string[] | `[]` | Paths agent Workers must not read, besides those always hidden; $DSH_HOME expands |
-| `readOnly` | string[] | `["$DSH_HOME/system/tools"]` | Paths under a hidden directory agent Workers may read (the operator-installed agent CLIs); $DSH_HOME expands |
+| `readOnly` | string[] | `["$DSH_HOME/system/tools","$DSH_HOME/system/browsers"]` | Paths under a hidden directory agent Workers may read (the operator-installed agent CLIs, the managed Chrome); $DSH_HOME expands |
 
 ## `agent-workers`
 

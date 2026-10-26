@@ -3145,7 +3145,7 @@ every such result waits for you in **Reviews** with `tests, lint` pending.
              lint: corepack pnpm lint
            checkTimeoutSeconds: 1800    # each check's deadline; at most 3600
            checkStallSeconds: 300       # no output this long: told as stalled in explain and the web UI
-           checkScratch: [node_modules/.vite]   # vitest's cache: the rest of the worktree is read-only to a check
+           checkScratch: [node_modules/.vite, node_modules/.vite-temp]   # vite's cache and bundled config: the rest of the worktree is read-only to a check
            # dependencyFiles: [package.json, pnpm-lock.yaml, pnpm-workspace.yaml, .npmrc, .pnpmfile.cjs]   # the default
    ```
 
@@ -3183,7 +3183,7 @@ What a check that did not pass means:
 | `the run's own tests check failed …`, its output naming `EROFS` (a read-only file system) | the command writes into the worktree, which a check sees read-only: name the git-ignored path it writes (a cache under `node_modules/`) in `checkScratch` |
 | `… its check scratch … is not ignored by git, or holds a tracked file` | a scratch path must be ignored by git: add it to `.gitignore`, or name another |
 | `… was not started by the confinement (an infrastructure failure …)` | bubblewrap refused, or the command is not installed for the daemon: the result waits for you; fix the host, then accept by hand |
-| `… and reported a nested bubblewrap refused (…)` | the check's own suite reported (on `SYSTEM_CHECK_REPORT_FD`) that the checks' confinement refused the nested bubblewrap it needed: the result waits for you. A suite that does not report it has the refusal judged a failed check |
+| `… and reported a nested bubblewrap refused (…)` | the check's own suite reported (in its report file, `SYSTEM_CHECK_REPORT_PATH`) that the checks' confinement refused the nested bubblewrap it needed: the result waits for you. A suite that does not report it has the refusal judged a failed check |
 | `… recorded no end (the daemon stopped meanwhile) …` or `… was stopped before its end (a stop or a lost lease of the run) …` | a restart or a stop interrupted that check; it is not run again on this tree: decide by hand, or the next attempt runs it on its own tree |
 | `… left the worktree as git:…, no longer git:…` | the tree changed while the check ran, though it is read-only to the check: something else wrote it; check the worktree |
 | `… did not run: source agents refused (busy) …` or `(moved)` | an agent run of the workflow run had not ended, or the tree changed after the last step: the result waits for you; check its worktree |

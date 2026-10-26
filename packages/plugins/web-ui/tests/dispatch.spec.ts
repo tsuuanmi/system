@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { PoolConfig } from '@tsuuanmi/system-resources-core'
 import { chromium } from 'patchright-core'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
+import { headlessIt, headlessLaunchOptions } from '../../browser-patchright/tests/support.ts'
 import { worker } from '../../../workers-core/conformance/workers.ts'
 import { activeProject, readyTask } from '../../workflow/conformance/workflow.ts'
 import { boot, OPERATOR } from './store-backed.ts'
@@ -45,7 +45,7 @@ describe('web UI: the starts System proposes, on Home (ADR-0064)', () => {
     expect((await call('dispatch', {})).status).toBe(405)
   })
 
-  it.runIf(canRunBrowser)('lists each proposed start under Starts awaiting approval with its Worker and quota line, why that Worker folded, starts it on Approve, and says when dispatch is paused', async () => {
+  headlessIt('lists each proposed start under Starts awaiting approval with its Worker and quota line, why that Worker folded, starts it on Approve, and says when dispatch is paused', async () => {
     const { ctx, workers } = await boot({ pools: POOLS })
     await activeProject(ctx)
     await freeWorker(ctx, workers, 12)
@@ -53,7 +53,7 @@ describe('web UI: the starts System proposes, on Home (ADR-0064)', () => {
     const task = await readyTask(ctx, 'Write the release notes', { template: 'solo' })
     await ctx.workflow.sweepDispatch()
     const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
-    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)

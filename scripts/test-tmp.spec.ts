@@ -19,6 +19,14 @@ describe('test temporary parents', () => {
       // The gone run's leftover processes are stopped with its parent.
       expect(stopped).toEqual([join(root, 'system-test-111-aaa')])
       expect(['system-test-111-aaa', 'system-test-222-bbb', 'system-other', 'system-test-x-ccc'].map((n) => existsSync(join(root, n)))).toEqual([false, true, true, true])
+      // One that cannot be removed (a mount point, in a nested confinement) is left, and the sweep goes on.
+      mkdirSync(join(root, 'system-test-333-ddd'))
+      mkdirSync(join(root, 'system-test-444-eee'))
+      const busy = (parent: string): void => {
+        if (parent.endsWith('333-ddd')) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' })
+        rmSync(parent, { recursive: true, force: true })
+      }
+      expect(sweepStale(root, (pid) => pid === 222, () => undefined, busy)).toEqual(['system-test-444-eee'])
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

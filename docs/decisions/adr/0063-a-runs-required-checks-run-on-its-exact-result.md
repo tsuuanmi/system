@@ -172,3 +172,16 @@ What constrains a fix:
 The options above; also: running the checks inside the engine (it would need a confinement of its
 own and the repository's setup, a parallel path to the source's), and a new `exec` seam (not
 planned in the seam catalog: the source's confinement is the one proven).
+
+## Amendment (2026-10-26): the command's report is a file, and says what did not run
+
+Found on T247. The descriptor `SYSTEM_CHECK_REPORT_FD` never reached a suite started through a
+runner that passes only fds 0 to 2 (pnpm's lifecycle runner, which every `corepack pnpm …` check
+goes through), and a pipe's `/proc/<pid>/fd` name cannot be reopened. The report the decision
+names is now written to a file: a fresh, empty, owner-only file in the check's private directory,
+bound writable at its own path (inside, a mount point: written, never replaced), named in
+`SYSTEM_CHECK_REPORT_PATH`, and read once the command ended; one that cannot be read then makes
+the check an `error`. The same file also takes `browser-tests-not-run: <detail>`: the check keeps
+its outcome, and its reason and the acceptance's reasons say that those tests did not run. Neither
+line can make a check pass. The decision is unchanged
+([a run's checks](../../design/agent-runtimes.md#a-runs-checks)).

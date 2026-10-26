@@ -2,6 +2,7 @@ import { availableParallelism } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 import { BaseSequencer, type TestSpecification } from 'vitest/node'
+import { BrowserSkips } from './scripts/browser-skips.ts'
 import { durationKey, order, readDurations } from './scripts/test-durations.ts'
 
 const src = (path: string): string => fileURLToPath(new URL(path, import.meta.url))
@@ -85,6 +86,8 @@ export default defineConfig({
     include: ['scripts/**/*.spec.ts', 'packages/**/tests/**/*.spec.ts'],
     // One temporary parent per run, removed at its end (and a killed run's, at the next start).
     globalSetup: ['./scripts/test-tmp.ts'],
+    // Browser tests skipped where no browser can run are counted and said at the end, and to a check (T247).
+    reporters: ['default', new BrowserSkips()],
     // Setup starts real displays and browsers: on a loaded 4-vCPU CI runner that can pass the
     // 10 s default, which fails a whole suite before any of its tests runs.
     hookTimeout: 60_000,
