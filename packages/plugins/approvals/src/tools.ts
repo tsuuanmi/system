@@ -9,7 +9,7 @@
  * defect) leaves the queue as it was.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { ApprovalsError, type AutonomyPolicy, type RequestState, type Verdict, type VerdictResult } from '@tsuuanmi/system-approvals-core'
+import { type ApprovalRequest, ApprovalsError, type AutonomyPolicy, type RequestState, type Verdict, type VerdictResult } from '@tsuuanmi/system-approvals-core'
 import { outline, reply, type ToolContext, type ToolHandler, type ToolScope, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
@@ -77,14 +77,30 @@ const decided = (results: VerdictResult[]) => ({ results: results.map((r) => ({ 
 
 /** The tools' behavior, over a queue; exported so tests call it as a client would. */
 export function handlers(approvals: StoreApprovals): Record<ApprovalTool, Handler> {
+  // A lead's token reaches only its own project's requests (T285, ADR-0076): a request belongs to the
+  // project its requester names, or a Worker's command to its board task's project (`projectOfRequest`).
+  const otherProject = (lead: string, what: string, of: string | undefined): ApprovalsError =>
+    new ApprovalsError('forbidden', `the lead token of project ${lead} reaches only project ${lead}; ${what} belongs to ${of === undefined ? 'no project' : `project ${of}`}, so nothing was read`)
+  const ownProject = (lead: string | undefined, projectId: unknown): void => {
+    if (lead !== undefined && typeof projectId === 'string' && projectId !== lead) throw otherProject(lead, `project ${projectId}`, projectId)
+  }
   return {
-    approvals_list: async (args) => approvals.page(
-      { ...(args.states ? { states: args.states as RequestState[] } : {}), ...(typeof args.batchId === 'string' ? { batchId: args.batchId } : {}), ...(typeof args.projectId === 'string' ? { projectId: args.projectId } : {}) },
-      { ...(typeof args.limit === 'number' ? { limit: args.limit } : {}), ...(typeof args.after === 'string' ? { after: args.after } : {}) },
-    ),
-    approvals_get: async (args) => {
+    approvals_list: async (args, context) => {
+      const lead = context?.lead
+      const filter = { ...(args.states ? { states: args.states as RequestState[] } : {}), ...(typeof args.batchId === 'string' ? { batchId: args.batchId } : {}) }
+      const options = { ...(typeof args.limit === 'number' ? { limit: args.limit } : {}), ...(typeof args.after === 'string' ? { after: args.after } : {}) }
+      if (lead === undefined) return approvals.page({ ...filter, ...(typeof args.projectId === 'string' ? { projectId: args.projectId } : {}) }, options)
+      ownProject(lead, args.projectId)
+      return leadPage(lead, filter, options)
+    },
+    approvals_get: async (args, context) => {
       const request = await approvals.get(String(args.requestId))
       if (!request) throw new ApprovalsError('unknown-request', `no approval request ${String(args.requestId)}`)
+      const lead = context?.lead
+      if (lead !== undefined) {
+        const of = await approvals.projectOfRequest(request)
+        if (of !== lead) throw otherProject(lead, `approval request ${request.requestId}`, of)
+      }
       return { request }
     },
     approvals_decide: async (args, { scope, lead }, check) => {
@@ -96,14 +112,42 @@ export function handlers(approvals: StoreApprovals): Record<ApprovalTool, Handle
       }
       return decided(await approvals.decide(args.verdicts as Verdict[], new Date(), (results) => check(decided(results))))
     },
-    approvals_policy: async (args) => approvals.policy(typeof args.projectId === 'string' ? args.projectId : undefined),
+    approvals_policy: async (args, context) => {
+      // A lead reads its own project's policy (the studio's, narrowed by the project's), by default too.
+      const lead = context?.lead
+      ownProject(lead, args.projectId)
+      return approvals.policy(typeof args.projectId === 'string' ? args.projectId : lead)
+    },
     approvals_policy_propose: async (args, { scope }, check) => {
       // Listed and served to the operator only; a policy change from any other caller is never taken (INV-6).
       if (scope !== 'operator') throw new ApprovalsError('invalid', 'policy changes come only from the operator')
       return approvals.proposePolicy({ policy: args.policy as AutonomyPolicy, ...(typeof args.note === 'string' ? { note: args.note } : {}) }, new Date(), check)
     },
   }
+
+  /**
+   * A page of the lead's own project's requests, in the queue's order: the queue's requests read one
+   * at a time from `after`, each kept when it is the lead's project's (a Worker's command by its
+   * task's), until the page is full. At most {@link LEAD_SCAN} are read per call; then `next` lets
+   * the lead read on, and the page may hold fewer than `limit`.
+   */
+  async function leadPage(lead: string, filter: { states?: RequestState[]; batchId?: string }, options: { limit?: number; after?: string }) {
+    const limit = options.limit ?? 20
+    const requests: ApprovalRequest[] = []
+    let cursor = options.after
+    for (let read = 0; requests.length < limit && read < LEAD_SCAN; read++) {
+      const one = approvals.page(filter, { limit: 1, ...(cursor !== undefined ? { after: cursor } : {}) })
+      const [request] = one.requests
+      cursor = one.next
+      if (request && (await approvals.projectOfRequest(request)) === lead) requests.push(request)
+      if (!request || cursor === undefined) return { requests }
+    }
+    return { requests, ...(cursor !== undefined ? { next: cursor } : {}) }
+  }
 }
+
+/** Requests a lead's `approvals_list` reads per call to fill its page (T285). */
+const LEAD_SCAN = 1000
 
 /**
  * Wrap a handler: validate the input first; give it the check of its output, which a tool that

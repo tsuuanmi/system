@@ -1112,6 +1112,46 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
     for (const maxAttempts of [0, 11, 2.5]) expect((await propose({ maxAttempts })).isError, String(maxAttempts)).toBe(true)
   })
 
+  it('holds a lead token to its own project: another project\'s project and tasks are refused with the reason, its own pass (T285)', async () => {
+    const { ctx, mcp } = await boot()
+    await active(ctx, 'p2')
+    await active(ctx, 'p3')
+    const own = await ready(ctx, task('p2', 'mine'))
+    const theirs = await ready(ctx, task('p3', 'theirs'))
+    type Reply = { isError?: boolean; content: Array<{ text: string }>; structuredContent?: Record<string, unknown> }
+    // A lead token of project p2; null calls as the operator.
+    const call = (name: string, args: Record<string, unknown>, lead: string | null = 'p2') => mcp().tools.get(name)!.handler(args, lead === null ? { scope: 'operator' } : { scope: 'client', lead }) as unknown as Promise<Reply>
+    const refusal = /the lead token of project p2 reaches only project p2; .* belongs to project p3, so nothing was done/
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ['board_claim', { taskId: theirs.taskId, owner: 'lead' }], ['board_cancel', { taskId: theirs.taskId }], ['board_update', { taskId: theirs.taskId, generation: 1 }],
+      ['board_update', { taskId: theirs.taskId, answers: [{ question: 0, answer: 'x' }] }], ['board_task', { taskId: theirs.taskId }], ['board_escape', { taskId: theirs.taskId, note: 'n' }],
+      ['board_brief', { projectId: 'p3' }], ['board_tasks', { projectId: 'p3' }], ['board_breakers', { projectId: 'p3' }], ['board_breaker_reset', { projectId: 'p3', branch: 'dev' }],
+      ['board_propose', { ...task('p3', 'sneaked') }], ['board_propose', { ...task('p2', 'depends', { dependsOn: [theirs.taskId] }) }],
+      ['board_charter', { projectId: 'p3', title: 't', charter: CHARTER }],
+    ]
+    for (const [name, args] of calls) {
+      const refused = await call(name, args)
+      expect(refused.isError, name).toBe(true)
+      expect(refused.content[0]!.text, name).toMatch(refusal)
+    }
+    // Nothing of p3 moved.
+    expect((await ctx.board.task(theirs.taskId))!.state).toBe('ready')
+    expect((await ctx.board.tasks({ projectId: 'p3' })).map((t) => t.title)).toEqual(['theirs'])
+    // A lead founds no project.
+    expect((await call('board_charter', { title: 't', charter: CHARTER })).content[0]!.text).toMatch(/founds no project/)
+    // The same calls on its own project pass; the project list and the breakers are its own only.
+    expect((await call('board_task', { taskId: own.taskId })).isError).toBeFalsy()
+    expect((await call('board_tasks', { projectId: 'p2' })).isError).toBeFalsy()
+    expect((await call('board_brief', { projectId: 'p2' })).isError).toBeFalsy()
+    expect((await call('board_claim', { taskId: own.taskId, owner: 'lead' })).isError).toBeFalsy()
+    expect((await call('board_projects', {})).structuredContent!.projects).toEqual([expect.objectContaining({ projectId: 'p2' })])
+    expect((await call('board_breakers', {})).isError).toBeFalsy()
+    // The operator, and a client token with no project, reach both.
+    expect((await call('board_projects', {}, null)).structuredContent!.projects).toHaveLength(2)
+    expect((await mcp().tools.get('board_task')!.handler({ taskId: theirs.taskId }, { scope: 'client' })).isError).toBeFalsy()
+    expect((await call('board_claim', { taskId: theirs.taskId, owner: 'op' }, null)).isError).toBeFalsy()
+  })
+
   it('checks a lost run\'s reported outcome before it withdraws the request the task waits on, so a refused report changes nothing (INV-4)', async () => {
     const { ctx } = await boot()
     await active(ctx)

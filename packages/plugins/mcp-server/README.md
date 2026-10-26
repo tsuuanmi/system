@@ -168,6 +168,19 @@ one scope another's rights).
   the operator tools whose spec says `lead: true`: today `approvals_decide`, whose handler holds it to the
   lead's closed list of rights. Every other operator tool answers `403` `insufficient_scope` naming whose
   it is.
+- **A lead token reaches only its own project** (T285): visibility lets a lead token call every client
+  tool, so each tool that names a project, board task, run, Worker session, or approval request checks it
+  against `ToolContext.lead` itself, and refuses another project's object with the reason (`the lead token
+  of project A reaches only project A; … belongs to project B, so nothing was done`) before anything is done:
+  `run` with a `task`, `vote`, `result`, `explain`, `dossier_read`, `session_send`, `session_inbox`, the
+  `board_*` tools, `approvals_get`, `approvals_list`, `approvals_policy`, `approvals_decide`, `report`,
+  `metrics`, and `resources_usage`. With no project named, `usage`, `board_projects`, `board_breakers`,
+  `approvals_list`, `approvals_policy`, `report`, `metrics`, and `resources_usage` read the lead's project only. A run with no board task (`ask`, `research`, `brainstorm`, `review`, `run` without `task`) is
+  tagged with the lead's project, and its `clientRequestId` is the project's own, so another project's lead
+  sending the same key starts its own run. A run derived from a session (a Worker's wake, a compaction)
+  belongs to the project of the run the session came from; a run of no project (the operator's own) is
+  refused for a lead. `explain` of an artifact id, `digests_request` and `digests_get`, `dispatch_status`,
+  `status`, `roster`, `resources_pools`, and `usage`'s quota draws name no project and stay System-wide. The operator and a client token with no project are unchanged.
 - **Tool scope:** a tool declares `scope: 'client' | 'operator'` in its
   `ToolSpec`. A tool that declares none is the operator's (fail closed), so
   `approve`, `approvals_decide`, `approvals_policy_propose`, `board_pause`, `board_resume`, `board_close`, `stop`, `continue`, `delete`, `supersede`, `drain`, `resume`,

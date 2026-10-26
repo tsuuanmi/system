@@ -3,7 +3,7 @@
  * operator's actions, which declare no scope and so are the operator's alone (ADR-0023).
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { outline, reply } from '@tsuuanmi/system-gateway-core'
+import { outline, reply, type ToolContext } from '@tsuuanmi/system-gateway-core'
 import type { Classification, LivenessQuery, Tier } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
 import type { Workflow } from './index.ts'
@@ -34,6 +34,26 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   const shape = (view: RunView) => reply(view, view.status === 'completed' ? view.answer ?? '' : standing(view))
   const json = (value: object) => reply(value, outline(value))
   const failure = (error: unknown) => ({ isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] })
+  // A lead's token reaches only its own project (T285, ADR-0076): what it names is checked against the token's project, and another's is refused whole.
+  const refuseOther = (lead: string, what: string, of: string | undefined): Error => new Error(`the lead token of project ${lead} reaches only project ${lead}; ${what} belongs to ${of === undefined ? 'no project (or is unknown)' : `project ${of}`}, so nothing was done`)
+  const ownRun = async (lead: string | undefined, runId: string): Promise<void> => {
+    if (lead === undefined) return
+    const of = await w.projectOfRun(runId)
+    if (of !== lead) throw refuseOther(lead, `run ${runId}`, of)
+  }
+  const ownTask = async (lead: string | undefined, taskId: string): Promise<void> => {
+    if (lead === undefined) return
+    const of = await w.projectOfTask(taskId)
+    if (of !== lead) throw refuseOther(lead, `board task ${taskId}`, of)
+  }
+  // The lead a call came from, if any: a caller in the same process may call a handler with no context (an operator's own call).
+  const leadOf = (context: ToolContext | undefined): string | undefined => context?.lead
+  const tagged = (lead: string | undefined): { projectId?: string } => (lead === undefined ? {} : { projectId: lead })
+  // A start may return a run a retry key already started: a lead gets it back only when it is its own project's.
+  const ownStart = async (lead: string | undefined, run: RunView): Promise<RunView> => {
+    await ownRun(lead, run.runId)
+    return run
+  }
   const waitSeconds = zod.number().int().min(0).max(55).optional().describe('Seconds to wait for the run to finish (default 45)')
   const classification = zod.enum(['public', 'operator-shared', 'local-private']).optional()
     .describe('The input\'s classification; local-private never leaves the machine')
@@ -48,12 +68,13 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
       tier: zod.enum(['economy', 'standard', 'frontier']).optional().describe('Minimum intelligence tier; the lowest admitted tier at or above it runs'),
       classification, clientRequestId, waitSeconds,
     },
-  }, async (args) => {
+  }, async (args, context) => {
+    const lead = leadOf(context)
     try {
-      const run = w.start({
-        template: 'ask', input: String(args.prompt), sessionId: args.sessionId as string | undefined, persist: args.persist as boolean | undefined,
+      const run = await ownStart(lead, w.start({
+        ...tagged(lead), template: 'ask', input: String(args.prompt), sessionId: args.sessionId as string | undefined, persist: args.persist as boolean | undefined,
         tier: args.tier as Tier | undefined, classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined,
-      })
+      }))
       return shape(await w.wait(run.runId, ((args.waitSeconds as number | undefined) ?? 45) * 1000))
     } catch (error) {
       return failure(error)
@@ -67,12 +88,13 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
       deep: zod.boolean().optional().describe('Use the providers\' Deep research'),
       classification, clientRequestId,
     },
-  }, async (args) => {
+  }, async (args, context) => {
+    const lead = leadOf(context)
     try {
-      return shape(w.start({
-        template: 'research', input: String(args.question), ...(args.deep ? { variant: 'deep' } : {}),
+      return shape(await ownStart(lead, w.start({
+        ...tagged(lead), template: 'research', input: String(args.question), ...(args.deep ? { variant: 'deep' } : {}),
         classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined,
-      }))
+      })))
     } catch (error) {
       return failure(error)
     }
@@ -82,14 +104,15 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
       scope: 'client',
       description,
       inputSchema: { [field]: zod.string().min(1).max(200_000).describe(about), ...extra, classification, clientRequestId },
-    }, async (args) => {
+    }, async (args, context) => {
+      const lead = leadOf(context)
       try {
         const repository = args.repository as { url: string; ref?: string } | undefined
         const focus = args.focus as string[] | undefined
-        return shape(w.start({
-          template, input: String(args[field]), classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined,
+        return shape(await ownStart(lead, w.start({
+          ...tagged(lead), template, input: String(args[field]), classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined,
           ...(repository ? { repository: { url: repository.url, ...(repository.ref ? { ref: repository.ref } : {}), ...(focus?.length ? { focus } : {}) } } : {}),
-        }))
+        })))
       } catch (error) {
         return failure(error)
       }
@@ -117,6 +140,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
     try {
       // The decider is whoever's token it was: a client's vote is the caller's, never the operator's; a lead's is lead:<project> (ADR-0076).
       const by = scope === 'operator' ? 'operator' : 'client'
+      await ownRun(lead, String(args.runId))
       const view = w.vote(String(args.runId), { decision: String(args.decision), option: String(args.option), rationale: String(args.rationale), by, ...(lead !== undefined ? { lead } : {}) })
       return shape(await w.wait(view.runId, 10_000))
     } catch (error) {
@@ -141,14 +165,16 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
       }).optional().describe('Run for this board task, one attempt of it: without holder and generation the run claims the ready task itself'),
       classification, clientRequestId, waitSeconds,
     },
-  }, async (args) => {
+  }, async (args, context) => {
+    const lead = leadOf(context)
     try {
       const input = {
-        template: String(args.template), input: String(args.input), variant: args.variant as string | undefined, sessionId: args.sessionId as string | undefined, persist: args.persist as boolean | undefined,
+        ...tagged(lead), template: String(args.template), input: String(args.input), variant: args.variant as string | undefined, sessionId: args.sessionId as string | undefined, persist: args.persist as boolean | undefined,
         tier: args.tier as Tier | undefined, classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined,
       }
       const task = args.task as TaskClaim | undefined
-      const run = task ? await w.start({ ...input, task }) : w.start(input)
+      if (task) await ownTask(lead, task.taskId)
+      const run = await ownStart(lead, task ? await w.start({ ...input, task }) : w.start(input))
       return shape(await w.wait(run.runId, ((args.waitSeconds as number | undefined) ?? 45) * 1000))
     } catch (error) {
       return failure(error)
@@ -225,8 +251,10 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
     scope: 'client',
     description: 'Fetch a run (ask, research, brainstorm, review, or run); waits up to waitSeconds for it to finish or to wait on you (a tie\'s `blocked`).',
     inputSchema: { runId: zod.string().max(200), waitSeconds },
-  }, async (args) => {
+  }, async (args, context) => {
+    const lead = leadOf(context)
     try {
+      await ownRun(lead, String(args.runId))
       return shape(await w.wait(String(args.runId), ((args.waitSeconds as number | undefined) ?? 45) * 1000))
     } catch (error) {
       return failure(error)
@@ -236,8 +264,17 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
     scope: 'client',
     description: 'Recent runs and, per step, the Worker, tier, and quota class that served it, the tokens a model Worker reports, and usage the ledger could not count (usageUnknown, with why); and what agent runs drew from their accounts\' windows (draws: per kind and window, and per kind, template step, and window, the clean draws counted with their median and p90 in percentage points, and the entries left out by why). A run\'s answer, results, and errors are in `result`.',
     inputSchema: { limit: zod.number().int().min(1).max(500).optional().describe(`Runs, the most recent first (default ${USAGE_LIMIT})`) },
-  }, async (args) => {
-    const runs = w.usage((args.limit as number | undefined) ?? USAGE_LIMIT).map(usageView)
+  }, async (args, context) => {
+    const lead = leadOf(context)
+    const limit = (args.limit as number | undefined) ?? USAGE_LIMIT
+    let listed = w.usage(lead === undefined ? limit : 500)
+    if (lead !== undefined) {
+      // A lead sees the runs of its own project only.
+      const own: typeof listed = []
+      for (const run of listed) if ((await w.projectOfRun(run.runId)) === lead) own.push(run)
+      listed = own.slice(0, limit)
+    }
+    const runs = listed.map(usageView)
     const steps = runs.reduce((n, r) => n + r.nodes.length, 0)
     // What agent runs drew (PROP-0015 E2), only once any draw is recorded.
     const draws = w.draws()
@@ -253,8 +290,14 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
       taskId: zod.string().max(200).optional(), runId: zod.string().max(200).optional(),
       from: zod.number().int().min(1).optional(), limit: zod.number().int().min(1).max(50).optional(),
     },
-  }, async (args) => {
+  }, async (args, context) => {
+    const lead = leadOf(context)
     try {
+      if (lead !== undefined) {
+        if (typeof args.runId !== 'string' && typeof args.taskId !== 'string') throw new Error(`the lead token of project ${lead} reads a dossier of its own project only: name its taskId or a runId of it`)
+        if (typeof args.runId === 'string') await ownRun(lead, args.runId)
+        if (typeof args.taskId === 'string') await ownTask(lead, args.taskId)
+      }
       const page = w.dossier({ taskId: args.taskId as string | undefined, runId: args.runId as string | undefined, from: args.from as number | undefined, limit: args.limit as number | undefined })
       return reply(page, `${page.entries.length} of ${page.total} entries of ${page.taskId}'s dossier${page.next ? `; next from ${page.next}` : ''}`)
     } catch (error) {
@@ -279,10 +322,16 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
     scope: 'client',
     description: 'The decision chain behind a run (its own decisions, such as a board task\'s admission, result subject, acceptance, and report; then egress, tier, route, and acceptance per step) and its executions whose liveness needs a look (verdict, why, what to do); or any artifact id\'s inputs; or such an execution by its id.',
     inputSchema: { id: zod.string().max(200) },
-  }, async (args) => {
+  }, async (args, context) => {
+    const lead = leadOf(context)
     const id = String(args.id)
     const run = w.explain(id)
     if (run) {
+      try {
+        await ownRun(lead, id)
+      } catch (error) {
+        return failure(error)
+      }
       const told = await livenessOf(ctx, { runId: id })
       return json(told?.liveness.length || told?.livenessUnread ? { ...run, ...told } : run)
     }

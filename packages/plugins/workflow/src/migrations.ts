@@ -157,4 +157,10 @@ export const MIGRATIONS = [{
   CREATE INDEX workflow_dossiers_step ON workflow_dossiers (run_id, node_id, step);
   CREATE TRIGGER workflow_dossiers_append_only BEFORE UPDATE ON workflow_dossiers
   BEGIN SELECT RAISE(ABORT, 'a task dossier entry never changes: append another'); END;`,
+}, {
+  // The project a run belongs to when it serves no board task (T285, ADR-0076): a lead's ask or
+  // research is tagged with the lead's project, so a lead reaches only its own project's runs. A
+  // run of a board task has its task's project; a run with neither belongs to no project.
+  version: 24,
+  sql: 'ALTER TABLE workflow_runs ADD COLUMN project_id TEXT;',
 }]

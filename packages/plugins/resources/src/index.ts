@@ -294,9 +294,16 @@ export class StoreResources extends Resources {
           limit: zod.number().int().min(1).max(100).optional().describe(`Page size (default ${this.pageSize})`),
           after: zod.string().min(1).max(200).optional().describe('The next cursor of the previous page'),
         },
-      }, async (args) => {
+      }, async (args, context) => {
         const filter: UsageFilter = {}
         for (const key of ['runId', 'projectId', 'taskId', 'account', 'pool', 'since', 'until'] as const) if (args[key] !== undefined) filter[key] = String(args[key])
+        const lead = context?.lead
+        if (lead !== undefined) {
+          // A lead reads its own project's usage only (T285, ADR-0076): the run and task it names are its project's, and with neither, the project's records.
+          const outside = await this.outsideProject(lead, filter)
+          if (outside !== undefined) return { isError: true, content: [{ type: 'text' as const, text: outside }] }
+          if (filter.runId === undefined && filter.taskId === undefined) filter.projectId = lead
+        }
         try {
           return json(this.page(filter, { ...(args.limit !== undefined ? { limit: Number(args.limit) } : {}), ...(args.after !== undefined ? { after: String(args.after) } : {}) }))
         } catch (error) {
@@ -304,6 +311,27 @@ export class StoreResources extends Resources {
         }
       })
     })
+  }
+
+  /**
+   * Why a lead of `project` may not read usage by `filter`; undefined when it may (T285). The project
+   * it names must be its own, the task its project's (as the board holds it), and the run its project's
+   * (as the workflow engine tells it); one that cannot be told is not the lead's (INV-2).
+   */
+  private async outsideProject(project: string, filter: UsageFilter): Promise<string | undefined> {
+    const refuse = (what: string, of: string | undefined) => `forbidden: the lead token of project ${project} reaches only project ${project}; ${what} belongs to ${of === undefined ? 'no project (or is unknown)' : `project ${of}`}, so nothing was read`
+    if (filter.projectId !== undefined && filter.projectId !== project) return refuse(`project ${filter.projectId}`, filter.projectId)
+    if (filter.taskId !== undefined) {
+      const board = this.ctx.get('board' as never) as { task?: (taskId: string) => Promise<{ projectId?: string } | undefined> } | undefined
+      const of = (await board?.task?.(filter.taskId))?.projectId
+      if (of !== project) return refuse(`task ${filter.taskId}`, of)
+    }
+    if (filter.runId !== undefined) {
+      const workflow = this.ctx.get('workflow' as never) as { projectOfRun?: (runId: string) => Promise<string | undefined> } | undefined
+      const of = typeof workflow?.projectOfRun === 'function' ? await workflow.projectOfRun(filter.runId) : undefined
+      if (of !== project) return refuse(`run ${filter.runId}`, of)
+    }
+    return undefined
   }
 
   async pools(filter: { account?: string } = {}, at: Date = new Date()): Promise<PoolState[]> {

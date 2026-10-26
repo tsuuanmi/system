@@ -97,7 +97,28 @@ What constrains the answer:
   Decisions the lead makes in its own coordination board leave no System record. The dev branches are
   configuration of the `approvals` row: a project not listed has none, so its lead decides no merge or
   acceptance until the operator lists one.
-- No store migration. `decision@1.10` is a minor (additive for every reader of an earlier version);
+- **A lead reaches only its own project** (T285, from this ADR's review). The token is a `client` token, and
+  client tools were visible to it whatever they named, so with several projects a lead could `run` another
+  project's board task, move its tasks, or answer its Workers. Now every tool a lead token calls that names a
+  project, task, run, Worker session, or approval request is checked against the token's project
+  (`ToolContext.lead`) where the tool acts, and another project's object is refused whole with the reason,
+  before anything is done. The checked tools are `run` with `task`, `vote`, `result`, `explain`,
+  `dossier_read`, `session_send`, `session_inbox`, the `board_*` tools (a `board_propose` dependency included,
+  and a lead founds no project), `approvals_get`, `approvals_list`, `approvals_policy`, `report`, `metrics`,
+  and `resources_usage` (its project, task, and run), and `approvals_decide`, which `leadMayDecide` already
+  held to the request's project, a merge included (its T285 test confirms that, it does not change it).
+  Lists and readings with no project named (`usage`, `board_projects`, `board_breakers`, `approvals_list`,
+  `approvals_policy`, `report`, `metrics`, `resources_usage`) are the lead's project's only.
+  A run with no board task (`ask`, `research`, `brainstorm`, `review`, `run` without `task`) is tagged with the
+  lead's project (`workflow_runs.project_id`, store migration 24). A run's project is its board task's, else
+  that tag, else, for a run derived from a session (a Worker's wake on a message, a compaction), the project
+  of the run its session came from; a run of none of these is the operator's. A lead's retry key
+  (`clientRequestId`) is scoped to its project, and a start returns an existing run only to its own project's
+  lead. `/ui` was already held to the lead's project. Not covered, because they name no project and read
+  System-wide state: `explain` of an artifact id, `digests_request` and `digests_get` (artifact ids),
+  `dispatch_status`, `status`, `roster`, `resources_pools` (the accounts' pools), and the quota draws in `usage`; continuing another project's session by
+  its `sessionId` on `ask` or `run` is follow-up task task-b0473e1c0f75.
+- No store migration for the principal itself. `decision@1.10` is a minor (additive for every reader of an earlier version);
   `approvals-core` gains the optional `decideAsLead` and `devBranches` on the seam, and the `forbidden`
   failure.
 

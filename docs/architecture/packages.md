@@ -40,12 +40,12 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md) | orchestration | — | `profile-scientific-research` | `workflow`, `workers`, `artifacts`, `eventLog` | `libs` |
 | [profile-software-development](../../packages/plugins/profile-software-development/README.md) | orchestration | — | `profile-software-development` | `workflow` | `workers-core` |
 | [statistics](../../packages/statistics/README.md) | orchestration | — | — | — | — |
-| [worker-sessions](../../packages/plugins/worker-sessions/README.md) | orchestration | `workerSessions` | `worker-sessions` | `store`, `artifacts`, `mcp` (optional) | `gateway-core`, `libs` |
+| [worker-sessions](../../packages/plugins/worker-sessions/README.md) | orchestration | `workerSessions` | `worker-sessions` | `store`, `artifacts`, `mcp` (optional), `workflow` (optional) | `gateway-core`, `libs` |
 | [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `agentWorkers` (optional), `approvals` (optional), `board` (optional), `digests` (optional), `dispatchAdvisor` (optional), `landing` (optional), `mcp` (optional), `resources` (optional) | `approvals-core`, `board-core`, `decision-core`, `digest-core`, `gateway-core`, `landing-core`, `leases`, `libs`, `provider-core`, `resources-core`, `worker-sessions`, `workers-core` |
 | [approvals](../../packages/plugins/approvals/README.md) | routing | `approvals` | `approvals` | `store`, `artifacts`, `board` (optional), `eventLog` (optional), `mcp` (optional), `workflow` (optional) | `approvals-core`, `gateway-core`, `libs` |
 | [approvals-core](../../packages/approvals-core/README.md) | routing | defines `approvals` | — | — | — |
 | [egress](../../packages/plugins/egress/README.md) | routing | `egress` | `egress` | `artifacts` | `libs`, `provider-core` |
-| [resources](../../packages/plugins/resources/README.md) | routing | `resources` | `resources` | `store`, `artifacts`, `eventLog` (optional), `mcp` (optional) | `gateway-core`, `libs`, `resources-core` |
+| [resources](../../packages/plugins/resources/README.md) | routing | `resources` | `resources` | `store`, `artifacts`, `board` (optional), `eventLog` (optional), `mcp` (optional), `workflow` (optional) | `gateway-core`, `libs`, `resources-core` |
 | [resources-core](../../packages/resources-core/README.md) | routing | defines `resources` | — | — | — |
 | [workers](../../packages/plugins/workers/README.md) | routing | `workers` | `workers` | `artifacts`, `resources` (optional) | `libs`, `workers-core` |
 | [workers-core](../../packages/workers-core/README.md) | routing | defines `workers` | — | — | — |
@@ -256,8 +256,10 @@ flowchart TB
   report -.-> resources
   resources --> store
   resources --> artifacts
+  resources -.-> board
   resources -.-> event_log
   resources -.-> mcp_server
+  resources -.-> workflow
   runtime_acp --> agent_runtimes
   runtime_antigravity_cli --> agent_runtimes
   runtime_claude_agent_sdk --> agent_runtimes
@@ -289,6 +291,7 @@ flowchart TB
   worker_sessions --> store
   worker_sessions --> artifacts
   worker_sessions -.-> mcp_server
+  worker_sessions -.-> workflow
   workers --> artifacts
   workers -.-> resources
   workflow --> store
@@ -331,7 +334,9 @@ policy above it. Each such edge is listed here so a new one is a visible change.
 | `models` (capabilities) | `egress` | `egress` (routing) | required |
 | `models` (capabilities) | `mcp` | `mcp-server` (gateways) | optional |
 | `models` (capabilities) | `workers` | `workers` (routing) | required |
+| `resources` (routing) | `board` | `board` (orchestration) | optional |
 | `resources` (routing) | `mcp` | `mcp-server` (gateways) | optional |
+| `resources` (routing) | `workflow` | `workflow` (orchestration) | optional |
 | `turns` (capabilities) | `egress` | `egress` (routing) | required |
 | `turns` (capabilities) | `mcp` | `mcp-server` (gateways) | optional |
 | `turns` (capabilities) | `workers` | `workers` (routing) | required |

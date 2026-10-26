@@ -156,9 +156,12 @@ export class WorkerSessions extends Service {
           intent: zod.enum(['inform', 'request', 'critique', 'answer', 'handoff', 'input-required', 'close']).optional(),
           messageId: zod.string().max(200).optional().describe('Retry-safe id; the same id is delivered once'),
         },
-      }, async (args, { scope }) => {
+      }, async (args, { scope, lead }) => {
         const to = String(args.to)
         const isGroup = !!this.ctx.store.db.prepare('SELECT 1 FROM session_groups WHERE group_id = ?').get(to)
+        // A lead answers the Workers of its own project only (T285, ADR-0076).
+        const outside = lead === undefined ? undefined : await this.outsideProject(lead, isGroup ? { group: to } : { session: to })
+        if (outside !== undefined) return { isError: true, content: [{ type: 'text' as const, text: outside }] }
         return json(this.send({
           // The audit trail names who wrote it (INV-13): a client token never writes as the operator.
           from: scope === 'operator' ? 'operator' : 'client', messageId: args.messageId ? String(args.messageId) : `${scope === 'operator' ? 'op' : 'cl'}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -169,13 +172,39 @@ export class WorkerSessions extends Service {
         scope: 'client',
         description: 'Read a Worker session: its record and its unread messages (not acknowledged).',
         inputSchema: { sessionId: zod.string().max(200) },
-      }, async (args) => {
+      }, async (args, context) => {
+        const lead = context?.lead
         const session = this.session(String(args.sessionId))
+        const outside = lead === undefined || !session ? undefined : await this.outsideProject(lead, { session: session.sessionId })
+        if (outside !== undefined) return { isError: true, content: [{ type: 'text' as const, text: outside }] }
         return session
           ? json({ session, inbox: this.inbox(session.sessionId).map((m) => ({ seq: m.seq, from: m.from, intent: m.message.intent, body: m.message.body, artifact: m.artifact })) })
           : { isError: true, content: [{ type: 'text' as const, text: `unknown session ${String(args.sessionId)}` }] }
       })
     })
+  }
+
+  /**
+   * Why a lead of `project` may not reach a session, or the sessions of a group; undefined when it may
+   * (T285, ADR-0076). A session belongs to the project of the run it was made for, as the workflow
+   * engine (`ctx.workflow.projectOfRun`) tells it. A session of no run, of another project's run, or one
+   * that cannot be told (no engine loaded), and a group with no session, are not the lead's (INV-2).
+   */
+  async outsideProject(project: string, target: { session: string } | { group: string }): Promise<string | undefined> {
+    const named = 'group' in target ? `group ${target.group}` : `session ${target.session}`
+    const ids = 'group' in target
+      ? (this.ctx.store.db.prepare('SELECT session_id FROM worker_sessions WHERE group_id = ? ORDER BY session_id').all(target.group) as Array<{ session_id: string }>).map((r) => r.session_id)
+      : [target.session]
+    const sessions = ids.map((id) => this.session(id))
+    if (!sessions.length || sessions.some((s) => !s)) return `the lead token of project ${project} reaches only its own project's Workers; ${named} names no Worker session of it`
+    const workflow = this.ctx.get('workflow' as never) as { projectOfRun?: (runId: string) => Promise<string | undefined> } | undefined
+    for (const session of sessions as WorkerSession[]) {
+      const of = session.runId !== undefined && typeof workflow?.projectOfRun === 'function' ? await workflow.projectOfRun(session.runId) : undefined
+      if (of !== project) {
+        return `the lead token of project ${project} reaches only its own project's Workers; session ${session.sessionId} belongs to ${of === undefined ? 'no project' : `project ${of}`}, so it is not yours to reach`
+      }
+    }
+    return undefined
   }
 
   /** Create a group; with `barrier`, members' messages are held until `openBarrier`. */

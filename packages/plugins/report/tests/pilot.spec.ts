@@ -135,6 +135,29 @@ describe('the report tool over a pilot (PROP-0010 B8)', () => {
     expect(refused).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^invalid input, nothing read/) }] })
   })
 
+  it('holds a lead token to its own project: another project\'s report or metrics is refused, and with none named it reads its own (T285)', async () => {
+    const pilot = await bootPilot({ changes: 1 }, [RecordingMcp, Report])
+    onTestFinished(() => pilot.dispose())
+    const { ctx } = pilot
+    await charter(ctx, 'p1')
+    await charter(ctx, 'p2')
+    const mcp = ctx.get('mcp') as RecordingMcp
+    const asLead = { scope: 'client' as const, lead: 'p1' }
+    for (const name of ['report', 'metrics']) {
+      const refused = await mcp.tools.get(name)!.handler({ projectId: 'p2' }, asLead)
+      expect(refused, name).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^forbidden: the lead token of project p1 reaches only project p1; project p2 is another project's, so nothing was read/) }] })
+      for (const args of [{}, { projectId: 'p1' }]) {
+        const own = await mcp.tools.get(name)!.handler(args, asLead)
+        expect(own.isError, `${name} ${JSON.stringify(args)}`).toBeUndefined()
+      }
+    }
+    // With no project named, a lead's report is its own project's; the operator's (and a client token's) is every project's.
+    const own = (await mcp.tools.get('report')!.handler({}, asLead)).structuredContent as unknown as Report.Report
+    expect(own.projects.map((p) => p.projectId)).toEqual(['p1'])
+    expect((await call(ctx, {})).report!.projects.map((p) => p.projectId)).toEqual(['p1', 'p2'])
+    expect(((await mcp.tools.get('metrics')!.handler({}, asLead)).content as Array<{ text: string }>)[0]!.text).toMatch(/^# Maturity metrics: project p1\n/)
+  })
+
   it('refuses an input outside its schema, an unknown project, and a period it cannot name, reading nothing', async () => {
     const { ctx } = await pilotWeek()
     for (const [args, why] of [
