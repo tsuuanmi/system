@@ -39,7 +39,7 @@ import { TaskDossiers } from './dossiers.ts'
 import { TaskLandings } from './landings.ts'
 import type { Engine, Prepared } from './engine.ts'
 import { routedDecisions } from './recovery.ts'
-import { type AcceptanceRisk, heavyReasons } from './risk.ts'
+import { type AcceptanceRisk, finalTreeReview, heavyReasons } from './risk.ts'
 import { heldWhy } from './sessions.ts'
 import { blocks, clampText, type Finding, type ResolvedNode } from './spec.ts'
 import { admittedRestriction } from './teams.ts'
@@ -1312,7 +1312,7 @@ export class TaskRuns {
     const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([check]) => check)
     // A heavy result needs approving reviews of its exact tree by Workers of two provider families (ADR-0071).
     // Judged on the git tree the reviews judged, whatever the result is bound to; a review that did not approve comes first (T280).
-    const review = this.lastReview(done)
+    const review = this.lastReview(done, subject)
     const second = heavyReasons(risk, subject, review)
     const short = second.reasons.length ? second.reasons.join('; ') : undefined
     const option = failed.length || short ? 'reject' : 'accept'
@@ -1363,9 +1363,11 @@ export class TaskRuns {
    * an assessment, whatever tree it reviewed: its step, gate decision, assessment, verdict, blocking
    * findings, and its remediation cycle of the bound. Undefined when no step of the run reviewed a tree.
    */
-  private lastReview(done: NodeRow[]): AcceptanceReview | undefined {
-    let last: AcceptanceReview | undefined
+  private lastReview(done: NodeRow[], tree?: Subject): AcceptanceReview | undefined {
+    const found: AcceptanceReview[] = []
     for (const node of done) {
+      // A verification step votes on its review's findings: its verdict is never a result's (T287).
+      if ((JSON.parse(node.spec) as ResolvedNode).verifies) continue
       // The author's own review is never the run's last review (T267).
       if ((JSON.parse(node.spec) as ResolvedNode).selfReview !== undefined) continue
       for (const ref of node.decisions ? JSON.parse(node.decisions) as ArtifactRef[] : []) {
@@ -1373,17 +1375,19 @@ export class TaskRuns {
         if (body?.decisionType !== 'gate' || body.decider?.id !== 'workflow.exact-subject' || body.outcome?.option !== 'pass' || !body.outcome.detail?.assessment) continue
         const assessment = this.e.ctx.artifacts.get(body.outcome.detail.assessment)?.body as { verdict?: string; findings?: Finding[]; subject?: Subject; summary?: string } | undefined
         if (!assessment?.verdict || !assessment.subject) continue
-        last = {
+        found.push({
           node: node.node_id, gate: ref, assessment: body.outcome.detail.assessment, verdict: assessment.verdict,
           // Blocking is a confirmed important finding (ADR-0075): a nit or an unverified finding never is.
           blocking: (assessment.findings ?? []).filter(blocks).length,
           ...(assessment.summary ? { summary: assessment.summary } : {}),
           cycle: (JSON.parse(node.spec) as ResolvedNode).cycle ?? 1, maxCycles: this.e.config.maxReviewCycles ?? 3,
           subject: { ref: assessment.subject.ref, version: assessment.subject.version ?? '' },
-        }
+        })
       }
     }
-    return last
+    // The result's review is the last one of its final tree: an earlier round's review, even one a
+    // later verification gate re-judged, is of a tree the fixes have since replaced (T287).
+    return finalTreeReview(found, tree)
   }
 
   /**
