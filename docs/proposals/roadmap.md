@@ -105,18 +105,26 @@ the order of D75: E1, then E2 and E5, then E4 and E3, then E6, with J0 in parall
 
 ## Operating model (PROP-0016)
 
-Proposed on 2026-10-26, from the operator's vision of that day and the T224 brainstorm; not
-accepted yet. What each increment delivers is in
+Accepted by the operator on 2026-10-26 (D83), each open question answered as proposed, from the
+operator's vision of that day and the T224 brainstorm. What each increment delivers is in
 [PROP-0016](0016-operating-model.md#increments). The target is L4 by 2028 to 2029, with selective
-L5 ([maturity model](0016-operating-model.md#1-maturity-model-l0-to-l6)).
+L5 ([maturity model](0016-operating-model.md#1-maturity-model-l0-to-l6)). The order is I4's metrics
+and I2 first, then I1 and I3, then I5; each starts on the operator's go-ahead. System is at L2: the
+automation L3 needs is shown on single tasks, but the metrics do not show L3 yet (no 30 days of
+data; escaped defects and Worker availability are not recorded yet). The same day the operator
+accepted [PROP-0017](0017-github-front-door.md) (D84), with GitHub Projects dropped.
 
 | Increment | State | Delivers | Depends on |
 |---|---|---|---|
-| **I1** Handbook layers and the per-Worker slice | proposed | five layers, each with an owner, a version, and a check; each Worker's slice within a fixed bound | T220 |
-| **I2** Risk tiers and the lead-touch metric | proposed | light, normal, and heavy paths from a path map; the adversarial review; decision briefs; lead touches per task recorded | ADR-0067 |
-| **I3** Integration queue, attempt shielding, canary | proposed; in part built (T216, T218, T219) | a landing queue per repository on exact trees; a Worker health canary with rollback | T216, T218, T219 |
-| **I4** Evidence ledger and weekly scorecard | proposed | global IDs; every metric of the maturity model; the weekly level reading | the report |
-| **I5** A project template | proposed | `system project new --kind`; the attention budget; reporting up; proven by a second project | I1 to I4 |
+| **I1** Handbook layers and the per-Worker slice | in part: part 1, the design, is built (T249, `88b453a4`: [handbook](../design/handbook.md), ADR-0072, proposed); the lead's playbook and onboarding, layer 4, copied into each project's `LEAD.md` (T252, `9afeb362`). Open: part 2, the slice in every brief, bounded and versioned (T259, waiting for input), and ADR-0072's acceptance | five layers, each with an owner, a version, and a check; each Worker's slice within a fixed bound | T220 |
+| **I2** Risk tiers and the lead-touch metric | in part: part 1 is built (T237, `7f0baa51`: the path map in the policy, [ADR-0071](../decisions/adr/0071-a-changes-risk-tier-comes-from-the-policys-path-map.md), a heavy change's second family and the operator's hold, a light change's skipped validation), T264 reviewed and fixed it (`088e42a4`); the lead is a principal of its own with a closed list of rights System enforces, and its touches are recorded (T273, `ef6a62f3`). Open: the adversarial review prompt and the decision brief; the lead-touch metric read by the weekly scorecard (I4) | light, normal, and heavy paths from a path map; the adversarial review; decision briefs; lead touches per task recorded | ADR-0067 |
+| **I3** Integration queue, attempt shielding, canary | in part built. Attempt shielding: an attempt is not spent on an infrastructure failure (T218, `cb005a45`, [ADR-0069](../decisions/adr/0069-an-attempt-is-not-spent-on-an-infrastructure-failure.md), accepted). The canary: a live update compares the Workers' availability and rolls back when one turns unavailable (T219, `5c0d93e1`, a merge of `583b49a5`), and a live update can be cut at any time (T269, `332a0d2b`). A result whose target moved is rebased and re-verified before it lands (T216, `c5d49130`, [ADR-0068](../decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md), proposed). T266 made the review converge (`67991500`). Open: the integration queue itself (landing in order per repository, amending ADR-0060 and ADR-0068) and the canary on a test task | a landing queue per repository on exact trees; a Worker health canary with rollback | T216, T218, T219 |
+| **I4** Evidence ledger and weekly scorecard | in part: part 1, the maturity metrics computed from records and `system metrics` (T236, `bc1b8015`). Open: part 2, escaped defects and Worker availability recorded and read by the metrics (T277); global IDs; the weekly level reading in the report | global IDs; every metric of the maturity model; the weekly level reading | the report |
+| **I5** A project template | in part: part 0 is built (T251, `4e24a68e`: `system project new --kind software-repository`, [packaging](../design/packaging.md)); the operator's pages across projects, Home grouped by project and a project switcher (T253, `20fe4c45`). Open: the attention budget, portfolio scheduling, reporting up, global ids, and a second project of a different kind | `system project new --kind`; the attention budget; reporting up; proven by a second project | I1 to I4 |
+
+Other landed work of the same days that serves the model: a role offering several tiers, each its
+own model with per-model quota (T261, `a89c5bd4`), and a research Worker with bounded, egress-checked
+web search (T262, `4c924619`).
 
 ## Done and open milestones
 
