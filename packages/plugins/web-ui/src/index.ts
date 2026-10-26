@@ -856,8 +856,9 @@ export function apply(ctx: Context, config: Config = {}): void {
       const listed = artifacts.list({ kind: 'assessment', runId, newest: true, limit: REVIEW_VERDICTS_COUNTED })
       assessments = {
         value: listed.slice(0, REVIEW_VERDICTS).map((a) => {
-          const body = a.body as { verdict: string; findings: unknown[]; reviewer?: string }
-          return { nodeId: a.nodeId, createdAt: a.createdAt, verdict: body.verdict, findings: body.findings, ...(body.reviewer ? { reviewer: body.reviewer } : {}) }
+          // assessment@1.1 (ADR-0075) adds the summary that opens with the count, and each finding's vote.
+          const body = a.body as { verdict: string; findings: unknown[]; reviewer?: string; summary?: string }
+          return { nodeId: a.nodeId, createdAt: a.createdAt, verdict: body.verdict, findings: body.findings, ...(body.reviewer ? { reviewer: body.reviewer } : {}), ...(body.summary ? { summary: body.summary } : {}) }
         }),
         more: Math.max(0, listed.length - REVIEW_VERDICTS),
         ...(listed.length === REVIEW_VERDICTS_COUNTED ? { moreAtLeast: true } : {}),

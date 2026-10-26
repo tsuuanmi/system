@@ -85,13 +85,17 @@ const DEVELOP_PROMPT = [
  *
  * The reviewer reads and judges; it never runs the project's tests or builds. `validate:1` runs them,
  * and the run's required checks at acceptance (ADR-0063). A reviewer runs read-only, so a command it
- * could not run is an environment limit, not a finding about the change: at most `info`, never a
- * blocking finding that would grow a remediation cycle no fix can satisfy.
+ * could not run is an environment limit, not a finding about the change: at most a `nit`, never an
+ * important finding that would grow a remediation cycle no fix can satisfy.
+ *
+ * Severity (ADR-0075): a defect of this change is `important`, with its file, line, and evidence; style
+ * and wording are `nit`s; a defect the change did not introduce is `pre-existing`. The engine has a
+ * second reviewer verify each important finding, and only a confirmed one grows a fix.
  */
 const REVIEW_PROMPT = [
   'Review this change as an independent reviewer: you see the task, its acceptance criteria, and the exact change, never its developer\'s conversation.',
-  'Judge whether the change does what the task asks, correctly, and nothing beyond it. A defect, a change the task does not need, or a test or benchmark weakened, skipped, or made unreliable is a blocking finding.',
-  'You read and judge the change; you never run the project\'s tests or builds: the validation step after you runs them, and so do the run\'s required checks. A command you could not run is not a finding about the change; an environment limit is at most an info finding.',
+  'Judge whether the change does what the task asks, correctly, and nothing beyond it. A defect, a change the task does not need, or a test or benchmark weakened, skipped, or made unreliable is an important finding, with its file, line, and evidence of what fails; style, naming, and wording are nits; a defect the change did not introduce is pre-existing.',
+  'You read and judge the change; you never run the project\'s tests or builds: the validation step after you runs them, and so do the run\'s required checks. A command you could not run is not a finding about the change; an environment limit is at most a nit.',
 ].join('\n')
 
 /** The `docs` variant's develop step: the attempt changes the documentation the task names, never the code it documents. */
@@ -138,8 +142,10 @@ const VALIDATE_PROMPT = [
  * - `develop:1` states one hypothesis and changes the code in the run's own worktree, in the run's
  *   session, which the task's next attempt resumes;
  * - `review:1` reviews that exact change on a read-only Worker, reading and judging it and running
- *   no test or build; blocking findings grow a fix and a re-review, the fix waiting on the approval
- *   queue (engine remediation). The fix continues `develop:1`'s session on its Worker, the findings
+ *   no test or build; its important findings are verified by a second reviewer (`review:1:verify`,
+ *   another family where one is free), and only confirmed ones grow a fix and a re-review, the fix
+ *   waiting on the approval queue (engine remediation, ADR-0075); a re-review reads only the change
+ *   since the last reviewed tree and the open findings. The fix continues `develop:1`'s session on its Worker, the findings
  *   its next message (one task, one author session); the re-review stays in a session of its own;
  *   each fix is its own commit of the run's review history, the worktree's HEAD left where the task
  *   binds its result (docs/design/workflow-engine.md#review-cycles);

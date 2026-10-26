@@ -23,6 +23,7 @@ import WorkerRouter from '@tsuuanmi/system-workers'
 import { type ArtifactRef, type CapabilityDescriptor, type Landed, type LandStep, reviewRef, type WorkerExecution, type WorkerStart } from '@tsuuanmi/system-workers-core'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { worker } from '../../../workers-core/conformance/workers.ts'
+import { importantFinding, verifierReply } from '../conformance/workflow.ts'
 import Workflow, { type NodeTemplate, type RunView } from '../src/index.ts'
 
 vi.setConfig({ testTimeout: 120_000 })
@@ -99,10 +100,13 @@ class AuthorWorkers {
 
   /** The developer changes add(); the reviewer asks for a test once, then approves; a fix adds the test, saying whether it remembers its change. */
   private answer(prompt: string, before: string[]): string {
+    // A second reviewer confirms the important finding (ADR-0075), in a session of its own.
+    const verified = verifierReply(prompt)
+    if (verified) return verified.text
     const subject = /^Subject: (\S+)$/m.exec(prompt)?.[1]
     if (subject) {
       const changes = ++this.reviews === 1
-      return '```json\n' + JSON.stringify({ subject, verdict: changes ? 'changes-requested' : 'approve', findings: changes ? [{ severity: 'blocking', title: 'no test for add()', file: 'calc.py' }] : [] }) + '\n```'
+      return '```json\n' + JSON.stringify({ subject, verdict: changes ? 'changes-requested' : 'approve', findings: changes ? [importantFinding('no test for add()', 'calc.py')] : [] }) + '\n```'
     }
     if (prompt.includes('Fix the blocking findings')) {
       writeFileSync(join(this.tree, 'test_calc.py'), 'from calc import add\nassert add(1, 2) == 3\n')
@@ -195,27 +199,29 @@ const decisions = (ctx: Context, runId: string, rule: string): Decision[] =>
   ctx.artifacts.list({ kind: 'decision', runId, limit: 1000 }).map((a) => a.body as Decision).filter((d) => d.decider.id === rule)
 
 describe('one task, one author session (board T232)', () => {
-  it('continues the author\'s session on its Worker for the fix, which sees its earlier turns; the reviewer never runs in it; each fix is its own commit, and the re-review reads the change since the last review as well as the whole', async () => {
+  it('continues the author\'s session on its Worker for the fix, which sees its earlier turns; the reviewer never runs in it; each fix is its own commit, and the re-review reads only the change since the last review, with the open finding', async () => {
     const { ctx, workers, tree } = await boot()
     const runId = await runToFix(ctx)
     const done = await finished(ctx, runId)
     expect(done.status).toBe('completed')
-    const [develop, review, fix, recheck] = workers.seen
-    expect(workers.seen).toHaveLength(4)
+    // The review's important finding is verified before it grows the fix (ADR-0075).
+    const [develop, review, verify, fix, recheck] = workers.seen
+    expect(workers.seen).toHaveLength(5)
+    expect(verify!.prompt).toContain('## Verify these findings')
     expect(develop).toMatchObject({ worker: 'w:author', sessionId: expect.any(String) })
     // The fix is the author session's next message, on its Worker, resuming its native conversation.
     expect(fix).toMatchObject({ worker: 'w:author', sessionId: develop!.sessionId, resumed: workers.sessions.get(develop!.sessionId!)!.handle })
     expect(fix!.before).toEqual([develop!.prompt])
     expect(fix!.prompt).toContain('reviewed the change you made earlier in this conversation')
     expect(fix!.prompt).toContain(`Reviewed subject: ${/^Subject: (\S+)$/m.exec(review!.prompt)![1]}`)
-    expect(fix!.prompt).toContain('- no test for add() (calc.py)')
+    expect(fix!.prompt).toContain('- no test for add() (calc.py:1)')
     expect(fix!.prompt).toContain('What to change:')
     expect(ctx.workflow.records(runId).find((r) => r.nodeId === 'review:1:fix:1')!.outputReceipt).toBeDefined()
     expect((ctx.artifacts.get(ctx.workflow.records(runId).find((r) => r.nodeId === 'review:1:fix:1')!.outputReceipt!.result)!.body as { text: string }).text).toBe('added a test, on top of the add() I changed')
     const [path] = decisions(ctx, runId, 'workflow.fix-session')
     expect(path).toMatchObject({ outcome: { option: 'continue', detail: { sessionId: develop!.sessionId, author: 'develop:1', worker: 'w:author' } } })
     // The reviewer is independent: each review runs in no session, never the author's, and resumes nothing.
-    for (const reviewer of [review!, recheck!]) {
+    for (const reviewer of [review!, verify!, recheck!]) {
       expect(reviewer).toMatchObject({ worker: 'w:reviewer', sessionId: undefined })
       expect(reviewer.resumed).toBeUndefined()
       expect((ctx.artifacts.get(reviewer.brief!)!.body as Brief).resume).toBeUndefined()
@@ -236,15 +242,16 @@ describe('one task, one author session (board T232)', () => {
     expect(captureGitSubject(tree)!.subject.ref).toBe(base)
     const commits = decisions(ctx, runId, 'workflow.fix-commit')
     expect(commits.map((d) => [d.outcome.option, d.outcome.detail!.what])).toEqual([['commit', 'reviewed'], ['commit', 'fixed']])
-    // The re-review reads what changed since the subject the last review read, and the whole change.
+    // The re-review reads only what changed since the subject the last review read (T266), with the
+    // open finding to check: the rest of the change was reviewed already, and is not shown again.
     const reviewedAt = git(tree, 'rev-parse', `${history}~1`).trim()
     expect(recheck!.prompt).toContain('This is review cycle 2. The last review (review:1) read subject')
-    const since = recheck!.prompt.split(`(relative to commit ${reviewedAt}, which holds it), verbatim:`)[1]!.split('The whole change')[0]!
+    expect(recheck!.prompt).toContain('Review only what changed since then')
+    const since = recheck!.prompt.split(`(relative to commit ${reviewedAt}, which holds it), verbatim:`)[1]!
     expect(since).toContain('test_calc.py')
-    expect(since).not.toContain('return a + b')
-    const whole = recheck!.prompt.split(`The whole change relative to commit ${base}, where it started, verbatim:`)[1]!
-    expect(whole).toContain('+    return a + b')
-    expect(whole).toContain('test_calc.py')
+    expect(recheck!.prompt).not.toContain('return a + b')
+    expect(recheck!.prompt).not.toContain(`The whole change relative to commit ${base}`)
+    expect(recheck!.prompt).toContain('- review:1#f1 important: no test for add() (calc.py:1)')
   })
 
   it('waits for the author\'s Worker while it cannot take the fix, recorded, then hands the session off past the bound, recorded, rather than starting fresh in silence', async () => {

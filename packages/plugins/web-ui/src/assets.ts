@@ -1074,12 +1074,26 @@ export const APP_JS = `'use strict'
           c.more ? el('p', { class: 'muted' }, c.more + ' more file(s) are not listed: read them in ', shortId(c.workspace, 'Copy path'), '.') : null)
       }))
   }
-  // Each reviewer's verdict on the exact change, newest first, with its findings; how many more there are.
+  // A finding's severity rank (ADR-0075): important first, then pre-existing, then nits; an assessment@1.0's severities read alike.
+  const SEVERITY_RANK = { important: 0, blocking: 0, 'pre-existing': 1, nit: 2, warning: 2, info: 2 }
+  const findingBlocks = (f) => !f.repeated && (f.severity === 'blocking' || (f.severity === 'important' && !!f.verification && f.verification.vote === 'confirm'))
+  const bySeverity = (fs) => fs.map((f, i) => [f, i]).sort((a, b) => (Number(!!a[0].repeated) - Number(!!b[0].repeated)) || ((SEVERITY_RANK[a[0].severity] ?? 3) - (SEVERITY_RANK[b[0].severity] ?? 3)) || (Number(!findingBlocks(a[0])) - Number(!findingBlocks(b[0]))) || a[1] - b[1]).map((p) => p[0])
+  const VOTE_WORD = { confirm: 'confirmed', reject: 'rejected', none: 'unverified' }
+  const findingView = (f) => el('li', { class: findingBlocks(f) ? 'state failed' : '' }, el('span', { class: 'tag' }, f.severity),
+    ' ' + f.title, f.file ? [' (', shortId(f.file, 'Copy path'), f.line ? ':' + f.line : '', ')'] : null, f.class ? ' [class: ' + f.class + ']' : null,
+    f.verification ? [' ', el('span', { class: 'tag', title: 'the second reviewer\\'s vote, by ' + f.verification.node }, VOTE_WORD[f.verification.vote] || f.verification.vote)] : null,
+    f.repeated ? el('span', { class: 'muted' }, ' repeats ' + f.repeated + ', already answered: not counted') : null,
+    f.demoted ? el('span', { class: 'muted' }, ' (read as a nit: no evidence given)') : null,
+    f.evidence ? el('div', { class: 'muted' }, 'Evidence: ' + f.evidence) : null,
+    f.verification && f.verification.reason ? el('div', { class: 'muted' }, 'Vote: ' + f.verification.reason) : null,
+    f.detail ? el('div', { class: 'muted' }, f.detail) : null)
+  // Each reviewer's verdict on the exact change, newest first, with its summary and its findings by severity and their votes; how many more there are.
   const verdictsView = (assessments) => !('value' in assessments) ? el('p', { class: 'unknown' }, 'The reviewers\\' verdicts are unknown (' + assessments.unknown + ').')
     : !assessments.value.length ? el('p', { class: 'muted' }, 'No reviewer gave a verdict on this change. When a review step of the run reads it, its verdict appears here.')
       : el('div', {}, el('ul', { class: 'verdicts' }, assessments.value.map((a) => el('li', {},
         el('strong', { class: a.verdict === 'approve' ? 'state completed' : 'state failed' }, a.verdict === 'approve' ? 'Approved' : 'Changes requested'), ' by the review at ' + (a.nodeId || 'a step') + (a.reviewer ? ' (' + a.reviewer + ')' : ''),
-        a.findings.length ? el('ul', {}, a.findings.map((f) => el('li', { class: f.severity === 'blocking' ? 'state failed' : '' }, el('span', { class: 'tag' }, f.severity), ' ' + f.title, f.file ? [' (', shortId(f.file, 'Copy path'), ')'] : null, f.detail ? el('div', { class: 'muted' }, f.detail) : null))) : el('span', { class: 'muted' }, '; no finding')))),
+        a.summary ? el('div', { class: 'muted' }, a.summary) : null,
+        a.findings.length ? el('ul', {}, bySeverity(a.findings).map(findingView)) : el('span', { class: 'muted' }, '; no finding')))),
         assessments.more ? el('p', { class: 'muted' }, 'The newest ' + assessments.value.length + ' verdicts are shown; ' + assessments.more + (assessments.moreAtLeast ? ' or more' : '') + ' older ' + (assessments.more === 1 && !assessments.moreAtLeast ? 'one is' : 'ones are') + ' not.') : null)
   // The run's report in its own words: a line that says a criterion was not met or not measured is marked, the words stay the step's.
   const reportView = (report) => el('div', {},

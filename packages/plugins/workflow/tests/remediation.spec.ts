@@ -17,7 +17,7 @@ import WorkerRouter from '@tsuuanmi/system-workers'
 import type { ArtifactRef, WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { worker } from '../../../workers-core/conformance/workers.ts'
-import { CONFIG, type Rendered, ScriptedWorkers } from '../conformance/workflow.ts'
+import { CONFIG, importantFinding, type Rendered, ScriptedWorkers, verifierReply } from '../conformance/workflow.ts'
 import Workflow, { type NodeTemplate, type RunView } from '../src/index.ts'
 import { REVIEW_RUNS_NOTHING } from '../src/spec.ts'
 
@@ -124,10 +124,13 @@ async function boot(options: { queue?: boolean; policy?: AutonomyPolicy; reviews
   workers.extra = [worker('w:reviewer', { tier: 'standard', proves: ['review'] })]
   let reviews = 0
   workers.reply = (request: Rendered) => {
+    // The second reviewer confirms each important finding (ADR-0075): only then does it grow a fix.
+    const verified = verifierReply(request.prompt)
+    if (verified) return verified
     const subject = /^Subject: (\S+)$/m.exec(request.prompt)?.[1]
     if (subject) {
       const changes = ++reviews <= (options.reviews ?? 1)
-      return { text: '```json\n' + JSON.stringify({ subject, verdict: changes ? 'changes-requested' : 'approve', findings: [{ severity: changes ? 'blocking' : 'info', title: 'no test for add()', file: 'calc.py' }] }) + '\n```' }
+      return { text: '```json\n' + JSON.stringify({ subject, verdict: changes ? 'changes-requested' : 'approve', findings: [changes ? importantFinding('no test for add()', 'calc.py') : { severity: 'nit', title: 'no test for add()', file: 'calc.py' }] }) + '\n```' }
     }
     if (request.prompt.includes('Fix the blocking findings')) {
       writeFileSync(join(tree, `test_${workers.started.length}.py`), 'assert True\n')
@@ -245,7 +248,8 @@ describe('remediation on the approval queue', () => {
     const decision = ctx.artifacts.get(opened.outputReceipt!.acceptance)!.body as { decisionType: string; decider: { id: string }; outcome: { option: string; detail: { approvalRequest: string } } }
     expect(decision).toMatchObject({ decisionType: 'gate', decider: { id: 'workflow.remediation-approval' }, outcome: { option: 'open', detail: { approvalRequest: request.requestId } } })
     expect(done.nodes.map((n) => [n.nodeId, n.state])).toEqual([
-      ['develop', 'COMPLETED'], ['review', 'COMPLETED'], ['review:approve:1', 'COMPLETED'], ['review:fix:1', 'COMPLETED'], ['review:review:2', 'COMPLETED'],
+      // The important finding was verified first (ADR-0075); the fix's gate waits after the verification.
+      ['develop', 'COMPLETED'], ['review', 'COMPLETED'], ['review:verify', 'COMPLETED'], ['review:approve:1', 'COMPLETED'], ['review:fix:1', 'COMPLETED'], ['review:review:2', 'COMPLETED'],
     ])
   })
 
@@ -258,7 +262,8 @@ describe('remediation on the approval queue', () => {
     await decide(ctx, (await ctx.approvals.get(waiting.blocked.approvalRequest))!, 'approved')
     expect((await finished(ctx, run.runId)).status).toBe('completed')
     expect(workers.started.map((s) => [s.worker, s.requirement.schema, s.requirement.kind])).toEqual([
-      ['w:coder', 'work-requirement@1.2', 'code'], ['w:reviewer', 'work-requirement@1.2', 'review'],
+      // The verification of the important finding is the review's kind of work too (ADR-0075).
+      ['w:coder', 'work-requirement@1.2', 'code'], ['w:reviewer', 'work-requirement@1.2', 'review'], ['w:reviewer', 'work-requirement@1.2', 'review'],
       ['w:coder', 'work-requirement@1.2', 'code'], ['w:reviewer', 'work-requirement@1.2', 'review'],
     ])
     expect(fixes(workers)).toBe(1)

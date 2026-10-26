@@ -18,7 +18,7 @@ import WorkerRouter from '@tsuuanmi/system-workers'
 import type { Checked, CheckStep, WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { worker } from '../../../workers-core/conformance/workers.ts'
-import { activeProject, CONFIG, readyTask, type Rendered, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
+import { activeProject, CONFIG, importantFinding, readyTask, type Rendered, ScriptedWorkers, TEMPLATES, verifierReply } from '../conformance/workflow.ts'
 import Workflow from '../src/index.ts'
 
 // A run's required checks (T151, ADR-0063): before a written result's acceptance, the engine has the
@@ -137,10 +137,13 @@ async function boot(checker: Checker | undefined, { onTree = true, review, board
     workers.extra = [worker('w:reviewer', { tier: 'standard', proves: ['review'] })]
     const answer = workers.reply
     workers.reply = (request: Rendered) => {
+      // A second reviewer confirms an important finding (ADR-0075).
+      const verified = verifierReply(request.prompt)
+      if (verified) return verified
       const subject = /^Subject: (\S+)$/m.exec(request.prompt)?.[1]
       if (!subject) return answer(request)
       const changes = review === 'changes-requested'
-      return { text: '```json\n' + JSON.stringify({ subject, verdict: review, findings: [{ severity: changes ? 'blocking' : 'info', title: 'no test for a', file: 'a.c' }] }) + '\n```' }
+      return { text: '```json\n' + JSON.stringify({ subject, verdict: review, findings: [changes ? importantFinding('no test for a', 'a.c') : { severity: 'nit', title: 'no test for a', file: 'a.c' }] }) + '\n```' }
     }
   }
   const config = { ...CONFIG, approvalPollSeconds: 1, maxReviewCycles: 1, templates: { ...TEMPLATES, develop: DEVELOP, reviewed: REVIEWED } }

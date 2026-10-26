@@ -1743,9 +1743,10 @@ export class StoreBoard extends Board {
    * of a listed project whose result is on a git working tree. It applies only when every condition
    * holds, each read from the records the decision names, never from its own account:
    * - it is the run owner's: a rule's decision in an envelope the system produced (INV-6);
-   * - **review**: `outcome.detail.review.assessment`, among its inputs, is an `assessment@1.0` of the
+   * - **review**: `outcome.detail.review.assessment`, among its inputs, is an `assessment@1.x` of the
    *   result's exact tree whose verdict is `approve` with no blocking finding left: the run's last
-   *   review (a blocking finding left at the cycle bound never passes);
+   *   review (a blocking finding left at the cycle bound never passes). Blocking is a confirmed
+   *   important finding (ADR-0075): nits and pre-existing findings never hold it;
    * - **checks**: every command check it reports passed (which covers every one the policy
    *   requires, since the policy saw none failed) is `passed` in its `check-run@1.0` record
    *   (`outcome.detail.checkRun.evidence`, among its inputs) on the result's exact tree (ADR-0063),
@@ -1768,11 +1769,13 @@ export class StoreBoard extends Board {
     const named = isObject(detail['review']) ? detail['review'] : undefined
     const reviewRef = typeof named?.['assessment'] === 'string' ? named['assessment'] as ArtifactRef : undefined
     const review = reviewRef && inputs.includes(reviewRef) ? this.ctx.artifacts.get(reviewRef) : undefined
-    const assessment = review?.kind === 'assessment' ? review.body as { schema?: string; subject?: unknown; verdict?: string; findings?: Array<{ severity?: string }> } : undefined
+    const assessment = review?.kind === 'assessment' ? review.body as { schema?: string; subject?: unknown; verdict?: string; findings?: Array<{ severity?: string; repeated?: string; verification?: { vote?: string } }> } : undefined
     if (!reviewRef) reasons.push('it names no review of the run (outcome.detail.review)')
     else if (!assessment?.schema?.startsWith('assessment@')) reasons.push(`the review ${reviewRef} it names is not an assessment among its inputs`)
     else {
-      const blocking = (assessment.findings ?? []).filter((f) => f.severity === 'blocking').length
+      // Blocking (ADR-0075): an important finding a second reviewer confirmed, or an assessment@1.0's
+      // blocking one; a nit, a pre-existing finding, or an unverified or rejected one never holds it.
+      const blocking = (assessment.findings ?? []).filter((f) => !f.repeated && (f.severity === 'blocking' || (f.severity === 'important' && f.verification?.vote === 'confirm'))).length
       const [at, bound] = [named!['cycle'], named!['maxCycles']]
       const cycle = typeof at === 'number' && typeof bound === 'number' ? ` (review cycle ${at} of ${bound}${at >= bound ? ', the cycle bound' : ''})` : ''
       if (!onResult(assessment.subject)) reasons.push(`the run's last review ${reviewRef} is not of the result's exact tree ${tree}`)

@@ -1174,6 +1174,22 @@ export interface ExplainedLiveness {
 
 type ExplainedDecision = { id: string; type: string; outcome: string; reasons: string[]; result?: string }
 
+/** A review step's latest assessment (ADR-0075): its summary, then its findings by severity with their votes. */
+type ExplainedReview = {
+  assessment: string
+  verdict: string
+  summary: string
+  findings: Array<{ id?: string; severity: string; title: string; place?: string; class?: string; blocks: boolean; vote?: string; reason?: string; repeated?: string }>
+}
+
+/** A review's lines under its step: the summary, then each finding, a blocking one marked, its vote and why. */
+export function formatReview(review: ExplainedReview): string[] {
+  return [
+    `    review  ${review.verdict}  ${review.summary}  (${review.assessment})`,
+    ...review.findings.map((f) => `      ${f.blocks ? '!' : '-'} ${f.id ? `${f.id} ` : ''}${f.severity}  ${f.title}${f.place ? `  ${f.place}` : ''}${f.class ? `  [class ${f.class}]` : ''}${f.vote ? `  ${f.vote === 'confirm' ? 'confirmed' : f.vote === 'reject' ? 'rejected' : 'unverified'}${f.reason ? `: ${f.reason}` : ''}` : ''}${f.repeated ? `  repeats ${f.repeated}, not counted` : ''}`),
+  ]
+}
+
 interface Explained {
   runId: string
   template: string
@@ -1183,7 +1199,7 @@ interface Explained {
   decisions?: ExplainedDecision[]
   /** The run's risk tier and why (ADR-0071), when its project's policy has a path map. */
   risk?: { tier: string; reasons: string[]; decision: string; at?: string }
-  nodes: Array<{ nodeId: string; state: string; worker?: string; quotaClass?: string; turnId?: string; tier?: string; model?: string; decisions: ExplainedDecision[] }>
+  nodes: Array<{ nodeId: string; state: string; worker?: string; quotaClass?: string; turnId?: string; tier?: string; model?: string; decisions: ExplainedDecision[]; review?: ExplainedReview }>
   liveness?: ExplainedLiveness[]
   livenessUnread?: Array<{ source: string; detail: string }>
   /** The run's checks stalled now: no output for their bound, still running to their deadline (T235). */
@@ -1220,7 +1236,8 @@ export function formatLiveness(runs: readonly ExplainedLiveness[], unread: Reado
 /**
  * `system explain <runId>`: the run's risk tier and why (ADR-0071), when it has one; the run's own
  * decisions (a board task's admission, subject, acceptance, report), then each step's (egress, tier,
- * route, acceptance) with their reasons, then its executions whose liveness needs a look, and its
+ * route, acceptance) with their reasons, a review step's findings by severity with their votes
+ * (ADR-0075), then its executions whose liveness needs a look, and its
  * checks stalled now, and its research Workers' web calls (T262).
  */
 export function formatExplanation(explained: Explained): string[] {
@@ -1236,6 +1253,7 @@ export function formatExplanation(explained: Explained): string[] {
     ...explained.nodes.flatMap((n) => [
       `  ${n.nodeId}  ${n.state}  ${n.worker ?? '-'}  ${n.quotaClass ?? '-'}  ${n.turnId ?? '-'}${n.tier && n.model ? `  tier ${n.tier}, model ${n.model}` : ''}`,
       ...n.decisions.map(line),
+      ...(n.review ? formatReview(n.review) : []),
     ]),
     ...liveness,
     ...stalled,

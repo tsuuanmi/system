@@ -151,8 +151,15 @@ function upstream(e: Engine, spec: ResolvedNode, nodes: readonly NodeRow[]): Arr
     for (const dep of row ? (JSON.parse(row.spec) as ResolvedNode).dependsOn : []) visit(dep)
   }
   for (const dep of spec.dependsOn) visit(dep)
-  return nodes.filter((n) => seen.has(n.node_id)).map((n) => singleFamilyOf(e, n)).filter((s): s is NonNullable<typeof s> => !!s)
+  return nodes.filter((n) => seen.has(n.node_id) && !verifies(n)).map((n) => singleFamilyOf(e, n)).filter((s): s is NonNullable<typeof s> => !!s)
 }
+
+/**
+ * Whether a step is a review's verification (ADR-0075): its fallback to the review's family, a fresh
+ * session, is the verification's own record (its `workflow.diversity` decision and its votes), not a
+ * result later steps build on as evidence, so it is left out of their briefs and the run's answer.
+ */
+const verifies = (n: NodeRow): boolean => !!(JSON.parse(n.spec) as ResolvedNode).verifies
 
 /**
  * What a step is told when a step it builds on ran on a single family: which, beside which, and that
@@ -171,7 +178,7 @@ export function singleFamilyBrief(e: Engine, spec: ResolvedNode, nodes: readonly
 
 /** The run's answer's first lines when a step of it ran on a single family; empty otherwise. */
 export function singleFamilyHeader(e: Engine, rows: readonly NodeRow[]): string {
-  const found = rows.map((n) => singleFamilyOf(e, n)).filter((s): s is NonNullable<typeof s> => !!s)
+  const found = rows.filter((n) => !verifies(n)).map((n) => singleFamilyOf(e, n)).filter((s): s is NonNullable<typeof s> => !!s)
   if (!found.length) return ''
   const steps = found.map((s) => `${s.node} on the family of ${s.differsFrom.join(', ')}`).join('; ')
   return `Single family: ${steps}, each in a conversation of its own, because no Worker of another provider family could take ${found.length > 1 ? 'them' : 'it'}; no other provider checked ${found.length > 1 ? 'them' : 'it'}.\n\n`

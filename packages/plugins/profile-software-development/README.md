@@ -26,9 +26,21 @@ holds no engine code and no rules of its own.
     reviewer reads and judges the change and never runs the project's tests or
     builds (`validate:1` and the run's required checks at acceptance run them,
     ADR-0063): a command it could not run is not a finding about the change, and
-    an environment limit (its read-only sandbox, a denied command) is at most an
-    `info` finding. The engine's exact-subject block says the same to every bound
+    an environment limit (its read-only sandbox, a denied command) is at most a
+    `nit`. The engine's exact-subject block says the same to every bound
     review, `agent-review`'s too;
+  - **Review cycles** ([ADR-0075](../../../docs/decisions/adr/0075-a-review-finding-has-a-severity-and-only-a-verified-important-one-blocks.md),
+    [severity and verification](../../../docs/design/workflow-engine.md#severity-and-verification)):
+    each finding of `review:1` is `important`, `nit`, or `pre-existing`, with its file, line,
+    and evidence (one without is a nit); the assessment's summary opens with the count. An
+    important finding grows `review:1:verify`, a second reviewer (another family where one
+    is free, else a fresh session) that votes on it against the code; only a confirmed one
+    grows the fix (`review:1:approve:1`, `review:1:fix:1`, in the author's session) and the
+    re-review (`review:1:review:2`). Nits reach the author once, as optional notes of a fix or
+    a dossier entry, and never start a round or hold auto-accept; a pre-existing finding
+    proposes a follow-up task. A re-review reads only the change since the last reviewed tree
+    with the open and answered findings, and from its third round says whether the approach
+    should change. The bound is `maxReviewCycles` (3, the first review included);
   - `validate:1` (`validate`, `local-data`, economy at least; `validation` work) runs the tests and
     benchmarks the task's criteria name, in a one-shot conversation (no session),
     on a Worker whose commands are proven confined (`executes`). It reads the task's

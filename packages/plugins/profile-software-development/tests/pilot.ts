@@ -55,8 +55,10 @@ export const POLICY: AutonomyPolicy = {
 export const POOL = 'plan.agents'
 
 /** A run's part in the template, from what its brief asks. */
-export type Role = 'develop' | 'review' | 'fix' | 'validate' | 'digest'
+export type Role = 'develop' | 'review' | 'verify' | 'fix' | 'validate' | 'digest'
 const roleOf = (spec: RunSpec): Role => spec.prompt.includes('Digest the raw artifacts below') ? 'digest'
+  // The review's verification (ADR-0075): a second reviewer, read-only too, that votes on its important findings.
+  : spec.sandbox === 'read-only' && spec.prompt.includes('## Verify these findings') ? 'verify'
   : spec.sandbox === 'read-only' ? 'review'
     : spec.prompt.includes('Fix the blocking findings') ? 'fix'
       : spec.prompt.includes('Validate the change in this worktree') ? 'validate' : 'develop'
@@ -159,8 +161,18 @@ export class PilotAgent implements AgentRuntimeProvider {
         const changes = this.reviews++ < (this.script.changes ?? 0)
         text = '```json\n' + JSON.stringify({
           subject, verdict: changes ? 'changes-requested' : 'approve',
-          findings: [{ severity: changes ? 'blocking' : 'info', title: changes ? 'no test covers add()' : 'add() now adds', file: 'calc.py' }],
+          findings: [changes
+            ? { severity: 'important', title: 'no test covers add()', file: 'calc.py', line: 2, evidence: 'calc.py line 2 changed add(), and no test calls it' }
+            : { severity: 'nit', title: 'add() now adds', file: 'calc.py' }],
         }) + '\n```'
+        break
+      }
+      case 'verify': {
+        // The second reviewer reads the code and confirms each important finding it is given.
+        await call('Read', { file_path: join(spec.workspace, 'calc.py') })
+        const subject = /^Verified subject: (\S+)$/m.exec(spec.prompt)![1]!
+        const votes = [...spec.prompt.matchAll(/^- (f\d+) important:/gm)].map((m) => ({ finding: m[1], vote: 'confirm', reason: 'calc.py has no test of add()' }))
+        text = '```json\n' + JSON.stringify({ subject, votes }) + '\n```'
         break
       }
       case 'validate': {

@@ -17,7 +17,7 @@ import WorkerRouter from '@tsuuanmi/system-workers'
 import type { ArtifactRef, WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { worker } from '../../../workers-core/conformance/workers.ts'
-import { activeProject, CONFIG, type Rendered, readyTask, ScriptedWorkers } from '../conformance/workflow.ts'
+import { activeProject, CONFIG, importantFinding, type Rendered, readyTask, ScriptedWorkers, verifierReply } from '../conformance/workflow.ts'
 import Workflow, { DOSSIER_FILE, DOSSIER_LIMITS, type DossierAppendInput, type DossierCaller, type DossierEntry, type DossierView, type NodeTemplate, renderDossier, type RunView } from '../src/index.ts'
 
 // The task dossier (docs/design/task-dossier.md, ADR-0070), end to end over the store-backed board and
@@ -138,10 +138,13 @@ describe('a board task\'s dossier (ADR-0070)', () => {
     workers.extra = [worker('w:author', { tier: 'standard', proves: ['develop', 'craft'] }), worker('w:reviewer', { tier: 'standard', proves: ['review'] })]
     let reviews = 0
     workers.reply = (request) => {
+      // The second reviewer confirms the important finding (ADR-0075).
+      const verified = verifierReply(request.prompt)
+      if (verified) return verified
       const subject = /^Subject: (\S+)$/m.exec(request.prompt)?.[1]
       if (subject) {
         const changes = ++reviews === 1
-        return { text: '```json\n' + JSON.stringify({ subject, verdict: changes ? 'changes-requested' : 'approve', findings: [{ severity: changes ? 'blocking' : 'info', title: 'no test covers add()', file: 'calc.py' }] }) + '\n```' }
+        return { text: '```json\n' + JSON.stringify({ subject, verdict: changes ? 'changes-requested' : 'approve', findings: [changes ? importantFinding('no test covers add()', 'calc.py') : { severity: 'nit', title: 'no test covers add()', file: 'calc.py' }] }) + '\n```' }
       }
       if (request.prompt.includes('Fix the blocking findings')) {
         writeFileSync(join(tree, 'test_calc.py'), 'assert True\n')
@@ -197,7 +200,7 @@ describe('a board task\'s dossier (ADR-0070)', () => {
     const done = await reported(ctx, run.runId)
     expect(done.status).toBe('completed')
     expect(done.nodes.map((n) => [n.nodeId, n.worker ?? null])).toEqual([
-      ['develop', 'w:author'], ['review', 'w:reviewer'], ['review:approve:1', null], ['review:fix:1', 'w:fixer'], ['review:review:2', 'w:reviewer'],
+      ['develop', 'w:author'], ['review', 'w:reviewer'], ['review:verify', 'w:reviewer'], ['review:approve:1', null], ['review:fix:1', 'w:fixer'], ['review:review:2', 'w:reviewer'],
     ])
 
     // The reviewer read the dossier (the author's plan and progress), never its transcript: no session
@@ -227,7 +230,7 @@ describe('a board task\'s dossier (ADR-0070)', () => {
     const slice = sliceOf(ctx, fixBrief)!
     schemas.assertRecord(slice)
     expect([...slice.text].length).toBeLessThanOrEqual(DOSSIER_LIMITS.sliceChars)
-    expect(slice).toMatchObject({ taskId: task.taskId, entries: 3, maxChars: DOSSIER_LIMITS.sliceChars })
+    expect(slice).toMatchObject({ taskId: task.taskId, entries: 4, maxChars: DOSSIER_LIMITS.sliceChars })
     // The whole dossier is in the run's workspace too, for a source that places files, with the board's TASKS.md.
     expect(fileOf(ctx, fixBrief)!.text).toContain(PLAN)
 
@@ -236,16 +239,22 @@ describe('a board task\'s dossier (ADR-0070)', () => {
     await until(() => (moving.includes(ctx.workflow.landing(run.runId)?.state ?? 'none') ? undefined : true), 'the landing\'s outcome')
     const landed = ctx.workflow.landing(run.runId)
 
-    // The dossier, read on demand: the author's two entries, then the review, the fix's response, the
-    // re-review, and the System's evidence (acceptance, the report to the board, the landing's outcome).
+    // The dossier, read on demand: the author's two entries, then the review, its verification, the
+    // fix's response, the re-review, and the System's evidence (acceptance, the report to the board,
+    // the landing's outcome).
     const page = ctx.workflow.dossier({ runId: run.runId })
     expect(page.entries.map((e) => [e.seq, e.kind, e.author.type, e.author.ref])).toEqual([
-      [1, 'plan', 'worker', 'w:author'], [2, 'progress', 'worker', 'w:author'], [3, 'review', 'worker', 'w:reviewer'], [4, 'response', 'worker', 'w:fixer'],
-      [5, 'review', 'worker', 'w:reviewer'], [6, 'evidence', 'system', 'workflow'], [7, 'evidence', 'system', 'workflow'],
-      ...(landed ? [[8, 'evidence', 'system', 'workflow']] : []),
+      [1, 'plan', 'worker', 'w:author'], [2, 'progress', 'worker', 'w:author'], [3, 'review', 'worker', 'w:reviewer'], [4, 'review', 'worker', 'w:reviewer'],
+      // The approving re-review's nit is told the author once, before the review's own entry (ADR-0075).
+      [5, 'response', 'worker', 'w:fixer'], [6, 'evidence', 'system', 'workflow'], [7, 'review', 'worker', 'w:reviewer'], [8, 'evidence', 'system', 'workflow'], [9, 'evidence', 'system', 'workflow'],
+      ...(landed ? [[10, 'evidence', 'system', 'workflow']] : []),
     ])
-    if (landed) expect(page.entries[7]!.text).toMatch(new RegExp(`^Landing of run ${run.runId}'s accepted result: ${landed.state}`))
-    const [, , review, response, , acceptance, report] = page.entries
+    if (landed) expect(page.entries[9]!.text).toMatch(new RegExp(`^Landing of run ${run.runId}'s accepted result: ${landed.state}`))
+    const [, , review, verification, response, , , acceptance, report] = page.entries
+    // The verification's entry gives the vote on the review's finding, its count first (ADR-0075).
+    expect(verification!.text).toMatch(/^1 important \(1 confirmed, 0 not\); 1 confirmed important finding blocks/)
+    expect(verification!.text).toContain('f1 important: no test covers add() (calc.py:1)')
+    expect(verification!.text).toContain('— confirm: scripted confirm')
     // The review is bound to the exact subject it reviewed; its result and assessment are linked, not copied.
     const reviewResult = ctx.workflow.records(run.runId).find((r) => r.nodeId === 'review')!.outputReceipt!.result
     expect(review!.subject).toMatchObject({ type: 'git-head' })

@@ -440,6 +440,8 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
             else writeFileSync(join(ws, 'calc.py'), 'def add(a, b):\n    return a + b\n')
             return 'done'
           }
+          // The second reviewer confirms each important finding it is given (ADR-0075).
+          if (spec.prompt.includes('## Verify these findings')) return verify(spec.prompt)
           return review(spec.prompt, ws)
         },
       })
@@ -462,8 +464,14 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
       return { ctx, agent, approvals, done: await ctx.workflow.wait(run.runId, 60_000) }
     }
     const subjectOf = (prompt: string): string => /^Subject: (\S+)$/m.exec(prompt)![1]!
-    const assessment = (subject: string) => '```json\n' + JSON.stringify({ subject, verdict: 'approve', findings: [{ severity: 'info', title: 'add() now adds' }] }) + '\n```'
-    const changes = (subject: string) => '```json\n' + JSON.stringify({ subject, verdict: 'changes-requested', findings: [{ severity: 'blocking', title: 'no test for add()', file: 'calc.py' }] }) + '\n```'
+    const assessment = (subject: string) => '```json\n' + JSON.stringify({ subject, verdict: 'approve', findings: [{ severity: 'nit', title: 'add() now adds' }] }) + '\n```'
+    const changes = (subject: string) => '```json\n' + JSON.stringify({ subject, verdict: 'changes-requested', findings: [{ severity: 'important', title: 'no test for add()', file: 'calc.py', line: 2, evidence: 'calc.py line 2 changed add(), and no test calls it' }] }) + '\n```'
+    function verify(prompt: string): string {
+      const subject = /^Verified subject: (\S+)$/m.exec(prompt)![1]!
+      const votes = [...prompt.matchAll(/^- (f\d+) important:/gm)].map((m) => ({ finding: m[1], vote: 'confirm', reason: 'no test calls add()' }))
+      return '```json\n' + JSON.stringify({ subject, votes }) + '\n```'
+    }
+    const isReview = (prompt: string): boolean => /^Subject: /m.test(prompt)
 
     it('remediates blocking findings: a fix, then a review of the new subject; the report waits for both', async () => {
       let reviews = 0
@@ -475,12 +483,15 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
       expect(byId['plan:1:review:approve:1']).toMatchObject({ state: 'COMPLETED' })
       expect(byId['plan:1:review:fix:1']).toMatchObject({ state: 'COMPLETED', worker: 'agent:dev' })
       expect(byId['plan:1:review:review:2']).toMatchObject({ state: 'COMPLETED', worker: 'agent:reviewer' })
-      expect(agent.runs.find((r) => r.prompt.includes('Fix the blocking findings'))!.prompt).toContain('- no test for add() (calc.py)')
+      expect(agent.runs.find((r) => r.prompt.includes('Fix the blocking findings'))!.prompt).toContain('- no test for add() (calc.py:2)')
       // Each review bound to its own subject: the fix changed the tree.
-      const subjects = agent.runs.filter((r) => r.sandbox === 'read-only').map((r) => subjectOf(r.prompt))
+      const subjects = agent.runs.filter((r) => r.sandbox === 'read-only' && isReview(r.prompt)).map((r) => subjectOf(r.prompt))
       expect(subjects).toHaveLength(2)
       expect(subjects[0]).not.toBe(subjects[1])
-      expect(ctx.artifacts.list({ kind: 'assessment' }).map((a) => (a.body as { verdict: string }).verdict).sort()).toEqual(['approve', 'changes-requested'])
+      // The first review (its important finding still unverified: it requests nothing yet), the
+      // verification's (with the confirmed vote: changes requested), and the approving re-review.
+      expect(byId['plan:1:review:verify']).toMatchObject({ state: 'COMPLETED' })
+      expect(ctx.artifacts.list({ kind: 'assessment' }).map((a) => (a.body as { verdict: string }).verdict).sort()).toEqual(['approve', 'approve', 'changes-requested'])
       expect(done.nodes.at(-1)!.nodeId).toBe('report:1')
     })
 
@@ -499,6 +510,7 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
         await new Promise((resolve) => setTimeout(resolve, 50))
       }
       const again = await ctx.workflow.wait(done.runId, 60_000)
+      expect(again.error).toBeUndefined()
       expect(again.status).toBe('completed')
       const states = Object.fromEntries(ctx.workflow.records(done.runId).map((r) => [r.nodeId, r.state]))
       // What review 2 grew before is history; its new growth carries its new generation.
@@ -510,7 +522,9 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
       const { ctx, done } = await develop((prompt) => changes(subjectOf(prompt)))
       expect(done.status).toBe('completed')
       expect(done.nodes.map((n) => n.nodeId).filter((id) => id.includes(':review'))).toEqual([
-        'plan:1:review', 'plan:1:review:approve:1', 'plan:1:review:fix:1', 'plan:1:review:review:2', 'plan:1:review:approve:2', 'plan:1:review:fix:2', 'plan:1:review:review:3',
+        // Each review's important finding is verified before it can grow a fix (ADR-0075); the third's too, though the bound refuses its fix.
+        'plan:1:review', 'plan:1:review:verify', 'plan:1:review:approve:1', 'plan:1:review:fix:1', 'plan:1:review:review:2', 'plan:1:review:review:2:verify',
+        'plan:1:review:approve:2', 'plan:1:review:fix:2', 'plan:1:review:review:3', 'plan:1:review:review:3:verify',
       ])
       const growth = ctx.artifacts.list({ kind: 'decision' }).map((a) => a.body as { decisionType: string; decider: { id: string }; outcome: { option: string } })
         .filter((d) => d.decider.id === 'workflow.remediation').map((d) => d.outcome.option)
@@ -525,8 +539,8 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
       expect(prompt).toContain('+    return a + b')
       expect(prompt).toContain('Requested change: Fix add()')
       const [stored] = ctx.artifacts.list({ kind: 'assessment' })
-      expect(stored).toMatchObject({ bodySchema: 'assessment@1.0', subject: { type: 'git-head' } })
-      expect(stored!.body).toMatchObject({ verdict: 'approve', reviewer: 'agent:reviewer', findings: [{ severity: 'info' }] })
+      expect(stored).toMatchObject({ bodySchema: 'assessment@1.1', subject: { type: 'git-head' } })
+      expect(stored!.body).toMatchObject({ verdict: 'approve', reviewer: 'agent:reviewer', findings: [{ severity: 'nit' }], summary: '1 nit; nothing blocks.' })
       expect(`git:${(stored!.body as { subject: { ref: string; version: string } }).subject.ref}:${(stored!.body as { subject: { version: string } }).subject.version}`).toBe(subjectOf(prompt))
     })
 

@@ -357,9 +357,10 @@ comes from two sources, and both are recorded as `graph-growth` decision artifac
 - **Engine rules** (static), the same for every profile. A team's tally appends a
   **debate** and the next tally on a split vote, bounded by `debateRounds`
   ([teams](teams.md#tally-and-debate)). The other rule is **remediation**: when a node that requires the `review` capability is bound to an exact
-  subject, its assessment requests changes with blocking findings, and a step it depends on
+  subject, its assessment has blocking findings (important findings a second reviewer confirmed,
+  [below](#severity-and-verification)), and a step it depends on
   wrote the change (`develop`), the engine appends a fix step (on that step's capabilities) and
-  a re-review bound to the new subject. The re-review is worded as the review the cycles started
+  a re-review bound to the new subject, after the review's verification step. The re-review is worded as the review the cycles started
   from: that review's prompt, composed again, so `{{input}}` is the caller's text and each
   `{{node:<id>}}` points at the result that review read, except the step that wrote the change,
   whose place the fix that wrote the new subject takes; a plan step's review stays the step's model
@@ -403,11 +404,53 @@ its session, and an independent reviewer judges each result. Code:
   branch mid-run would leave the run no result it could bind. Each commit, or why none was made,
   is a `gate` decision by `workflow.fix-commit`. With no source that holds the tree (`land`),
   nothing is recorded and the cycle goes on.
-- **A re-review reads both.** Its exact-subject block names the subject the last review read and
-  shows the change since then (between the history's commits of that tree and the fix's result,
-  while the tree it reads is still that result; else against the HEAD when that tree was the HEAD
-  unchanged), then the whole change (against the commit the first review's tree started from).
-  When no commit holds the last subject, it says so and shows the whole change.
+- **A re-review reads only the new diff.** Its exact-subject block names the subject the last review
+  read and shows only the change since then (between the history's commits of that tree and the
+  fix's result, while the tree it reads is still that result; else against the HEAD when that tree was
+  the HEAD unchanged), with the **open findings** (those confirmed in the last round and sent to the
+  fix: it says whether each is fixed) and the **answered findings** (every other finding of the earlier
+  rounds: it never raises them again). When no commit holds the last subject, it says so and shows
+  the whole change (against the commit the first review's tree started from) instead. From cycle 3
+  on, it is also asked whether the approach should change, and answers in the assessment's
+  `approach`.
+
+### Severity and verification
+
+A review converges when only a checked defect costs a round ([ADR-0075](../decisions/adr/0075-a-review-finding-has-a-severity-and-only-a-verified-important-one-blocks.md),
+board T266). Code: `packages/plugins/workflow/src/review.ts`, `spec.ts`.
+
+- **Severity and evidence.** Every finding is `important` (a real defect of this change: wrong
+  behaviour, a broken invariant, a security or data risk, a missing required test or doc), `nit`
+  (style, naming, wording, a small improvement), or `pre-existing` (a defect the change did not
+  introduce), with its `file`, `line`, `evidence` (what fails), and optionally its `class`. An
+  important or pre-existing finding without a file, a line, and evidence is read as a nit (`demoted`).
+  The old severities are read as their new ones (`blocking` is important, verified like any).
+- **The assessment** (`assessment@1.1`) gives each finding an id (`f1`…) and opens its `summary` with
+  the count: `2 important, 3 nits`, or `no issues`. Its verdict is `changes-requested` only while a
+  confirmed important finding stands (one waiting for its verification requests nothing); the
+  reviewer's own verdict is kept as `said` when it differs.
+- **Verification.** A review with an important finding grows `<review>:verify`, a second reviewer on
+  the review's capabilities, preferring another provider family (`differentFrom` the review,
+  `diversity: preferred`: else the same family in a fresh session, recorded), bound to the exact tree
+  the review read. It votes `confirm` or `reject` with a reason on each important finding. Its gate
+  records a `workflow.verification` decision (confirmed, rejected, unverified), stores the review's
+  assessment again with the votes and its verdict read anew, and records a new exact-subject gate on
+  the review naming it; that latest assessment is what the risk tier, the task's acceptance, and the
+  board's auto-accept read. A finding without a vote stays unverified and does not block.
+- **What blocks.** Only a confirmed important finding: it grows the fix, its gate, and the re-review
+  after the verification step. Rejected and unverified ones are recorded and shown, never sent as
+  work. The fix's prompt names each confirmed finding with its evidence and the verifier's reason, its
+  class (fix every instance), and the review's nits once, as optional notes (one dossier response line
+  each). When no fix runs, the nits reach the author once as a dossier entry. A nit never starts a fix
+  round and never holds auto-accept. The verification is not a cycle: `maxReviewCycles` counts reviews.
+- **Pre-existing findings** each propose a follow-up board task (state `proposed`, in the task's
+  project, naming the finding and where it was found), after the review's transaction, linked from the
+  dossier and never a dependency; once per finding, by a `workflow.follow-up` decision.
+- **Repeats.** A re-review finding with the file and title of an answered one is marked `repeated`
+  (`<review>#<id>`): shown, never counted, verified, or sent.
+- **Shown.** The dossier's review entry, `explain` (each review step's `review`: summary, findings by
+  severity, votes and reasons), the CLI, and `/ui`'s review show the findings by severity with their
+  votes.
 
 ## Plan approval gate
 

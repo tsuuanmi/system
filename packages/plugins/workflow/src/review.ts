@@ -3,6 +3,12 @@
  * change binds to the working tree's subject, passes only while the tree is still that subject,
  * and blocking findings grow a fix and a re-review, bounded by `maxReviewCycles`. A re-review is
  * worded as the review it re-runs (`wordingOf`).
+ *
+ * Severity and verification (ADR-0075): a finding is `important`, `nit`, or `pre-existing`, with its
+ * evidence. A review with important findings grows a verification step, a second reviewer that votes
+ * on each against the code; only a confirmed important finding blocks and grows a fix. Nits never
+ * start a fix round (they reach the author once, as optional notes of a fix that runs anyway, else in
+ * the dossier); a pre-existing finding proposes a follow-up board task, linked and never blocking.
  */
 import type { Lease } from '@tsuuanmi/system-leases'
 import { captureGitSubject, changeBetween, changeSince, CLEAN_VERSION, type GitSubject, subjectId } from '@tsuuanmi/system-libs'
@@ -10,10 +16,19 @@ import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { fixCommits } from './fix-sessions.ts'
 import { append } from './growth.ts'
-import { type Assessment, growthPrefix, parseAssessment, remediationPrompt, type ResolvedNode, type ReviewCycle, subjectBlock } from './spec.ts'
+import {
+  type Assessment, blocks, clampText, type Finding, findingKey, growthPrefix, parseAssessment, parseVotes, pendingImportant, type PriorFinding, remediationPrompt,
+  type ResolvedNode, type ReviewCycle, subjectBlock, summaryOf, verificationBlock,
+} from './spec.ts'
 import type { NodeRecord, NodeRow, RunRow } from './types.ts'
 
-export type SubjectGate = { passed: true; decision: ArtifactRef; assessment: Assessment; subject: string } | { passed: false; decision: ArtifactRef; reason: string }
+export type SubjectGate = { passed: true; decision: ArtifactRef; assessment: Assessment; ref: ArtifactRef; subject: string } | { passed: false; decision: ArtifactRef; reason: string }
+
+/** The rule of a verification step's votes, and of a pre-existing finding's follow-up task. */
+export const VERIFICATION_RULE = 'workflow.verification'
+export const FOLLOW_UP_RULE = 'workflow.follow-up'
+
+const PRODUCER = { producer: { type: 'system' as const, ref: 'workflow' } }
 
 /**
  * What a node's instructions are composed from (docs/design/workflow-engine.md#briefs): a
@@ -78,7 +93,7 @@ export function wordingOf(spec: ResolvedNode, nodes: readonly NodeRow[]): Wordin
  * The working tree a dependency's agent worked in, captured as it is now, with its verbatim change;
  * `missing` when an agent worked in a tree that can no longer be captured (its worktree was
  * cleaned up, say): the review is then never run unbound (INV-2, INV-5). A re-review (`cycle`) is
- * shown the change since the subject the last review read as well as the whole change.
+ * shown the change since the subject the last review read, with the open and answered findings.
  */
 export function reviewSubject(e: Engine, results: ArtifactRef[], request: string, cycle?: (workspace: string, subject: GitSubject) => ReviewCycle | undefined): { workspace: string; subject: GitSubject; block: string } | { missing: string } | undefined {
   const workspace = results
@@ -93,13 +108,69 @@ export function reviewSubject(e: Engine, results: ArtifactRef[], request: string
 }
 
 /**
+ * A verification step's subject: the exact tree the review it verifies was bound to, captured again
+ * now, with the findings to vote on. `missing` when that tree can no longer be captured or is no
+ * longer the subject the review read: the findings are then never verified against another tree.
+ */
+export function verificationSubject(e: Engine, spec: ResolvedNode, nodes: readonly NodeRow[], request: string): { workspace: string; subject: GitSubject; block: string } | { missing: string } {
+  const review = nodes.find((n) => n.node_id === spec.verifies!.review)
+  const bound = review?.subject ? JSON.parse(review.subject) as { workspace: string; subject: GitSubject } : undefined
+  if (!bound) return { missing: `review ${spec.verifies!.review} is bound to no tree` }
+  const captured = captureGitSubject(bound.workspace)
+  if (!captured || subjectId(captured.subject) !== subjectId(bound.subject)) return { missing: bound.workspace }
+  const body = e.ctx.artifacts.get(spec.verifies!.assessment)?.body as { findings?: Finding[] } | undefined
+  const findings = (body?.findings ?? []).filter(pendingImportant)
+  const id = subjectId(captured.subject)
+  return { workspace: bound.workspace, subject: captured.subject, block: verificationBlock(id, bound.workspace, captured.subject.ref, captured.diff, request, spec.verifies!.review, findings) }
+}
+
+/** A step's latest assessment: the one its latest passed exact-subject gate names (a review's verification writes one too). */
+export function latestAssessment(e: Engine, node: Pick<NodeRow, 'decisions'>): { ref: ArtifactRef; body: { verdict?: string; findings?: Finding[]; subject?: GitSubject; summary?: string; approach?: Assessment['approach'] } } | undefined {
+  let found: ReturnType<typeof latestAssessment>
+  for (const ref of node.decisions ? JSON.parse(node.decisions) as ArtifactRef[] : []) {
+    const body = e.ctx.artifacts.get(ref)?.body as { decisionType?: string; decider?: { id?: string }; outcome?: { option?: string; detail?: { assessment?: ArtifactRef } } } | undefined
+    if (body?.decisionType !== 'gate' || body.decider?.id !== 'workflow.exact-subject' || body.outcome?.option !== 'pass' || !body.outcome.detail?.assessment) continue
+    const assessment = e.ctx.artifacts.get(body.outcome.detail.assessment)?.body as NonNullable<typeof found>['body'] | undefined
+    if (assessment) found = { ref: body.outcome.detail.assessment, body: assessment }
+  }
+  return found
+}
+
+/**
+ * The findings of the earlier reviews of a re-review's change (its cycles' reviews, completed), each
+ * by its review's latest assessment: `open` when the last review's verifier confirmed it (it was sent
+ * to the fix this re-review follows), else `answered` (rejected, unverified, a nit, pre-existing, or
+ * fixed and re-reviewed already). A repeated finding is left out: the one it repeats is there.
+ */
+export function priorFindings(e: Engine, spec: ResolvedNode, nodes: readonly NodeRow[]): PriorFinding[] {
+  if (spec.reviewOf === undefined) return []
+  const base = spec.reviewOf
+  const last = spec.grownBy?.node ?? base
+  const prior: PriorFinding[] = []
+  for (const row of nodes) {
+    if (row.node_id === spec.nodeId || row.state !== 'COMPLETED') continue
+    const rspec = JSON.parse(row.spec) as ResolvedNode
+    if (row.node_id !== base && (rspec.reviewOf !== base || rspec.secondReview)) continue
+    for (const finding of latestAssessment(e, row)?.body.findings ?? []) {
+      if (finding.repeated) continue
+      prior.push({ review: row.node_id, finding, state: row.node_id === last && blocks(finding) ? 'open' : 'answered' })
+    }
+  }
+  // A finding still open (confirmed last round, sent to the fix) is raised again if the fix did not
+  // hold: it is no answered one, even when an earlier round answered the same finding.
+  const open = new Set(prior.filter((p) => p.state === 'open').map((p) => findingKey(p.finding)))
+  return prior.filter((p) => p.state === 'open' || !open.has(findingKey(p.finding)))
+}
+
+/**
  * What a re-review reads of its cycle (docs/design/workflow-engine.md#review-cycles): the subject the
- * review that grew it read, the change since then, and the whole change against the commit the first
- * review's tree started from. The change since is the one between the commits of the run's review
- * history that hold the tree that review read and its fix's result (`workflow.fix-commit`), while the
- * tree the re-review reads (`now`) is still that result; else, against the HEAD, when that tree was
- * the HEAD with nothing on top. Undefined for a first review, or when the reviews it builds on were
- * bound to no tree.
+ * review that grew it read, the change since then, and the findings still open and already answered;
+ * the whole change against the commit the first review's tree started from only stands in for the
+ * change since when that cannot be shown apart. The change since is the one between the commits of
+ * the run's review history that hold the tree that review read and its fix's result
+ * (`workflow.fix-commit`), while the tree the re-review reads (`now`) is still that result; else,
+ * against the HEAD, when that tree was the HEAD with nothing on top. Undefined for a first review, or
+ * when the reviews it builds on were bound to no tree.
  */
 export function cycleOf(e: Engine, runId: string, spec: ResolvedNode, nodes: readonly NodeRow[], workspace: string, now: GitSubject): ReviewCycle | undefined {
   if (spec.reviewOf === undefined) return undefined
@@ -121,9 +192,11 @@ export function cycleOf(e: Engine, runId: string, spec: ResolvedNode, nodes: rea
   const whole = changeSince(workspace, first.ref)
   if (!whole) return undefined
   const since = recorded ? changeBetween(workspace, recorded.reviewed, recorded.fixed) : holds ? changeSince(workspace, holds) : undefined
+  const prior = priorFindings(e, spec, nodes)
   return {
     cycle: spec.cycle ?? 2, previous: { review: previous, subject: subjectId(last) },
     ...(holds && since ? { since: { commit: holds, diff: since.diff } } : {}), whole: { commit: first.ref, diff: whole.diff },
+    ...(prior.length ? { prior } : {}),
   }
 }
 
@@ -140,53 +213,225 @@ export function missingSubject(e: Engine, run: RunRow, node: NodeRow, workspace:
     decider: { type: 'rule', id: 'workflow.exact-subject', version: '1' },
     outcome: { option: 'fail', detail: { workspace } },
     deterministic: true,
-  }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
+  }, { ...PRODUCER, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
 }
 
-/**
- * The exact-subject gate of a bound review: its assessment names the subject it was given, and
- * the working tree is still that subject now. A pass stores the `assessment` artifact, bound to
- * the subject; either way the outcome is a `gate` decision.
- */
-export function subjectGate(e: Engine, run: RunRow, node: NodeRow, result: ArtifactRef): SubjectGate {
-  const bound = JSON.parse(node.subject!) as { workspace: string; subject: GitSubject }
-  const expected = subjectId(bound.subject)
-  const parsed = parseAssessment(e.resultText(result))
-  const now = captureGitSubject(bound.workspace)
-  const reason = !parsed.ok ? parsed.reason
-    : parsed.assessment.subject !== expected ? `the review names ${parsed.assessment.subject}, not the subject it was given (${expected})`
-      : !now ? `${bound.workspace} is no longer a git working tree`
-        : subjectId(now.subject) !== expected ? `the working tree changed during the review (now ${subjectId(now.subject)})` : undefined
-  const assessment = parsed.ok && !reason
-    ? e.ctx.artifacts.put({
-      kind: 'assessment', bodySchema: 'assessment@1.0', subject: bound.subject, inputs: [result],
-      body: { schema: 'assessment@1.0', subject: bound.subject, verdict: parsed.assessment.verdict, findings: parsed.assessment.findings, ...(node.worker ? { reviewer: node.worker } : {}) },
-      classification: run.classification ?? e.ctx.egress.defaultClassification, producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id,
-    }).id as ArtifactRef
-    : undefined
-  const decision = e.ctx.artifacts.recordDecision({
+/** Store an `assessment@1.1`: the findings as the engine reads them, the verdict, and the summary that opens with the count. */
+function putAssessment(e: Engine, run: RunRow, node: NodeRow, subject: GitSubject, assessment: Assessment, inputs: ArtifactRef[], reviewer: string | null): ArtifactRef {
+  return e.ctx.artifacts.put({
+    kind: 'assessment', bodySchema: 'assessment@1.1', subject, inputs,
+    body: {
+      schema: 'assessment@1.1', subject, verdict: assessment.verdict, findings: assessment.findings, summary: summaryOf(assessment),
+      ...(assessment.said ? { said: assessment.said } : {}), ...(assessment.approach ? { approach: assessment.approach } : {}), ...(reviewer ? { reviewer } : {}),
+    },
+    classification: run.classification ?? e.ctx.egress.defaultClassification, ...PRODUCER, runId: run.run_id, nodeId: node.node_id,
+  }).id as ArtifactRef
+}
+
+/** The exact-subject `gate` decision on a review step: whether its assessment binds to the current subject. */
+function recordGate(e: Engine, run: RunRow, node: NodeRow, expected: string, inputs: ArtifactRef[], reason: string | undefined, assessment: ArtifactRef | undefined, verdict: string): ArtifactRef {
+  return e.ctx.artifacts.recordDecision({
     decisionType: 'gate',
     question: `Does the review at node ${node.node_id} of run ${run.run_id} bind to the current subject ${expected}?`,
-    inputs: [result, ...(assessment ? [assessment] : [])],
+    inputs: [...inputs, ...(assessment ? [assessment] : [])],
     candidates: [
-      { option: 'pass', selected: !reason, reasons: reason ? [`not pass: ${reason}`] : [`the assessment names ${expected}, and the working tree is still it (${parsed.ok ? parsed.assessment.verdict : ''})`] },
+      { option: 'pass', selected: !reason, reasons: reason ? [`not pass: ${reason}`] : [`the assessment names ${expected}, and the working tree is still it (${verdict})`] },
       { option: 'fail', selected: !!reason, reasons: reason ? [reason] : [`not fail: the review parses, names ${expected}, and the working tree has not changed since`] },
     ],
     decider: { type: 'policy', id: 'workflow.exact-subject', version: '1' },
     outcome: { option: reason ? 'fail' : 'pass', detail: { subject: expected, ...(assessment ? { assessment } : {}) } },
     deterministic: true,
-  }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
-  return reason || !parsed.ok ? { passed: false, decision, reason: reason ?? '' } : { passed: true, decision, assessment: parsed.assessment, subject: expected }
+  }, { ...PRODUCER, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
 }
 
 /**
- * A review that requested changes with blocking findings grows a remediation cycle (an engine
- * rule for any node offering `review`, docs/design/workflow-engine.md): a fix on the producer's capabilities, then a
- * re-review bound to the new subject; whatever waited for the review waits for both. Bounded
- * by `maxReviewCycles`; either way a `graph-growth` decision records why.
+ * The exact-subject gate of a bound review: its assessment names the subject it was given, and
+ * the working tree is still that subject now. A pass stores the `assessment` artifact, bound to
+ * the subject, its findings read by severity (a re-review's repeats of answered findings marked);
+ * either way the outcome is a `gate` decision.
  */
-export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, assessment: Assessment, subject: string, lease: () => Lease): void {
-  const blocking = assessment.findings.filter((f) => f.severity === 'blocking')
+export function subjectGate(e: Engine, run: RunRow, node: NodeRow, result: ArtifactRef): SubjectGate {
+  const bound = JSON.parse(node.subject!) as { workspace: string; subject: GitSubject }
+  const expected = subjectId(bound.subject)
+  const spec = JSON.parse(node.spec) as ResolvedNode
+  const answered = priorFindings(e, spec, e.nodeRows(run.run_id)).filter((p) => p.state === 'answered')
+  const parsed = parseAssessment(e.resultText(result), answered)
+  const now = captureGitSubject(bound.workspace)
+  const reason = !parsed.ok ? parsed.reason
+    : parsed.assessment.subject !== expected ? `the review names ${parsed.assessment.subject}, not the subject it was given (${expected})`
+      : !now ? `${bound.workspace} is no longer a git working tree`
+        : subjectId(now.subject) !== expected ? `the working tree changed during the review (now ${subjectId(now.subject)})` : undefined
+  const assessment = parsed.ok && !reason ? putAssessment(e, run, node, bound.subject, parsed.assessment, [result], node.worker) : undefined
+  const decision = recordGate(e, run, node, expected, [result], reason, assessment, parsed.ok ? parsed.assessment.verdict : '')
+  return reason || !parsed.ok ? { passed: false, decision, reason: reason ?? '' } : { passed: true, decision, assessment: parsed.assessment, ref: assessment!, subject: expected }
+}
+
+/**
+ * A verification step's gate (ADR-0075): the tree is still the one the review read, and the votes
+ * are read for each important finding it was given (one it did not vote on stays unverified). A
+ * `workflow.verification` decision on the step records every vote and its reason; the review's
+ * assessment is stored again with the votes and its verdict read anew (changes-requested only for a
+ * confirmed important finding), and a new exact-subject gate on the review names it: the review's
+ * latest assessment is what every reader takes (risk tier, acceptance, auto-accept). The tree having
+ * moved fails the step as a stale subject, as it fails a review.
+ */
+export function verificationGate(e: Engine, run: RunRow, node: NodeRow, result: ArtifactRef, lease: () => Lease): SubjectGate & { review?: NodeRow } {
+  const spec = JSON.parse(node.spec) as ResolvedNode
+  const bound = JSON.parse(node.subject!) as { workspace: string; subject: GitSubject }
+  const expected = subjectId(bound.subject)
+  const reviewRow = e.nodeRow(run.run_id, spec.verifies!.review)
+  const reviewed = e.ctx.artifacts.get(spec.verifies!.assessment)?.body as (Assessment & { schema?: string }) | undefined
+  const now = captureGitSubject(bound.workspace)
+  const reason = !reviewRow || !reviewed ? `the review ${spec.verifies!.review} or its assessment ${spec.verifies!.assessment} is not stored`
+    : !now ? `${bound.workspace} is no longer a git working tree`
+      : subjectId(now.subject) !== expected ? `the working tree changed during the verification (now ${subjectId(now.subject)})` : undefined
+  if (reason) {
+    const decision = recordGate(e, run, node, expected, [result], reason, undefined, '')
+    return { passed: false, decision, reason }
+  }
+  const ids = reviewed!.findings.filter(pendingImportant).map((f) => f.id!)
+  const { votes, problem } = parseVotes(e.resultText(result), expected, ids)
+  const findings = reviewed!.findings.map((f): Finding => (votes[f.id ?? ''] ? { ...f, verification: { ...votes[f.id!]!, node: node.node_id, ...(node.worker ? { worker: node.worker } : {}) } } : f))
+  const verdict = findings.some(blocks) ? 'changes-requested' : 'approve'
+  const assessment: Assessment = { subject: expected, verdict, findings, ...(reviewed!.said ? { said: reviewed!.said } : {}), ...(reviewed!.approach ? { approach: reviewed!.approach } : {}) }
+  const confirmed = ids.filter((id) => votes[id]!.vote === 'confirm')
+  const rejected = ids.filter((id) => votes[id]!.vote === 'reject')
+  const unvoted = ids.filter((id) => votes[id]!.vote === 'none')
+  const ref = putAssessment(e, run, node, bound.subject, assessment, [spec.verifies!.assessment as ArtifactRef, result], reviewRow!.worker)
+  const said = (list: string[]): string => list.map((id) => `${id} (${votes[id]!.reason || 'no reason given'})`).join('; ')
+  const passReasons = [
+    ...(confirmed.length ? [`not pass: ${confirmed.length} important finding(s) confirmed`] : []),
+    ...(rejected.length ? [clampText(`rejected, recorded and never sent as work: ${said(rejected)}`, 300)] : []),
+    ...(unvoted.length ? [clampText(`unverified, so not blocking: ${unvoted.join(', ')}${problem ? ` (${problem})` : ''}`, 300)] : []),
+  ]
+  const decision = e.ctx.artifacts.recordDecision({
+    decisionType: 'gate',
+    question: `Which important findings of review ${spec.verifies!.review} of run ${run.run_id} does the second reviewer confirm on ${expected}?`,
+    inputs: [spec.verifies!.assessment as ArtifactRef, result, ref],
+    candidates: [
+      { option: 'block', selected: confirmed.length > 0, reasons: confirmed.length ? [clampText(`confirmed: ${said(confirmed)}`, 300)] : ['not block: no important finding was confirmed'] },
+      { option: 'pass', selected: !confirmed.length, reasons: passReasons.length ? passReasons : ['no important finding to verify'] },
+    ],
+    decider: { type: 'rule', id: VERIFICATION_RULE, version: '1' },
+    outcome: { option: confirmed.length ? 'block' : 'pass', detail: { review: spec.verifies!.review, subject: expected, assessment: ref, confirmed, rejected, unverified: unvoted } },
+    deterministic: true,
+  }, { ...PRODUCER, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
+  // The review's latest exact-subject gate names the assessment with the votes: what its readers take.
+  const gate = recordGate(e, run, reviewRow!, expected, [decision], undefined, ref, verdict)
+  // With no confirmed finding, no fix carries the nits: the author gets them here, once.
+  if (!confirmed.length) noteNits(e, run, reviewRow!, assessment, ref)
+  e.writeNode(reviewRow!, { decisions: JSON.stringify([...(reviewRow!.decisions ? JSON.parse(reviewRow!.decisions) as string[] : []), gate]) }, (r) => r, lease)
+  return { passed: true, decision, assessment, ref, subject: expected, review: e.nodeRow(run.run_id, reviewRow!.node_id)! }
+}
+
+/**
+ * A review's assessment, settled (ADR-0075): its pre-existing findings each propose a follow-up task
+ * (after the transaction, never blocking); its important findings, when any is not yet verified, grow
+ * the verification step that votes on them; a review with none grows nothing, so a nit never starts a
+ * fix round, and its nits go to the author once. A legacy `assessment@1.0`-style `blocking` finding is
+ * read as important, verified too.
+ */
+export function settleReview(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, assessment: Assessment, ref: ArtifactRef, lease: () => Lease): void {
+  const pre = assessment.findings.filter((f) => f.severity === 'pre-existing' && !f.repeated)
+  if (pre.length) e.ctx.store.afterCommit(() => void proposeFollowUps(e, run.run_id, node.node_id, ref, pre).catch((error: unknown) => e.ctx.logger.warn(`workflow: the follow-up of a pre-existing finding of ${node.node_id} was not proposed: ${(error as Error)?.message ?? String(error)}`)))
+  const pending = assessment.findings.filter(pendingImportant)
+  if (!pending.length) {
+    // No fix round will carry the nits (a nit never starts one): the author gets them once, here.
+    noteNits(e, run, node, assessment, ref)
+    return
+  }
+  // A review that ran again after a re-plan grows under its new generation, as its remediation does.
+  const generation = spec.generation ?? 1
+  const verifyId = `${node.node_id}${generation > 1 ? `:r${generation}` : ''}:verify`
+  if (e.nodeRow(run.run_id, verifyId)) return
+  const verify: ResolvedNode = {
+    nodeId: verifyId, objective: `Verify the important findings of review ${node.node_id} against the code: a second reviewer's vote on each`,
+    prompt: '', literal: true, capabilities: spec.capabilities, tier: spec.tier, tierSource: 'profile', acceptance: 'acceptance.answer',
+    ...(spec.kind !== undefined ? { kind: spec.kind } : {}),
+    dependsOn: [node.node_id], differentFrom: [node.node_id], diversity: 'preferred', session: {},
+    grownBy: { node: node.node_id, generation }, verifies: { review: node.node_id, assessment: ref },
+  }
+  append(e, run, node, [verify], [verifyId], lease)
+  e.ctx.eventLog.append({ type: 'workflow.graph.grown', runId: run.run_id, nodeId: node.node_id, data: { steps: [verifyId], verification: true, findings: pending.map((f) => f.id) } })
+}
+
+/**
+ * A review's nits, once, to the author (ADR-0075), when no fix round carries them as the optional notes
+ * of its prompt (a fix does, for a review with a confirmed important finding): the dossier, which
+ * every step's brief points at and the author reads, gets an entry naming each nit and asking one
+ * response line each (taken, or left and why). Never a fix round, never a hold of the result. Nothing
+ * for a run that serves no board task, or a review with no nit.
+ */
+function noteNits(e: Engine, run: RunRow, node: NodeRow, assessment: Assessment, ref: ArtifactRef): void {
+  const nits = assessment.findings.filter((f) => f.severity === 'nit' && !f.repeated)
+  if (!nits.length) return
+  e.tasks.dossiers.safely('the nits of a review', () => e.tasks.dossiers.evidence(run.run_id, [
+    `Optional notes for the author from review ${node.node_id} (${nits.length} nit${nits.length === 1 ? '' : 's'}; they never start a fix round or hold the result): take or leave each, and answer each with one response line in the dossier naming it (taken, or left and why).`,
+    ...nits.map((f) => `- ${f.id ? `${f.id}: ` : ''}${f.title}${f.file ? ` (${f.file}${f.line ? `:${f.line}` : ''})` : ''}`),
+  ].join('\n'), [ref]))
+}
+
+/**
+ * Each pre-existing finding of a board task's review proposes a follow-up task on the board, in the
+ * task's project, naming the finding, the review, and the task it was found in: proposed, so the lead
+ * or the operator decides it, and linked, never a dependency of the task. Once per finding: a
+ * `workflow.follow-up` decision records the task proposed (or why none was), and a finding that has
+ * one is never proposed again. The dossier's evidence entry links it.
+ */
+export async function proposeFollowUps(e: Engine, runId: string, nodeId: string, assessment: ArtifactRef, findings: readonly Finding[]): Promise<void> {
+  const row = e.tasks.row(runId)
+  const board = e.board
+  if (!row || !board) return
+  const done = new Set(e.ctx.artifacts.list({ kind: 'decision', decisionType: 'graph-growth', runId, nodeId, limit: 1000 })
+    .map((a) => a.body as { decider?: { id?: string }; outcome?: { detail?: { key?: string } } })
+    .filter((b) => b.decider?.id === FOLLOW_UP_RULE).map((b) => b.outcome?.detail?.key))
+  const source = await board.task(row.task_id)
+  for (const f of findings) {
+    const key = findingKey(f)
+    if (done.has(key)) continue
+    const place = f.file ? `${f.file}${f.line ? `:${f.line}` : ''}` : 'no place named'
+    let proposed: string | undefined
+    let why: string
+    try {
+      if (!source) throw new Error(`board task ${row.task_id} could not be read`)
+      const task = await board.propose({
+        projectId: source.projectId, title: clampText(`Pre-existing: ${f.title}`, 200), actionClass: source.actionClass, ...(source.template ? { template: source.template } : {}),
+        goal: clampText(`A pre-existing defect a review found while reviewing task ${source.taskId} (${source.title}), in review ${nodeId} of run ${runId}; that change did not introduce it, so it is not fixed there. ${f.title} (${place}). Evidence: ${f.evidence ?? 'none given'}.${f.detail ? ` ${f.detail}` : ''} The assessment is ${assessment}.`, 4000),
+        acceptance: [{ id: 'fixed', statement: clampText(`The defect no longer holds: ${f.title} (${place})`, 500) }],
+      })
+      proposed = task.taskId
+      why = `proposed ${task.taskId} in project ${source.projectId}, linked to task ${source.taskId}; it never blocks that task`
+    } catch (error) {
+      why = `not proposed: ${clampText((error as Error)?.message ?? String(error), 300)}`
+    }
+    e.ctx.store.transaction(() => {
+      const decision = e.ctx.artifacts.recordDecision({
+        decisionType: 'graph-growth',
+        question: `Does pre-existing finding ${f.id ?? '?'} of review ${nodeId} of run ${runId} become a follow-up task?`,
+        inputs: [assessment],
+        candidates: [
+          { option: 'propose', selected: !!proposed, reasons: [clampText(proposed ? why : `not propose: ${why}`, 300)] },
+          { option: 'none', selected: !proposed, reasons: [proposed ? 'not none: the board took the proposal' : clampText(why, 300)] },
+        ],
+        decider: { type: 'rule', id: FOLLOW_UP_RULE, version: '1' },
+        outcome: { option: proposed ? 'propose' : 'none', detail: { key, finding: f.id ?? '', ...(proposed ? { taskId: proposed } : {}) } },
+        deterministic: true,
+      }, { ...PRODUCER, runId, nodeId }).id as ArtifactRef
+      if (proposed) e.tasks.dossiers.safely('a follow-up task', () => e.tasks.dossiers.evidence(runId, `Pre-existing finding ${f.id ?? '?'} of review ${nodeId} (${f.title}, ${place}) is proposed as follow-up task ${proposed}: linked, not blocking this task.`, [decision, assessment]))
+    })
+  }
+}
+
+/**
+ * A review whose verified assessment has blocking findings (important ones a second reviewer
+ * confirmed) grows a remediation cycle (an engine rule for any node offering `review`,
+ * docs/design/workflow-engine.md): a fix on the producer's capabilities, then a re-review bound to the
+ * new subject, after `after` (the verification step); whatever waited for it waits for both. The fix
+ * carries the review's nits once, as optional notes. Bounded by `maxReviewCycles`; either way a
+ * `graph-growth` decision records why.
+ */
+export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, assessment: Assessment, subject: string, lease: () => Lease, after: NodeRow = node): void {
+  const blocking = assessment.findings.filter(blocks)
   if (assessment.verdict !== 'changes-requested' || !blocking.length) return
   const nodes = e.nodeRows(run.run_id)
   const producer = spec.dependsOn.map((id) => JSON.parse(nodes.find((n) => n.node_id === id)!.spec) as ResolvedNode).find((s) => s.capabilities.includes('develop'))
@@ -203,13 +448,13 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
     question: `Does run ${run.run_id} remediate the blocking findings of review ${node.node_id}?`,
     inputs: [],
     candidates: [
-      { option: 'append', selected: !why, reasons: why ? [`not append: ${why}`] : [`${blocking.length} blocking finding(s) on ${subject}; review cycle ${cycle + 1} of ${max}`] },
+      { option: 'append', selected: !why, reasons: why ? [`not append: ${why}`] : [`${blocking.length} confirmed important finding(s) on ${subject}; review cycle ${cycle + 1} of ${max}`] },
       { option: 'refuse', selected: !!why, reasons: why ? [why] : [`not refuse: a writing step produced the change, and review cycle ${cycle} is below the bound ${max}`] },
     ],
     decider: { type: 'policy', id: 'workflow.remediation', version: '1' },
     outcome: { option: why ? 'refuse' : 'append' },
     deterministic: true,
-  }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
+  }, { ...PRODUCER, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
   if (why) return
   const base = spec.reviewOf ?? node.node_id
   // This cycle is grown by the review that found the blocking findings, never by the first review:
@@ -225,8 +470,10 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
   const fixId = `${prefix}:fix:${cycle}`
   const recheckId = `${prefix}:review:${cycle + 1}`
   const grownBy = { node: node.node_id, generation }
+  // The review's nits reach the author once, as optional notes of this fix; never a fix of their own.
+  const notes = assessment.findings.filter((f) => f.severity === 'nit' && !f.repeated)
   // The review's findings as the author session's next message: the findings, the subject the reviewer read, what to change.
-  const prompt = remediationPrompt(run.input, subject, blocking, node.node_id, !!author)
+  const prompt = remediationPrompt(run.input, subject, blocking, node.node_id, !!author, notes)
   // The fix writes, so it waits for a person's approval of exactly this plan (ADR-0028, INV-15), never
   // for a policy's: the gate puts it to the approval queue as a `remediation` action, which always
   // asks (./queue.ts), or, with no queue loaded, waits for the operator's `approve`.
@@ -241,9 +488,9 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
   const step = { tierSource: 'decision' as const, tierDecision: decision, session: {}, grownBy }
   // The re-review is worded as the review the cycles started from (wordingOf): its template's
   // prompt, composed again at promotion, or a plan step's model text, used as it is.
-  append(e, run, node, [
+  append(e, run, after, [
     { ...step, literal: true, nodeId: gateId, objective: `Approve the fix of review cycle ${cycle}`, executor: 'gate' as const, plan, prompt: '', capabilities: ['review'],
-      tier: 'economy' as const, tierSource: 'profile' as const, acceptance: 'acceptance.answer', dependsOn: [node.node_id], operatorApproval: true as const, remediation: { subject } },
+      tier: 'economy' as const, tierSource: 'profile' as const, acceptance: 'acceptance.answer', dependsOn: [after.node_id], operatorApproval: true as const, remediation: { subject } },
     // The fix is the same kind of work as the change it fixes, and the re-review as the review (ADR-0057).
     // It continues its author's session, on that session's Worker; the re-review keeps a session of
     // its own (`step`'s), never the author's: the reviewer stays independent.
