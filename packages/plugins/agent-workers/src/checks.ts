@@ -39,10 +39,10 @@ import type { Worktrees } from './worktrees.ts'
  * `checkStallSeconds` (with the check's `deadline`, past which it no longer runs, even when a restart
  * cut it before its `ended`), `resumed` when it prints again, `ended` when a stalled check ended.
  */
-export const CHECK_EVENT = 'agent-workers.check'
+const CHECK_EVENT ='agent-workers.check'
 
 /** How much of what a check printed its record keeps, from the end (INV-9). */
-export const CHECK_OUTPUT_TAIL = 4000
+const CHECK_OUTPUT_TAIL =4000
 /** How long a check's reason its record keeps (`check-run@1.0`). */
 const CHECK_REASON_CHARS = 2000
 

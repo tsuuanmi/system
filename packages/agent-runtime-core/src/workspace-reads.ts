@@ -1374,7 +1374,7 @@ function expectFields(input: Record<string, unknown>, fields: Record<string, 'st
 const PATH_DESCRIPTION = 'A path relative to the workspace, or absolute inside it; no ".." segment. Git\'s data (.git) and secret files (.env, keys, credentials, ignored files named like secrets) are never read, nor a file with more than one hard link outside node_modules.'
 
 /** The tools as `tools/list` gives them: read-only, closed-world. */
-export function workspaceReadTools(bounds: WorkspaceReadBounds): unknown[] {
+function workspaceReadTools(bounds: WorkspaceReadBounds): unknown[] {
   const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   return [
     {

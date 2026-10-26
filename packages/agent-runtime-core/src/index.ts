@@ -17,7 +17,7 @@ import type { WorkspaceReadBounds } from './workspace-reads.ts'
 export {
   COMMIT_ID, GIT_CONFIG_PINS, GIT_LOG_FIELDS, WORKSPACE_GIT_TOOLS, gitArgv, gitEnvironment,
   SECRET_LIKE, SECRET_NAMES, SECRET_PATHS, WORKSPACE_READS_PROTOCOLS, WORKSPACE_READS_SCRIPT, WORKSPACE_READS_SERVER, WORKSPACE_READ_BOUNDS, WORKSPACE_READ_TOOLS, type WorkspaceReadBounds,
-  WorkspaceReads, answerMessage, parseWorkspaceReadArgs, searchResourceLimits, serveWorkspaceReads, workspaceReadArgs, workspaceReadBounds, workspaceReadBoundsProblem, workspaceReadTools,
+  WorkspaceReads, answerMessage, parseWorkspaceReadArgs, searchResourceLimits, serveWorkspaceReads, workspaceReadArgs, workspaceReadBounds, workspaceReadBoundsProblem,
 } from './workspace-reads.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -103,7 +103,7 @@ export interface RuntimeEvidence {
 export const HOST_TOOLS_SERVER = 'system'
 
 /** A host tool's name: lowercase letters, digits, and `_`, starting with a letter, at most 64 characters. */
-export const HOST_TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/
+const HOST_TOOL_NAME =/^[a-z][a-z0-9_]{0,63}$/
 
 /** One argument of a host tool, in the closed subset of JSON Schema a runtime must render exactly. */
 export type HostToolProperty =
@@ -156,7 +156,7 @@ export function hostToolsProblem(tools: readonly HostTool[]): string | undefined
 }
 
 /** Why `input` does not meet a host tool's schema (not an object, an argument it does not name, one of another type or out of its bounds, a required one missing), or undefined. */
-export function hostToolInputProblem(schema: HostToolSchema, input: unknown): string | undefined {
+function hostToolInputProblem(schema: HostToolSchema, input: unknown): string | undefined {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) return 'the arguments are not an object'
   const chars = (text: string): number => [...text].length
   for (const [name, value] of Object.entries(input)) {
@@ -189,7 +189,7 @@ export interface HostToolsTransport {
 }
 
 /** The MCP protocol versions the host tools server answers in; the first is its own. */
-export const HOST_TOOLS_PROTOCOLS: readonly string[] = ['2025-06-18', '2025-03-26', '2024-11-05']
+const HOST_TOOLS_PROTOCOLS: readonly string[] = ['2025-06-18', '2025-03-26', '2024-11-05']
 
 /**
  * A minimal MCP server over a run's host tools ({@link HostTool}), for a runtime that hosts an MCP
@@ -1065,7 +1065,7 @@ const SESSION_ACCESS = ['DBUS_SESSION_BUS_ADDRESS', 'SSH_AUTH_SOCK', 'GPG_AGENT_
  */
 export const SHELL_STARTUP_VARIABLES: readonly string[] = ['BASH_ENV', 'ENV', 'ZDOTDIR', 'PROMPT_COMMAND', 'PS0', 'PS4', 'SHELLOPTS', 'BASHOPTS', 'INPUTRC']
 /** The prefix of an exported bash function's variable (`BASH_FUNC_echo%%`). */
-export const EXPORTED_FUNCTION = 'BASH_FUNC_'
+const EXPORTED_FUNCTION ='BASH_FUNC_'
 
 /** Whether `name` is a variable a shell runs code from ({@link SHELL_STARTUP_VARIABLES}, an exported function). */
 export const isShellStartupVariable = (name: string): boolean => SHELL_STARTUP_VARIABLES.includes(name) || name.startsWith(EXPORTED_FUNCTION)

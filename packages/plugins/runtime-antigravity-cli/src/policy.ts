@@ -25,9 +25,9 @@ import { fileURLToPath } from 'node:url'
 import type { SandboxMode } from '@tsuuanmi/system-agent-runtime-core'
 
 /** Tools that only read the workspace: `read_file` (`Path`, and a line or byte range). */
-export const READ_TOOLS = ['read_file'] as const
+const READ_TOOLS = ['read_file'] as const
 /** Tools that change one file: `write_file` (`Path`, `Content`, to create, overwrite, or append) and `edit_file` (`Path`, `Target` replaced by `Replacement`). */
-export const WRITE_TOOLS = ['write_file', 'edit_file'] as const
+const WRITE_TOOLS = ['write_file', 'edit_file'] as const
 
 /** The tools each sandbox offers; absent from both, a tool is denied in every run. */
 export const TOOLS: Record<SandboxMode, readonly string[]> = { 'read-only': READ_TOOLS, 'workspace-write': [...READ_TOOLS, ...WRITE_TOOLS] }
@@ -39,7 +39,7 @@ export const TOOLS: Record<SandboxMode, readonly string[]> = { 'read-only': READ
 const TEXT_FIELDS = new Set(['Content', 'Target', 'Replacement'])
 
 /** The directory names Antigravity discovers customizations in, walking up from its working directory to the repository root. */
-export const CUSTOMIZATION_ROOTS = ['.agents', '.agent', '_agents', '_agent'] as const
+const CUSTOMIZATION_ROOTS = ['.agents', '.agent', '_agents', '_agent'] as const
 /** What in a customization root runs outside every gate: lifecycle hooks, MCP servers, and plugins (which bundle both). */
 const EXECUTABLE_CUSTOMIZATIONS = ['hooks.json', 'mcp_config.json', 'plugins.json', 'plugins'] as const
 

@@ -65,7 +65,7 @@ export interface ProbeOptions {
 }
 
 /** How long one probe may take with `ttlMs` 0, where no result stands to bound it: the default `probeTtlMs`. */
-export const UNBOUNDED_TTL_PROBE_MS = 5 * 60_000
+const UNBOUNDED_TTL_PROBE_MS =5 * 60_000
 
 /** Evidence that admits no Worker, with why. */
 export const refused = (detail: string): RuntimeEvidence => ({ available: false, detail, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false })

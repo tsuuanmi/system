@@ -174,7 +174,7 @@ function patternProblem(pattern: unknown): string | undefined {
 }
 
 /** `commandChars` is the policy's own bound on a commands-list line (`autonomy-policy@1.0`): every setup command can be listed there. */
-export const SETUP_LIMITS = { commands: 16, commandChars: 200, views: 8, entries: 32, defaultTimeoutSeconds: 600, maxTimeoutSeconds: 3600, copyBytes: 1024 ** 3, defaultCheckTimeoutSeconds: 1800, generatedPaths: 32, defaultCheckStallSeconds: 300, dependencyFiles: 32 } as const
+const SETUP_LIMITS ={ commands: 16, commandChars: 200, views: 8, entries: 32, defaultTimeoutSeconds: 600, maxTimeoutSeconds: 3600, copyBytes: 1024 ** 3, defaultCheckTimeoutSeconds: 1800, generatedPaths: 32, defaultCheckStallSeconds: 300, dependencyFiles: 32 } as const
 /** How much of a failed command's output its run's error keeps (INV-9). */
 const OUTPUT_TAIL = 1500
 const RULE = { type: 'rule', id: 'agent-workers.worktree-setup', version: '1' } as const
@@ -192,7 +192,7 @@ const fail = (message: string): never => {
 }
 
 /** Why a command line is not one the policy can match word for word, or undefined. */
-export function lineProblem(line: unknown): string | undefined {
+function lineProblem(line: unknown): string | undefined {
   if (typeof line !== 'string' || !line.length) return 'is empty'
   if (line.length > SETUP_LIMITS.commandChars) return `is longer than ${SETUP_LIMITS.commandChars} characters`
   const words = line.split(' ')
@@ -695,7 +695,7 @@ export interface Confined {
  * What a check's launcher says on its own channel (fd 3) once the kernel executed the check's command
  * (an exec that succeeded, never only a command found on `PATH`).
  */
-export const STARTED = 'started'
+const STARTED = 'started'
 
 /** What a check's launcher says on fd 3, and only that, when the exec of its command failed: `exec-failed <errno code>`. */
 const EXEC_FAILED =/^exec-failed [A-Z0-9_]+$/

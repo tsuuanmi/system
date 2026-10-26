@@ -51,9 +51,8 @@ import { type ConfinedExec, type HookAnswer, type HookEvent, HOOK_ENV, SELF_TEST
 import { USAGE_ARGS, VERIFIED_LIMIT_VERSIONS, limitsFromUsage } from './limits.ts'
 import { TOOLS, refusal, workspaceCustomizations } from './policy.ts'
 
-export { HOOKS_JSON, HOOK_COMMAND, prepareHome } from './bridge.ts'
 export { USAGE_ARGS, VERIFIED_LIMIT_VERSIONS, limitsFromUsage } from './limits.ts'
-export { READ_TOOLS, TOOLS, WRITE_TOOLS, refusal, workspaceCustomizations } from './policy.ts'
+export { refusal, workspaceCustomizations } from './policy.ts'
 
 const KIND = 'antigravity-cli'
 
