@@ -694,6 +694,17 @@ second execution path (INV-1).
     steps running beside it have settled. Otherwise the node fails as above,
     its `fail` decision carrying a `resend` candidate saying why not, under rule
     version 2 as well.
+  - **A step its session's Worker cannot take (T230,
+    [design](../../../docs/design/sessions-and-messaging.md#a-step-its-sessions-worker-cannot-take)).**
+    When every Worker a non-member step's session stays on is refused for a
+    reason no wait changes (`input`, `capability`, `tier`, `locality`), the
+    step runs once off the session on another admissible Worker
+    (`session-moves.ts`): `sessionless` when its brief quotes every earlier
+    turn of the session, else `handoff`, its brief pointing at those turns'
+    results (`prior`). A later step back on the session is handed what ran off
+    it. A `route` decision by `workflow.session-move` and the event
+    `workflow.node.session-moved` record it; with no Worker off the session
+    either, the step fails naming both refusals.
   - **Failover (ADR-0034).** An unsent `quota_exhausted`, `challenge`,
     `reauth_required`, or `overloaded` instead routes the node again with the
     failed Worker left out (`excluded` on the node row, the router's `excluded`

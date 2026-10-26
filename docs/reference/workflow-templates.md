@@ -123,6 +123,13 @@ still receives its inputs inline. The two reviews and the critique each run in a
 their own, so none of them sees the thread it feeds or judges. A run opens four conversations,
 not six. The run's conversation is recorded, and deleted at retention like any other.
 
+When the account the conversation is on can never take a later synthesis step (its input
+bound, a capability it lacks), that step runs once off the conversation, on another Worker,
+instead of failing the run: without the conversation, since each synthesis step quotes the
+results it builds on (`sessionless`), and `conclusion:1` back on the conversation is handed
+`evidence:1`'s result if `evidence:1` ran off it. A `route` decision by `workflow.session-move`
+records it ([sessions](../design/sessions-and-messaging.md#a-step-its-sessions-worker-cannot-take)).
+
 ### `agent-review`
 
 Provided by

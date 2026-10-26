@@ -115,6 +115,38 @@ the team's result. The DAG gives the durable macro structure. Sessions give
 long-running, conversational work inside it
 ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)).
 
+### A step its session's Worker cannot take
+
+A session stays on its Worker: a template's later step on the run's one
+conversation (`persistent`, `caller`) routes only to the Workers the session's
+source names (`affinity`). When every one of them is refused for a reason no
+wait can change (its input bound, a capability it does not prove, its tier,
+where it runs), the step does not fail for that alone (board T230; live
+2026-10-26, a research run whose session stayed on a website that takes 30,000
+characters, and whose evidence step was 56,350). It runs this once off the
+session, on any other Worker admission takes, with the rest of its rules
+(provider diversity, an assigned account) kept:
+
+- **sessionless**, when its brief already quotes every earlier turn of the
+  session (a template's step points at the results it builds on,
+  `{{node:<id>}}`): it does not need the conversation, so it starts without it;
+- **handoff**, otherwise: its brief carries, as `prior` pointers, the results of
+  the session's earlier turns it does not quote, from this run and from earlier
+  runs on the same session (what the conversation held that the step could
+  need, as a compaction's `handoff` summary carries a conversation forward).
+
+The session itself does not move: it keeps its Worker and its conversation. A
+later step that runs on it again is handed the results of the steps of its run
+that ran off it, so its conversation lacks nothing it needs. The choice is a
+`route` decision by `workflow.session-move` (`stay`, `sessionless`, `handoff`,
+`fail`, each with why), named by the execution's decisions, beside the
+`workflow.node.session-moved` event. A Worker of the session that is busy, at its
+limit, signed out, or not listed now is a wait, not a move: the step waits or
+fails as before. A team member's session never moves (Model A). A step no
+Worker takes off the session either still fails, its message naming both
+refusals; a handoff that would point at more artifacts than a brief holds does
+not move, and says so. Code: `packages/plugins/workflow/src/session-moves.ts`.
+
 ## A2A alignment (for the planned adapter)
 
 | `system` | A2A 1.0 |

@@ -408,7 +408,7 @@ export class WorkerRouter extends Workers {
       candidates: [...workers.map((w) => {
         // Every admitted Worker's score, when the ledger was read: its account's quota in one line.
         const score = quotas?.get(w.worker) ? [`quota (${QUOTA_SCORE}): ${headroomLine(quotas.get(w.worker)!.quota)}`] : []
-        if (w === chosen) return { option: w.worker, selected: true, reasons: [...this.chosenReasons(w, requirement), ...score] }
+        if (w === chosen) return { option: w.worker, selected: true, reasons: [...this.chosenReasons(w, requirement), ...inputBound(w, workers, failures, options), ...score] }
         const failed = failures.get(w.worker)!
         return { option: w.worker, selected: false, reasons: failed.length ? failed.map((f) => f.reason) : [`admitted; ${this.lostTo(w, chosen, requirement, quotas)}`, ...score] }
       }), ...unheard],
@@ -681,6 +681,23 @@ function waitUntil(limited: readonly Limited[]): string | undefined {
   if (!limited.length || limited.some((l) => l.worker.account?.mode !== 'assigned')) return undefined
   const known = limited.map((l) => l.until).filter((u): u is string => u !== undefined).sort()
   return known[0]
+}
+
+/**
+ * The input bound a route decision reports (T230): the input's size in characters against the
+ * chosen Worker's `maxInputChars`, and the bounds of the other Workers that could take the work but
+ * for it, the input refused by every one of them, so a lead reading the decision sees how close
+ * the brief came to every bound. Nothing when the caller gave no input size.
+ */
+function inputBound(chosen: CapabilityDescriptor, workers: readonly CapabilityDescriptor[], failures: ReadonlyMap<string, Failed>, options: RouteOptions): string[] {
+  if (!options.input) return []
+  const chars = options.input.chars
+  const own = chosen.maxInputChars === undefined ? `input ${chars} characters; ${chosen.worker} declares no input bound` : `input ${chars} characters, within its bound of ${chosen.maxInputChars}`
+  // The Workers refused for the input alone: the bound is what keeps them from the work.
+  const over = workers.filter((w) => failures.get(w.worker)!.length > 0 && failures.get(w.worker)!.every((f) => f.check === 'input'))
+  if (!over.length) return [own]
+  const largest = Math.max(...over.map((w) => w.maxInputChars!))
+  return [own, `over the bound of ${over.length} other Worker(s) that could take it otherwise (the largest ${largest} characters)`]
 }
 
 /** A Worker's load as one number: what runs, waits, or is routed to it; a source that reports none reads 0. */
