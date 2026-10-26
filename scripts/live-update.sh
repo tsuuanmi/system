@@ -6,6 +6,10 @@
 # only read) and prints the plan. With --apply it acts:
 #   1. capture what the running profile answers: its health, every run's explain and result, each
 #      Worker's availability (its roster); and where its unit, system.service, sends the daemon's output;
+#   1b. pause dispatch (unless paused or off already), and wait, up to --runs-wait minutes, until no
+#      workflow step runs (every RUNNING step of every running run in the store, read-only, on a
+#      Worker or not; each run, its step, its Worker, for how long, with what the roster adds), so
+#      the stop cuts no agent run (T234); at the bound stop, the unit untouched, unless --cut-running;
 #   2. `systemctl --user stop system.service`: the unit's ExecStop drains (`system shutdown
 #      --deadline`), then stops the daemon (it is never killed); wait until it has exited;
 #   3. back up the store and the vault (`system backup`, verified by a restore preview) and the
@@ -19,7 +23,7 @@
 #      work again within --workers-wait seconds (one that stays unavailable fails, with its reason;
 #      the Workers before and after are printed), no health check worse, every old run explains and
 #      answers as before, no migration backwards, every record valid; then `system plugins` and the
-#      MCP header helper.
+#      MCP header helper; then dispatch resumed, when step 1b paused it (a rollback resumes it too).
 # The daemon runs only under its unit, with the unit's environment file: the script refuses a daemon
 # started any other way. A failure after step 2 rolls back: the unit stopped, the profile's files
 # and the previous commit put back, installed and built, the store and vault restored from step 3's
@@ -33,15 +37,19 @@ usage() {
 usage: scripts/live-update.sh <target sha> [--apply] [--check-with <built checkout of the target>]
          [--patch <candidate cordis.patch.yml>] [--from <sha>] [--live <checkout>] [--dsh-home <dir>]
          [--node-dir <dir>] [--pnpm-dir <dir>] [--backups <dir>] [--new-workers <prefix,...>]
-         [--workers-wait <seconds>]
+         [--workers-wait <seconds>] [--runs-wait <minutes>] [--runs-every <seconds>] [--cut-running]
 
 A dry run unless --apply. --apply needs --check-with: the profile is checked against the target's
-code before anything is stopped. The daemon runs under the user unit system.service, which is
-stopped and started (its ExecStop drains). The defaults are this host's live install: --from e218ae7,
---live ~/workspaces/system-live, --dsh-home $DSH_HOME or ~/.dsh, --node-dir Node 24's bin,
---pnpm-dir Node 22's bin (appended to PATH, for pnpm only), --backups ~/system-backups,
---new-workers agent:, --workers-wait 600 (how long the Workers that took work before the update
-have to take work again after it: two probe TTLs).
+code before anything is stopped. Before the stop it pauses dispatch (unless paused or off already)
+and waits until no workflow step runs, up to --runs-wait minutes, reading the store (read-only) and
+the roster every --runs-every seconds and saying what runs (run, step, Worker, for how long). At the bound it stops,
+exit 1, the unit not stopped; with --cut-running it stops the unit anyway and names the runs it cuts.
+The daemon runs under the user unit system.service, which is stopped and started (its ExecStop
+drains). The defaults are this host's live install: --from e218ae7, --live ~/workspaces/system-live,
+--dsh-home $DSH_HOME or ~/.dsh, --node-dir Node 24's bin, --pnpm-dir Node 22's bin (appended to
+PATH, for pnpm only), --backups ~/system-backups, --new-workers agent:, --workers-wait 600 (how
+long the Workers that took work before the update have to take work again after it: two probe
+TTLs), --runs-wait 90, --runs-every 30.
 Exit status: 0 done (or nothing to do), 1 stopped or rolled back, 2 usage, or a state to look at.
 EOF
 }
@@ -57,13 +65,17 @@ PNPM_DIR=$HOME/.nvm/versions/node/v22.23.2/bin
 BACKUPS=$HOME/system-backups
 NEW_WORKERS=agent:
 WORKERS_WAIT=600
+RUNS_WAIT=90        # minutes: how long the update waits for running steps before the stop
+RUNS_EVERY=30       # seconds between two reads of what runs
+CUT_RUNNING=0
 CHECK_WITH=''
 PATCH_CANDIDATE=''
 
 while (($#)); do
   case $1 in
     --apply) APPLY=1 ;;
-    --check-with | --patch | --from | --live | --dsh-home | --node-dir | --pnpm-dir | --backups | --new-workers | --workers-wait)
+    --cut-running) CUT_RUNNING=1 ;;
+    --check-with | --patch | --from | --live | --dsh-home | --node-dir | --pnpm-dir | --backups | --new-workers | --workers-wait | --runs-wait | --runs-every)
       if (($# < 2)); then usage >&2; exit 2; fi
       case $1 in
         --check-with) CHECK_WITH=$2 ;;
@@ -78,6 +90,12 @@ while (($#)); do
         --workers-wait)
           if [[ ! $2 =~ ^[0-9]+$ ]]; then usage >&2; exit 2; fi
           WORKERS_WAIT=$2 ;;
+        --runs-wait)
+          if [[ ! $2 =~ ^[0-9]+$ ]]; then usage >&2; exit 2; fi
+          RUNS_WAIT=$((10#$2)) ;;
+        --runs-every)
+          if [[ ! $2 =~ ^[0-9]+$ ]] || ((10#$2 < 1)); then usage >&2; exit 2; fi
+          RUNS_EVERY=$((10#$2)) ;;
       esac
       shift ;;
     -h | --help) usage; exit 0 ;;
@@ -118,6 +136,7 @@ stuck() {
   if [[ -n $ATTEMPT ]]; then
     log "  backup: $ATTEMPT/store (restore with the previous code built: system restore $ATTEMPT/store --yes); profile files: $ATTEMPT/profiles/system"
     log "  notes: $ATTEMPT/live-update.log; state: $STATE"
+    if [[ $(state_get dispatch_paused) == update ]]; then log "  dispatch: paused by this update; once the daemon runs, resume it: system dispatch resume"; fi
   fi
   log "  runbook: docs/operations/runbooks.md#update-the-live-install-from-e218ae7-to-the-base-release"
   exit 2
@@ -532,6 +551,56 @@ capture() {
   node24 --disable-warning=ExperimentalWarning "$SCRIPT_DIR/live-update-check.ts" capture "$LIVE/packages/cli/lib/index.js" "$DSH_HOME_DIR" "$1" 2>&1 | tee -a "$LOG_FILE" >&2
 }
 
+check_tool() {
+  local command=$1
+  shift
+  node24 --disable-warning=ExperimentalWarning "$SCRIPT_DIR/live-update-check.ts" "$command" "$LIVE/packages/cli/lib/index.js" "$DSH_HOME_DIR" "$@"
+}
+
+# Pause dispatch before the wait, so no ready task starts by itself meanwhile; one the operator
+# paused, or dispatch off, is left as it is. The update's own pause is recorded, and lifted once the
+# profile runs again (resume_dispatch).
+pause_dispatch() {
+  local out
+  if [[ $(state_get dispatch_paused) == update ]]; then
+    log "dispatch: paused by this update already"
+    return 0
+  fi
+  out=$(check_tool dispatch-pause "live update to ${TARGET:0:12}: waiting for the running steps before the stop") || return 1
+  log "${out#*: }"
+  if [[ $out == paused:* ]]; then state_set dispatch_paused update; fi
+}
+
+# Lift this update's own pause of dispatch, once the daemon runs (done, or rolled back, or stopped
+# at the wait's bound). A resume that fails is a note: the operator resumes it.
+resume_dispatch() {
+  [[ $(state_get dispatch_paused) == update ]] || return 0
+  if check_tool dispatch-resume 2>&1 | tee -a "$LOG_FILE" >&2; then
+    state_set dispatch_paused resumed
+  else
+    log "note: dispatch stays paused by this update: system dispatch resume"
+  fi
+}
+
+# Wait, bounded, until no workflow step runs, on a Worker or not (T234): the stop cuts no agent run.
+# At the bound: stop, the unit untouched (dispatch resumed); with --cut-running, go on and say what
+# the stop cuts.
+wait_idle() {
+  local -a cut=()
+  if ((CUT_RUNNING)); then cut=(--cut-running); fi
+  pause_dispatch || die "dispatch could not be paused (above)"
+  log "waiting until no workflow step runs: up to $RUNS_WAIT min, a look every $RUNS_EVERY s"
+  if check_tool await-idle --wait $((RUNS_WAIT * 60)) --every "$RUNS_EVERY" ${cut[@]+"${cut[@]}"} 2>&1 | tee -a "$LOG_FILE" >&2; then
+    return 0
+  fi
+  if ((CUT_RUNNING)); then
+    log "--cut-running: stopping $UNIT with the steps above still running; each is cut, and fails or resumes as its source tells (docs/operations/runbooks.md#a-runs-liveness-is-unknown)"
+    return 0
+  fi
+  resume_dispatch
+  die "steps still run after $RUNS_WAIT min (above): $UNIT was not stopped. Run the update again once they finish (or with a longer --runs-wait), or with --cut-running to cut them"
+}
+
 backup() {
   local store=$ATTEMPT/store
   if [[ ! -f $store/system-backup.json ]]; then
@@ -653,6 +722,7 @@ rollback() {
     cli "$LIVE" restore "$ATTEMPT/store" --yes 2>&1 | tee -a "$LOG_FILE" >&2 || fail "the store could not be restored"
   fi
   start_daemon || fail "the previous code did not start"
+  resume_dispatch
   cli "$LIVE" health 2>&1 | tee -a "$LOG_FILE" >&2 || true
   state_set phase rolled-back
   log "rolled back: the live install runs ${FROM:0:12} again$( (($(phase_index "$from_phase") >= $(phase_index starting))) && echo ', on the store and vault of the backup'); why: $reason"
@@ -765,6 +835,8 @@ dry_run() {
     fi
     log "system health now:"
     cli "$LIVE" health >&2 || true
+    log "what --apply would wait for before the stop (up to $RUNS_WAIT min$( ((CUT_RUNNING)) && echo ', then cut with --cut-running')):"
+    check_tool running >&2 || true
   elif [[ $HEAD_AT == from ]]; then
     log "note: --apply refuses until the daemon runs (systemctl --user start $UNIT): what it answers is captured first"
   fi
@@ -773,6 +845,9 @@ dry_run() {
 Plan for --apply (this dry run changed nothing):
   1. capture: health, the explain and result of $runs, and each Worker's availability (its roster)
      -> $BACKUPS/<date>-before-base/before.json
+     then pause dispatch (unless paused or off already; resumed once the profile runs again), and
+     wait until no workflow step runs, up to $RUNS_WAIT min, a look every $RUNS_EVERY s, saying
+     what runs (above, now); $(if ((CUT_RUNNING)); then echo 'at the bound, --cut-running: stop anyway, naming what it cuts'; else echo "at the bound: stop, exit 1, $UNIT not stopped"; fi)
   2. systemctl --user stop $UNIT (its ExecStop: system shutdown --deadline, a drain); the daemon and
      system start exit (never killed)
   3. system backup <that directory>/store (store and vault, verified by a restore preview);
@@ -854,6 +929,12 @@ else
   load_start
 fi
 
+# No step runs when the unit stops, or the operator said to cut them: a stop never cuts an agent run
+# by surprise (T234). The drain of the unit's ExecStop keeps its own deadline.
+if ! reached stopped && [[ -n $DAEMON_PID ]]; then
+  wait_idle
+fi
+
 STOPPED=1
 if ! reached stopped; then
   stop_daemon || fail "the daemon did not stop"
@@ -910,6 +991,7 @@ if ! reached verified; then
   verify || fail "the upgrade checks failed"
   set_phase verified
 fi
+resume_dispatch
 
 set_phase done
 log "updated: $LIVE runs ${TARGET:0:12} (pid $DAEMON_PID); backup and notes in $ATTEMPT"
