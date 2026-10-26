@@ -97,11 +97,12 @@ What happened on 2026-10-25 and 2026-10-26:
 | T220: each writing Worker's brief carries the repository's lessons ([lessons](../engineering/lessons.md)) | the first layer of a handbook, bounded (30 lines) | L3 building block |
 | Dispatch starts ready work with no request under `auto` and `notify` (ADR-0064 D2), and records who started each run (`dispatch`, `lead`, or `operator`, `TaskView.startedBy`) | starting is automated where a project allows it | L3 behaviour, demonstrated |
 | The lead still starts its own tasks with `scripts/sysrun.mjs` (T225 is one), reads the reports, retries or fixes failed attempts, and accepts results outside the listed branches; the operator answers each `ask` approval | the remaining lead and operator touches, per task, are not yet few | **still L2** |
-| No record counts the lead's touches, escaped defects, or idle quota, and no 30-day share of runs started by `dispatch` or landed with no touch is computed | L3 cannot be shown yet, only argued | **still L2** |
+| T236 computes the maturity metrics from records (`system metrics`); T273 makes the lead a principal of its own and records its touches; T237 tiers process by risk; T251 starts a project from a template; T266 makes a review converge; T269 lets a live update cut at any time | the measuring and the process I2, I4, and I5 need now exist, in part | L3 building blocks |
+| Escaped defects, Worker availability, and idle quota are not recorded yet (T277), and no 30-day share of runs started by `dispatch` or landed with no touch is shown by the metrics | L3 cannot be shown yet, only argued | **still L2** |
 
 So the automation L3 needs is demonstrated on single tasks (T215, T217, T219, and dispatched
-starts), but the 30 days of evidence that would establish L3 do not exist yet. I4 makes that
-measurable.
+starts), but the 30 days of evidence that would establish L3 do not exist yet, and the metrics do
+not show L3 yet. System stays at L2 until they do. I4 makes that measurable.
 
 ## Proposed design
 
