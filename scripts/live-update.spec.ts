@@ -804,6 +804,31 @@ describe('live-update-check: how each step the stop cut resumed (T269)', () => {
     db.close()
   })
 
+  it('says what really happened to each cut step: resumed, restarted, a free retry on the engine\'s JSON mark, or failed with its reason (T283)', () => {
+    const db = new DatabaseSync(':memory:')
+    db.exec(`CREATE TABLE workflow_runs (run_id TEXT PRIMARY KEY, template TEXT, status TEXT, created_at TEXT);
+      CREATE TABLE workflow_nodes (run_id TEXT, node_id TEXT, state TEXT, worker TEXT, infrastructure TEXT, error TEXT);
+      CREATE TABLE workflow_tasks (run_id TEXT, task_id TEXT);
+      CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, type TEXT, run_id TEXT, node_id TEXT, entry TEXT)`)
+    const mark = JSON.stringify({ kind: 'host-stopped', reason: 'the host stopped' })
+    const error = JSON.stringify({ kind: 'reconciliation_failed', disposition: 'USER_ACTION', message: 'it died on its own' })
+    db.exec(`INSERT INTO workflow_runs VALUES ('run_a', 't', 'running', '2026-10-26T09:00:00.000Z'), ('run_b', 't', 'running', '2026-10-26T09:00:00.000Z'),
+        ('run_c', 't', 'failed', '2026-10-26T09:00:00.000Z'), ('run_d', 't', 'failed', '2026-10-26T09:00:00.000Z');
+      INSERT INTO workflow_nodes VALUES ('run_a', 'develop:1', 'RUNNING', 'w', NULL, NULL), ('run_b', 'develop:1', 'RUNNING', 'w', NULL, NULL),
+        ('run_c', 'develop:1', 'FAILED', 'w', '${mark}', '${error}'), ('run_d', 'develop:1', 'FAILED', 'w', NULL, '${error}')`)
+    const resumed = (run: string, how: string) => db.prepare("INSERT INTO events (at, type, run_id, node_id, entry) VALUES ('2026-10-26T10:41:00.000Z', 'agent-workers.run.resumed', ?, 'develop:1', ?)")
+      .run(run, JSON.stringify({ nodeId: 'develop:1', data: { agentRun: 'arun_1', how, resumes: 1, step: 'develop:1' } }))
+    resumed('run_a', 'resumed')
+    resumed('run_b', 'restarted')
+    const cut: CutSteps = { cutAt: CUT_AT, steps: [step('run_a', 'develop:1'), step('run_b', 'develop:1'), step('run_c', 'develop:1'), step('run_d', 'develop:1')] }
+    const outcomes = cutOutcomes(db, cut)
+    expect(outcomes.steps.map((o) => o.how)).toEqual(['resumed', 'restarted', 'free-retry', 'counted'])
+    expect(outcomes.steps[0]!.detail).toMatch(/^resumed: the agent run went on in its native session after the restart, no attempt spent, nothing asked of the operator; the step is running \(run running\) \(cut 1 time\(s\)\)$/)
+    expect(outcomes.steps[1]!.detail).toMatch(/^restarted: its runtime cannot resume, so the agent run started again from the same worktree/)
+    expect(outcomes.steps[3]!.detail).toBe('its run failed, not as the host\'s (step FAILED): reconciliation_failed: it died on its own: the attempt counts; system explain run_d')
+    db.close()
+  })
+
   it('reads a store from before the infrastructure mark, and says when nothing was cut', () => {
     const db = new DatabaseSync(':memory:')
     db.exec(`CREATE TABLE workflow_runs (run_id TEXT PRIMARY KEY, status TEXT); CREATE TABLE workflow_nodes (run_id TEXT, node_id TEXT, state TEXT);

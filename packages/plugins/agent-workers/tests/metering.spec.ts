@@ -302,26 +302,44 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     expect(ctx.artifacts.get(done.result!)).toMatchObject({ bodySchema: 'agent-result@1.2', body: { model: 'model-main', usage: METERING.usage } })
   })
 
-  it('never invents the usage of a run that started before a restart: it fails, and its usage is left to transcript reconciliation (INV-4)', async () => {
+  it('never invents the usage of a run the host\'s stop cut: it resumes its native session, and what it used before the stop stays left to transcript reconciliation (INV-4, T283)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-agents-'))
     const first = await boot(new ScriptedAgent({ holdMs: 30_000, process: true }), { workers: [metered()] }, dir, LEDGER)
+    const brief = first.ctx.artifacts.put({
+      kind: 'objective', bodySchema: 'brief@1.1', classification: 'operator-shared', producer: { type: 'system', ref: 'workflow' },
+      body: {
+        schema: 'brief@1.1', projectId: 'p1', taskId: 'task-1', attempt: 1, goal: 'look at it', acceptance: [{ id: 'a1', statement: 'it is looked at' }], artifacts: [],
+        instructions: [{ text: 'look at it' }], budget: { remaining: [] }, sandbox: { mode: 'read-only', network: 'allow-list', commands: false }, classification: 'operator-shared',
+      },
+    }).id as `sha256:${string}`
     const source = first.ctx.workers.source('agents')!
-    const started = source.start({ key: 'k', worker: 'agent:reviewer', prompt: 'long', requirement: requirement(), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never })
+    const started = source.start({ key: 'k', worker: 'agent:reviewer', brief, requirement: requirement(), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never })
     await new Promise((resolve) => setTimeout(resolve, 300))
     // Stopped mid-run: the agent reported nothing, and the run stays started.
     await first.stop()
     const again = new ScriptedAgent({ metering: METERING })
     const second = await boot(again, { workers: [metered()], deadAfterSeconds: 1 }, dir, LEDGER)
-    expect(await second.ctx.workers.source('agents')!.wait(started.id, 10_000)).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'reconciliation_failed' } })
-    expect(again.runs).toEqual([])
-    expect((await second.ctx.resources.usage()).records).toEqual([])
+    // The host's stop cut it (T283): the same run continues its own native session, never a fresh
+    // send of its prompt (INV-4), and completes.
+    expect(await second.ctx.workers.source('agents')!.wait(started.id, 10_000)).toMatchObject({ status: 'completed', submitted: true })
+    expect(again.runs).toHaveLength(1)
+    expect(again.runs[0]).toMatchObject({ resume: 'h-1' })
+    // What the resumed session used is counted, as a lower bound of the run: what it used before the stop is not in it.
+    expect((await second.ctx.resources.usage({ runId: started.id })).records).toMatchObject([{
+      schema: 'usage-record@1.1', requestId: 'scripted:h-1:r-1', taskId: 'task-1', outcome: 'completed', usage: METERING.usage,
+      partial: expect.stringMatching(/^it ran again after the host's stop cut it \(1 time\(s\)\): this counts only what it used since; what it used before the stop is left to transcript reconciliation$/),
+    }])
     // What the ledger cannot count is recorded, under the pool the run drew on (D25): the stop
-    // aborted the agent before it reported anything, and the restart found the run interrupted.
+    // aborted the agent before it reported anything; the resumed session's count names its lower bound.
     const facts = second.ctx.eventLog.query({ type: 'usage.unknown' }).map((e) => e.data)
     expect(facts).toMatchObject([
       { runId: started.id, kind: 'not-reported', outcome: 'aborted', reason: 'the host stopped while it ran, and stopped it (a drain at stop or restart); its runtime reported neither tokens nor turns' },
-      { runId: started.id, kind: 'interrupted', pool: 'max.agents', account: 'max', outcome: 'failed' },
+      { runId: started.id, kind: 'not-reported', pool: 'max.agents', account: 'max', outcome: 'completed', partial: expect.stringMatching(/^sha256:/) },
     ])
+    // Never invented: the run stays unknown, so a cap of its task cannot be held.
+    const next = await second.ctx.resources.reserve({ runId: 'next', taskId: 'task-1', lines: [{ pool: 'max.agents', unit: 'runs', amount: 1 }], caps: [{ pool: 'max.agents', unit: 'runs', amount: 10 }] })
+    expect(next.state).toBe('refused')
+    expect(next.reasons.join(' ')).toContain(started.id)
   })
 
   /** What a stopped run's runtime reported before it ended without its final count: a lower bound, marked partial. */
@@ -368,21 +386,28 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     await lowerBound(ctx, done.id, /^it ran past its timeout of 300 ms and was stopped; /, 'failed')
   })
 
-  it('records what a run the host drained at its stop reported, as a lower bound; the restart finds it interrupted, and it stays unknown by its first fact', async () => {
+  it('records what a run the host drained at its stop reported, as a lower bound; the restart resumes it, and it stays unknown by its first fact (T283)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-agents-'))
     const first = await boot(new ScriptedAgent({ holdMs: 30_000, process: true, stoppedMetering: STREAMED }), { workers: [metered()] }, dir, LEDGER)
     const started = await holding(first.ctx)
     await first.stop()
-    const second = await boot(new ScriptedAgent({ metering: METERING }), { workers: [metered()], deadAfterSeconds: 1 }, dir, LEDGER)
-    expect(await second.ctx.workers.source('agents')!.wait(started.id, 10_000)).toMatchObject({ status: 'failed', error: { kind: 'reconciliation_failed' } })
-    // The facts the drain wrote are durable; the restart adds that it found the run interrupted.
+    // A runtime that gives its result no identity of its own: the resumed run's record is still a unit of its own, not a duplicate of the drain's.
+    const second = await boot(new ScriptedAgent({ metering: { ...METERING, resultId: undefined } }), { workers: [metered()], deadAfterSeconds: 1 }, dir, LEDGER)
+    expect(await second.ctx.workers.source('agents')!.wait(started.id, 10_000)).toMatchObject({ status: 'completed' })
+    // The facts the drain wrote are durable; the resumed session's count is a lower bound too, so the first fact stands.
     const facts = second.ctx.eventLog.query({ type: 'usage.unknown' }).map((e) => e.data!)
     expect(facts).toMatchObject([
       { schema: 'usage-unknown@1.1', runId: started.id, kind: 'not-reported', outcome: 'aborted', partial: expect.stringMatching(/^sha256:/) },
-      { runId: started.id, kind: 'interrupted' },
+      { schema: 'usage-unknown@1.1', runId: started.id, kind: 'not-reported', outcome: 'completed', partial: expect.stringMatching(/^sha256:/) },
     ])
     expect(String(facts[0]!['reason'])).toMatch(/^the host stopped while it ran, and stopped it \(a drain at stop or restart\); the ledger counted what its runtime reported while it ran \(4,757 input and 53 output tokens, 2 turns\), a lower bound: /)
-    expect(second.ctx.artifacts.get(String(facts[0]!['partial']))).toMatchObject({ kind: 'receipt', body: { runId: started.id, outcome: 'aborted', usage: STREAMED.usage, turns: 2 } })
+    expect(second.ctx.artifacts.get(String(facts[0]!['partial']))).toMatchObject({ kind: 'receipt', body: { runId: started.id, requestId: `scripted:${started.id}`, outcome: 'aborted', usage: STREAMED.usage, turns: 2 } })
+    // What the resumed session used since is counted as a unit of its own (never a duplicate of the
+    // drain's record above), and as a lower bound of the run.
+    expect((await second.ctx.resources.usage({ runId: started.id })).records).toMatchObject([
+      { schema: 'usage-record@1.1', requestId: `scripted:${started.id}:again-1`, outcome: 'completed', usage: METERING.usage, partial: expect.stringMatching(/^it ran again after the host's stop cut it \(1 time\(s\)\)/) },
+    ])
+    expect(second.ctx.artifacts.get(String(facts[1]!['partial']))).toMatchObject({ kind: 'receipt', body: { runId: started.id, requestId: `scripted:${started.id}:again-1`, usage: METERING.usage } })
   })
 
   it('keeps a lower bound a lower bound when its fact cannot be appended: the record says so, the failure is logged, and a cap of its task stays refused (INV-2)', async () => {

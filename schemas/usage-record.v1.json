@@ -93,7 +93,7 @@
       "enum": ["completed", "failed", "aborted"]
     },
     "partial": {
-      "description": "(1.1, with `runId`) The record is a lower bound of its run, and why, in plain words: the run ended before its runtime's final count (a stop, a timeout, a drain, a deferred call), and its numbers are what the runtime reported while it ran. Counted, never the run's usage: the run stays unknown, and a cap of its scope and pool fails closed, until the ledger counts a record of it in that pool without `partial` (INV-2, ADR-0065). The record says it itself, so no other write is needed for that.",
+      "description": "(1.1, with `runId`) The record is a lower bound of its run, and why, in plain words: the run ended before its runtime's final count (a stop, a timeout, a drain, a deferred call), and its numbers are what the runtime reported while it ran; or the run ran again after the host's stop cut it, and its numbers are only what it used since (T283). Counted, never the run's usage: the run stays unknown, and a cap of its scope and pool fails closed, until the ledger counts a record of it in that pool without `partial` (INV-2, ADR-0065). The record says it itself, so no other write is needed for that.",
       "type": "string",
       "minLength": 1,
       "maxLength": 300

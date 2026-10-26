@@ -752,7 +752,30 @@ export async function stopCut(cli: string, home: string, deadlineSeconds: number
 }
 
 /** How one cut step resumed after the restart, as the store tells it (T269). */
-export interface CutOutcome { step: RunningStep; how: 'free-retry' | 'resumed' | 'counted' | 'pending' | 'unknown'; detail: string }
+export interface CutOutcome { step: RunningStep; how: 'free-retry' | 'resumed' | 'restarted' | 'counted' | 'pending' | 'unknown'; detail: string }
+
+/** A failed node's error as one short line: its kind and message, as the engine stored them. */
+function errorReason(error: string | null | undefined): string {
+  if (!error) return 'no reason recorded'
+  try {
+    const parsed = JSON.parse(error) as { kind?: string; message?: string }
+    const line = `${parsed.kind ?? 'failed'}: ${parsed.message ?? ''}`.replace(/\s+/g, ' ').trim()
+    return line.length > 300 ? `${line.slice(0, 299)}…` : line
+  } catch {
+    return error.slice(0, 300)
+  }
+}
+
+/** Whether a node's stored infrastructure mark (the engine's JSON, or a bare kind) says the host stopped it. */
+function hostStopped(mark: string | null): boolean {
+  if (!mark) return false
+  if (mark === 'host-stopped') return true
+  try {
+    return (JSON.parse(mark) as { kind?: unknown }).kind === 'host-stopped'
+  } catch {
+    return false
+  }
+}
 
 /** A check the host cut that ran again after the restart (`agent-workers.check.rerun`, T269). */
 export interface CheckRerun { runId: string; check: string; subject?: string; cuts?: number; decision?: string }
@@ -774,8 +797,10 @@ export function cutOutcomes(db: DatabaseSync, cut: CutSteps): { steps: CutOutcom
     }
   }
   const steps = cut.steps.map((step): CutOutcome => {
-    const node = optional(() => db.prepare('SELECT state, infrastructure FROM workflow_nodes WHERE run_id = ? AND node_id = ?').get(step.runId, step.nodeId) as { state: string; infrastructure: string | null } | undefined)
-      ?? optional(() => db.prepare('SELECT state, NULL AS infrastructure FROM workflow_nodes WHERE run_id = ? AND node_id = ?').get(step.runId, step.nodeId) as { state: string; infrastructure: null } | undefined)
+    type Node = { state: string; infrastructure: string | null; error: string | null }
+    const node = optional(() => db.prepare('SELECT state, infrastructure, error FROM workflow_nodes WHERE run_id = ? AND node_id = ?').get(step.runId, step.nodeId) as Node | undefined)
+      ?? optional(() => db.prepare('SELECT state, infrastructure, NULL AS error FROM workflow_nodes WHERE run_id = ? AND node_id = ?').get(step.runId, step.nodeId) as Node | undefined)
+      ?? optional(() => db.prepare('SELECT state, NULL AS infrastructure, NULL AS error FROM workflow_nodes WHERE run_id = ? AND node_id = ?').get(step.runId, step.nodeId) as Node | undefined)
     const run = optional(() => db.prepare('SELECT status FROM workflow_runs WHERE run_id = ?').get(step.runId) as { status: string } | undefined)
     if (!node || !run) return { step, how: 'unknown', detail: `the store no longer holds run ${step.runId} step ${step.nodeId}` }
     const taskId = step.taskId
@@ -783,13 +808,28 @@ export function cutOutcomes(db: DatabaseSync, cut: CutSteps): { steps: CutOutcom
       ? optional(() => db.prepare('SELECT t.run_id AS runId, r.status FROM workflow_tasks t JOIN workflow_runs r ON r.run_id = t.run_id WHERE t.task_id = ? AND t.run_id != ? AND r.created_at >= ? ORDER BY r.created_at DESC LIMIT 1')
         .get(taskId, step.runId, cut.cutAt) as { runId: string; status: string } | undefined)
       : undefined
-    if (node.infrastructure === 'host-stopped') {
+    // The step's agent run ran again by itself after the stop (T283): `agent-workers.run.resumed`, its run's own event.
+    const again = optional(() => (db.prepare("SELECT entry FROM events WHERE type = 'agent-workers.run.resumed' AND run_id = ? AND at >= ? ORDER BY seq").all(step.runId, cut.cutAt) as Array<{ entry: string }>)
+      .map((row) => JSON.parse(row.entry) as { nodeId?: string; data?: { how?: string; step?: string; resumes?: number } })
+      .filter((entry) => entry.nodeId === step.nodeId || entry.data?.step === step.nodeId)
+      .at(-1)) ?? undefined
+    if (again && node.state !== 'FAILED' && run.status !== 'failed') {
+      const how = again.data?.how === 'restarted' ? 'restarted' : 'resumed'
+      const now = `; the step is ${node.state.toLowerCase()} (run ${run.status})`
+      return {
+        step, how,
+        detail: how === 'resumed'
+          ? `resumed: the agent run went on in its native session after the restart, no attempt spent, nothing asked of the operator${now}${again.data?.resumes ? ` (cut ${again.data.resumes} time(s))` : ''}`
+          : `restarted: its runtime cannot resume, so the agent run started again from the same worktree after the restart, no attempt spent, nothing asked of the operator${now}${again.data?.resumes ? ` (cut ${again.data.resumes} time(s))` : ''}`,
+      }
+    }
+    if (hostStopped(node.infrastructure)) {
       return {
         step, how: 'free-retry',
         detail: `free retry (T218): the step ended host-stopped, so its run's failure spends no attempt${next ? `; run ${next.runId} serves task ${step.taskId} now (${next.status})` : step.taskId ? `; task ${step.taskId} goes back for the same attempt` : ''}`,
       }
     }
-    if (run.status === 'failed') return { step, how: 'counted', detail: `its run failed, not as the host's (step ${node.state}): the attempt counts; system explain ${step.runId}` }
+    if (run.status === 'failed') return { step, how: 'counted', detail: `its run failed, not as the host's (step ${node.state})${node.error ? `: ${errorReason(node.error)}` : ''}: the attempt counts; system explain ${step.runId}` }
     if (node.state === 'COMPLETED' || run.status === 'completed') return { step, how: 'resumed', detail: `resumed: the step went on in its session from its recorded state, and is ${node.state.toLowerCase()} (run ${run.status})` }
     if (node.state === 'RUNNING') return { step, how: 'resumed', detail: `resumed: the step runs again in its session from its recorded state (run ${run.status})` }
     return { step, how: 'pending', detail: `not settled yet (step ${node.state}, run ${run.status}): it resumes by itself; system explain ${step.runId}` }

@@ -18,6 +18,10 @@ describe('agents source: a run is gone only on a liveness verdict (PROP-0013, AD
     const execution = first.ctx.workers.source('agents')!.start({ key: 'k', worker: 'agent:reviewer', prompt: 'long', sessionId: session, requirement: requirement(), decisions: admitted.decisions })
     await new Promise((resolve) => setTimeout(resolve, 300))
     await first.stop()
+    // The host died with the run in flight: no stop marked it as cut (T283), so its holder is lost, not stopped.
+    const db = new DatabaseSync(join(dir, 'system.db'))
+    db.prepare('UPDATE agent_runs SET host_stopped_at = NULL WHERE run_id = ?').run(execution.id)
+    db.close()
     return { dir, id: execution.id, session }
   }
   const restart = async (dir: string, config: Partial<Config> = {}) => {

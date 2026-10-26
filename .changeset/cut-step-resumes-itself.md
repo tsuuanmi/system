@@ -1,0 +1,11 @@
+---
+"@tsuuanmi/system-agent-workers": minor
+---
+
+A step the host's own stop cut resumes by itself, as T269 promised (T283; seen live 2026-10-26 at the update to b594eaa9, where T270's develop:1 was failed `reconciliation_failed` (USER_ACTION) after the restart, and the task waited on an operator request until the lead approved a retry by hand).
+- A started agent run that the `agents` source's stop ended (a drain, `system shutdown --deadline`, an update) is marked `host_stopped_at` (store migration 21) and is no longer reconciled as a lost holder. After the restart (once its runtime has registered, waiting at most a minute) the same run runs again: its own native conversation is continued, told only to go on, when the runtime can resume and the run's own handle was recorded; otherwise its prompt runs again in the same worktree with a note that earlier work may be there, on its session's conversation where it has one, so a run cut before its handle was reported never goes on with an earlier run's task. It fails nothing, spends no attempt, and makes no approval request; a `reconciliation` decision of rule `agent-workers.resume-cut` and an `agent-workers.run.resumed` event record which. Bounded: a run cut more than five times is reconciled as before.
+- Its usage is never invented: what a run that ran again uses after the restart is recorded as a lower bound of the run (`usage-record@1.1`, `partial`: it ran again after the host's stop cut it), its own unit (`requestId` with `:again-<n>` when the runtime gives no result id), so the usage from before the stop stays unknown, left to transcript reconciliation, and a cap of its task stays closed (INV-2).
+- Only a run whose agent died on its own goes to the operator: a run no stop marked (a crash), and one whose agent process is still present, are reconciled by the liveness verdict as before (INV-4).
+- The update's "what the stop cut" summary (`scripts/live-update-check.ts cut-report`) says `resumed` or `restarted` for these, reads the engine's JSON `host-stopped` mark (it compared it to a bare word, so a free retry read as "the attempt counts"), and gives the reason of a failure.
+
+See the runbook "Update the live install" and docs/design/agent-runtimes.md.

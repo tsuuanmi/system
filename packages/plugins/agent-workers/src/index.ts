@@ -306,6 +306,12 @@ interface RunRow {
   tier?: string | null
   /** The model its tier's configuration gave it when it was started, on a Worker that offers tiers (ADR-0073): it runs no other. */
   configured_model?: string | null
+  /** When the host's own stop ended its runtime while it ran (T283): set before this source stopped, so the next start runs it again instead of failing it. */
+  host_stopped_at?: string | null
+  /** How many times a host stop cut it and it ran again (bounded, INV-9). */
+  resumes?: number | null
+  /** The `reconciliation` decision of its latest resume or restart after a host stop (T283, INV-13). */
+  resume_decision?: string | null
   created_at: string
   updated_at: string
 }
@@ -337,6 +343,20 @@ const BEAT_MS = LEASE_TTL_MS / 3
 const MAX_LOOK_MS = 15 * 60_000
 /** The rule a started run's reconciliation applies (PROP-0013, ADR-0056). */
 const RECONCILE_RULE = { type: 'rule', id: 'agent-workers.reconcile', version: '2' } as const
+/** The rule that runs a run the host's own stop cut again (T283): resumed in its native session, or started again in its worktree. */
+const RESUME_RULE = { type: 'rule', id: 'agent-workers.resume-cut', version: '1' } as const
+/** A run the host's stop cut runs again at most this many times (INV-9); past it, it is reconciled as any run its holder lost. */
+const MAX_RESUMES = 5
+/** How many seconds a run the host cut waits at the start for its runtime to register, at most; then it is sent as any run is. */
+const MAX_RUNTIME_WAITS = 60
+/** The event that tells a run the host's stop cut ran again (`resumed` or `restarted`). */
+const RESUMED_EVENT = 'agent-workers.run.resumed'
+/** What a resumed agent is told: the conversation continues, and its workspace holds what it did. */
+const RESUME_PROMPT = 'The host you ran on was restarted while you worked, and your session was stopped without notice. This conversation and your workspace hold everything you had done. Check the workspace, then continue the task you were given and finish it.'
+/** What an agent that starts again is told, after its original prompt. */
+const RESTART_NOTE = '\n\n(The host you ran on was restarted while an earlier start of this task ran, and that start was stopped. Your workspace may already hold part of its work: check it before you change anything, and finish the task.)'
+/** Why the usage record of a run that ran again after a host stop is a lower bound of the run (T283): what it used before the stop is not in it. */
+const againPartial = (resumes: number): string => `it ran again after the host's stop cut it (${resumes} time(s)): this counts only what it used since; what it used before the stop is left to transcript reconciliation`
 /** The operator's word that a run's agent is gone, freeing what the run held (INV-13). */
 const FREE_DECIDER = { type: 'operator', id: 'operator.free', version: '1' } as const
 /** The operator who removes finished run worktrees before the retention would (D12). */
@@ -568,6 +588,8 @@ export class AgentWorkers extends Service {
   private readonly declaredTo = new WeakMap<object, string>()
   private readonly waiters = new Map<string, Set<() => void>>()
   private readonly inflight = new Set<Promise<void>>()
+  /** The looks a run the host cut took while its runtime was not registered yet, by run (at most {@link MAX_RUNTIME_WAITS}). */
+  private readonly runtimeWaits = new Map<string, number>()
   private readonly cancels = new Map<string, AbortController>()
   private readonly stopped = new AbortController()
   private readonly retries = new Set<NodeJS.Timeout>()
@@ -748,6 +770,13 @@ export class AgentWorkers extends Service {
       version: 20,
       sql: `ALTER TABLE agent_runs ADD COLUMN tier TEXT;
       ALTER TABLE agent_runs ADD COLUMN configured_model TEXT;`,
+    }, {
+      // A run the host's own stop cut (T283): when its runtime was ended by this source's stop, how
+      // many times that happened to it, and the decision of its latest resume or restart.
+      version: 21,
+      sql: `ALTER TABLE agent_runs ADD COLUMN host_stopped_at TEXT;
+      ALTER TABLE agent_runs ADD COLUMN resumes INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE agent_runs ADD COLUMN resume_decision TEXT;`,
     }])
     this.cutover = new Cutover(ctx)
     // Once the operator applied the move, the hand-named rows are refused: one implementation, no second path.
@@ -1799,6 +1828,85 @@ export class AgentWorkers extends Service {
     }, this.bounds())
   }
 
+  /**
+   * A started run whose runtime this source's own stop ended (T283): marked before the source
+   * stopped, so only a stop of the host (a drain, shutdown, update) marks it, never a crash, a lost
+   * lease, the operator's cancel, or an agent that died on its own. It runs again unless its Worker is
+   * gone, it was cut more than {@link MAX_RESUMES} times (INV-9), or an agent process of it is still
+   * present on this host (it may be acting: the liveness verdict takes it, INV-4).
+   */
+  private cutByHost(row: RunRow): boolean {
+    if (!row.host_stopped_at || (row.resumes ?? 0) >= MAX_RESUMES || !this.workers.has(row.worker)) return false
+    return probeProcess(processIdentityOf(parsed(row.agent_process))).state !== 'present'
+  }
+
+  /**
+   * Mark a run that was in flight when this source stopped: its runtime was ended by that stop, and
+   * the next start runs it again (T283). A run the operator cancelled, or one that is not started or
+   * is over, is not marked. A mark that cannot be written leaves the run as a crash would, and is logged.
+   */
+  private markCut(runId: string, lease: () => Lease): void {
+    try {
+      const row = this.row(runId)
+      if (!row || !row.submitted_at || row.status !== 'running' || this.cancels.get(runId)?.signal.aborted) return
+      this.update(runId, { host_stopped_at: now() }, lease)
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: ${runId} was in flight when this source stopped, and that could not be recorded, so its next start reconciles it as a run its holder lost: ${(error as Error).message}`)
+    }
+  }
+
+  /**
+   * What a run the host cut is sent when it runs again (T283). Its own native conversation continued,
+   * told only to go on, when its runtime resumes one and the run's own handle was recorded: only then
+   * is its prompt in that conversation. Otherwise its own prompt is sent again, with a note that
+   * earlier work may be in the worktree, exactly as the run would be sent anew: continuing its
+   * session's conversation (`session`, an earlier run's) where the runtime resumes one, else in a
+   * fresh one. Its task is never left out. Nothing is failed: the run keeps its id, step, and attempt.
+   */
+  private async againAfterCut(row: RunRow, worker: AgentWorkerConfig, turn: Turn): Promise<{ turn: Turn; how: 'resumed' | 'restarted'; handle?: string; session?: string }> {
+    const evidence = await this.evidence(worker, 'proven')
+    if (evidence.resume && row.native_handle) return { turn: { ...turn, prompt: RESUME_PROMPT, resume: row.native_handle }, how: 'resumed', handle: row.native_handle }
+    // `turn.resume` is set only where the runtime resumes (turnOf): the session's own conversation, never this run's.
+    return { turn: { ...turn, prompt: `${turn.prompt}${RESTART_NOTE}` }, how: 'restarted', ...(turn.resume ? { session: turn.resume } : {}) }
+  }
+
+  /**
+   * Record that a run the host cut runs again, before it is sent (T283): a `reconciliation` decision
+   * on the run (INV-13), its count of cuts, an `agent-workers.run.resumed` event, and a log line.
+   * Returns its count of cuts, which its usage record names (`account`).
+   */
+  private noteAgain(row: RunRow, again: { how: 'resumed' | 'restarted'; handle?: string; session?: string }, lease: () => Lease): number {
+    const resumes = (row.resumes ?? 0) + 1
+    const was = `${row.worker} was running this task when this source stopped (the host's drain, shutdown, or update: recorded at ${row.host_stopped_at}), its runtime was ended by that stop, and no agent process of it is present`
+    const restart = again.session
+      ? `its own conversation was never recorded (the stop came before its runtime reported it), so its prompt is sent again, in the same worktree, continuing its session's conversation ${again.session} as any later turn of the session does`
+      : 'it has no native conversation of its own to continue: it starts again from the same worktree with its prompt'
+    const decision = this.ctx.artifacts.recordDecision({
+      decisionType: 'reconciliation',
+      question: `Does agent run ${row.run_id} on ${row.worker}, which the host's own stop cut while it ran, run again?`,
+      inputs: [],
+      candidates: [
+        { option: 'resume', selected: again.how === 'resumed', reasons: again.how === 'resumed' ? [was, `its runtime resumes a conversation: it continues native session ${again.handle}, in the same workspace`] : ['not resume: its runtime cannot resume, or its own native conversation was never recorded, so its prompt may be in none'] },
+        { option: 'restart', selected: again.how === 'restarted', reasons: again.how === 'restarted' ? [was, restart] : ['not restart: it continues its own native conversation, which holds its prompt'] },
+        { option: 'fail', selected: false, reasons: [`not fail: only its host's stop cut it (not its agent, a lost lease, or the operator), so it is not reconciled as lost and costs no attempt; cut ${resumes} of at most ${MAX_RESUMES} times (INV-9)`] },
+      ],
+      decider: RESUME_RULE,
+      outcome: { option: again.how === 'resumed' ? 'resume' : 'restart', detail: { agentRun: row.run_id, worker: row.worker, resumes, max: MAX_RESUMES, ...(again.handle ? { nativeHandle: again.handle } : {}), ...(again.session ? { sessionHandle: again.session } : {}) } },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'agent-workers' }, ...(row.workflow_run_id ? { runId: row.workflow_run_id } : {}), classification: row.classification as Classification }).id as ContentId
+    this.update(row.run_id, { resumes, resume_decision: decision }, lease)
+    this.ctx.logger.info(`agent Workers: ${row.run_id} on ${row.worker} was cut by the host's stop and ${again.how === 'resumed' ? `resumes native session ${again.handle}` : `starts again in its worktree with its prompt${again.session ? `, in its session's conversation ${again.session}` : ''}`} (cut ${resumes} of at most ${MAX_RESUMES}); decision ${decision}`)
+    try {
+      this.ctx.get('eventLog')?.append({
+        type: RESUMED_EVENT, ...(row.workflow_run_id ? { runId: row.workflow_run_id } : {}), ...(row.workflow_run_id && row.step_node ? { nodeId: row.step_node } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}), decision,
+        data: { agentRun: row.run_id, worker: row.worker, how: again.how, resumes, ...(row.step_node ? { step: row.step_node } : {}), ...(again.handle ? { nativeHandle: again.handle } : {}), ...(again.session ? { sessionHandle: again.session } : {}) },
+      })
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: that ${row.run_id} ran again after the host's stop was not appended: ${(error as Error).message}`)
+    }
+    return resumes
+  }
+
   /** The process that held a run: when it is this one, gone only once this process runs no agent of the run; else as this host shows it. */
   private holderProbe(row: RunRow): ProcessProbe {
     const recorded = processIdentityOf(parsed(row.holder))
@@ -1990,7 +2098,18 @@ export class AgentWorkers extends Service {
       try {
         const row = this.row(runId)
         if (!row || row.status === 'completed' || row.status === 'failed') return
-        if (row.submitted_at) {
+        // Started, and its runtime ended by this source's own stop (a drain, shutdown, or update): not a
+        // loss of its holder. It runs again as itself, not as a new attempt (T283).
+        const cut = row.submitted_at !== null && this.cutByHost(row)
+        // Taken up at the start, before its runtime registered: what the runtime can resume is not known
+        // yet, so it waits for it, bounded (INV-9), rather than being sent as if it could not.
+        if (cut && !this.ctx.agentRuntimes.get(this.workers.get(row.worker)!.runtime) && (this.runtimeWaits.get(runId) ?? 0) < MAX_RUNTIME_WAITS) {
+          this.runtimeWaits.set(runId, (this.runtimeWaits.get(runId) ?? 0) + 1)
+          this.retryLater(runId, 1000)
+          return
+        }
+        this.runtimeWaits.delete(runId)
+        if (row.submitted_at && !cut) {
           // Started, and its holder no longer holds it: the agent may already have acted in its
           // workspace, and may still be acting. It is never run again (INV-4); it is reconciled as
           // gone only on a `dead` verdict, and otherwise looked at again, then left to the operator.
@@ -2035,7 +2154,10 @@ export class AgentWorkers extends Service {
         const account = worker.derived ? this.agentAccounts.accountGate(worker.derived.accountId) : undefined
         if (account?.state === 'unavailable') throw new ProviderError('config_error', `${row.worker}: ${account.why}; nothing was run`)
         // What the agent is sent: its prompt, or a review member's conversation replayed before it (ADR-0049).
-        const turn = await this.withUnasked(await this.withLessons(await this.turnOf(row, worker, current), row, worker), row, worker)
+        let turn = await this.withUnasked(await this.withLessons(await this.turnOf(row, worker, current), row, worker), row, worker)
+        // A run the host cut is told so, and resumes from its native conversation or starts again in its worktree.
+        const again = cut ? await this.againAfterCut(row, worker, turn) : undefined
+        if (again) turn = again.turn
         // INV-12: the prompt reaches the agent's remote model, so it is checked before anything starts,
         // with the files it will read in its worktree: one check of exactly what the agent is given.
         const placed = row.files ? (JSON.parse(row.files) as Array<{ path: string; text: string }>) : []
@@ -2047,9 +2169,14 @@ export class AgentWorkers extends Service {
           this.fail(row, new ProviderError('egress_denied', `${egress.reason} (decision ${egress.decision})`), current)
           return
         }
-        await this.scheduler(row.worker, worker).runTurn(row.worker, signal, async (slot) => this.execute(row, worker, turn, AbortSignal.any([signal, slot.signal]), current))
+        // Run with its count of cuts, so its usage record is its own unit and a lower bound of the run (`account`).
+        const ran = again ? { ...row, resumes: this.noteAgain(row, again, current) } : row
+        await this.scheduler(row.worker, worker).runTurn(row.worker, signal, async (slot) => this.execute(ran, worker, turn, AbortSignal.any([signal, slot.signal]), current))
       } catch (error) {
-        if (this.stopped.signal.aborted) return
+        if (this.stopped.signal.aborted) {
+          this.markCut(runId, current)
+          return
+        }
         if (error instanceof LeaseLost || error instanceof StaleGeneration || lost.aborted) {
           this.retryLater(runId, LEASE_TTL_MS)
           return
@@ -2394,7 +2521,8 @@ export class AgentWorkers extends Service {
     // recorded with it, and the submission is its first activity (PROP-0013).
     const submittedAt = now()
     const holder = currentProcess()
-    this.update(row.run_id, { status: 'running', submitted_at: submittedAt, activity_at: submittedAt, ...(holder ? { holder: JSON.stringify(holder) } : {}) }, lease)
+    // A host stop's mark is cleared as it runs: a later loss of its holder is a crash, never that stop.
+    this.update(row.run_id, { status: 'running', submitted_at: submittedAt, activity_at: submittedAt, host_stopped_at: null, ...(holder ? { holder: JSON.stringify(holder) } : {}) }, lease)
     const startedAt = Date.now()
     const deadline = AbortSignal.timeout(this.config.runTimeoutMs ?? 15 * 60_000)
     const watched = this.watch(row, lease)
@@ -2728,15 +2856,22 @@ export class AgentWorkers extends Service {
    * `report`: what the account's usage report said after the run (ADR-0059), recorded after the run's
    * own observations, so the latest reading has its share, and never opening a window a limit closed.
    * Whether a `limited` reading of the pool was recorded.
+   *
+   * A run that runs again after a host stop cut it (T283, `resumes` above 0) is metered the same way,
+   * but what its runtime reports now is only what it used since the restart: its record is a lower
+   * bound of the run (`partial` says so), so it never reconciles the run's unknown usage from before
+   * the stop, which is left to transcript reconciliation (INV-2, never invented); and it is its own
+   * unit, never a duplicate of the cut execution's record.
    */
   private async account(row: RunRow, worker: AgentWorkerConfig, meter: Meter, metering: RunMetering | undefined, outcome: 'completed' | 'failed' | 'aborted', durationMs: number, report: readonly LimitObservation[], ending: string): Promise<boolean> {
     const ran = metering?.limits?.length ? await this.observe(row.worker, worker, meter, metering.limits) : false
     const reported = report.length ? await this.observe(row.worker, worker, meter, report, true) : false
     const limited = ran || reported
     const usage = usageOf(metering)
-    const partial = metering?.partial
+    const again = row.resumes ? againPartial(row.resumes) : undefined
+    const partial = [metering?.partial, again].filter((p): p is string => p !== undefined).join('; ').slice(0, 300) || undefined
     if ((!usage.usage && metering?.turns === undefined) || (partial && !anyCounted(usage.usage, metering?.turns))) {
-      const said = partial ? `its runtime reported no number above 0 before it ended: ${partial}` : 'its runtime reported neither tokens nor turns'
+      const said = partial ? `its runtime reported no number above 0${metering?.partial ? ' before it ended' : ''}: ${partial}` : 'its runtime reported neither tokens nor turns'
       this.unknownUsage(row, meter, 'not-reported', `${ending}; ${said}`, { outcome })
       this.ctx.logger.warn(`agent Workers: ${row.run_id} on ${row.worker} reported no usage (${ending}); it is left to transcript reconciliation`)
       return limited
@@ -2748,8 +2883,9 @@ export class AgentWorkers extends Service {
       // A lower bound says so on its record (`@1.1`, `partial`), in the ledger's one write of it: a
       // crash or a failed append before its fact never leaves it reading as the run's usage (INV-2).
       schema: partial ? 'usage-record@1.1' : 'usage-record@1.0',
-      // The runtime's own identity of its result, so another source of the same unit is a duplicate.
-      requestId: `${worker.runtime}:${metering?.resultId ?? row.run_id}`,
+      // The runtime's own identity of its result, so another source of the same unit is a duplicate;
+      // without one, a run that ran again after a host stop is a unit of its own each time (T283).
+      requestId: `${worker.runtime}:${metering?.resultId ?? (row.resumes ? `${row.run_id}:again-${row.resumes}` : row.run_id)}`,
       source: 'runtime-result', observedAt: now(), account: meter.account, pool: meter.pool, worker: row.worker, runId: row.run_id,
       ...(row.session_id ? { sessionId: row.session_id } : {}), ...scopeOf(row),
       ...(Object.keys(model).length ? { model } : {}), ...usage,
@@ -3012,7 +3148,7 @@ function execution(row: RunRow): WorkerExecution {
     id: row.run_id, status: row.status, submitted: row.submitted_at !== null,
     ...(row.result ? { result: row.result as ArtifactRef } : {}),
     ...(row.error ? { error: JSON.parse(row.error) as WorkerExecution['error'] & object } : {}),
-    decisions: [row.egress_decision, row.setup_decision, row.budget_decision, row.liveness_decision, row.liveness_freed].filter((d): d is string => typeof d === 'string').map((d) => d as ContentId),
+    decisions: [row.egress_decision, row.setup_decision, row.budget_decision, row.liveness_decision, row.liveness_freed, row.resume_decision].filter((d): d is string => typeof d === 'string').map((d) => d as ContentId),
   }
 }
 

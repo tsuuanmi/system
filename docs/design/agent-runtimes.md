@@ -1849,9 +1849,15 @@ literature review run on a Claude Worker, a different family from the first revi
 
 - **Idempotency.** Every run is keyed by a logical request id. Target: where the agent writes
   a local session or rollout record, reconciliation reads it before restarting a run. Today a
-  run that started before a stop is never run again: once a [liveness verdict](#restart-and-liveness)
+  run that started before a crash is never run again: once a [liveness verdict](#restart-and-liveness)
   finds it gone, it fails as
-  `reconciliation_failed` and names its native session. A run whose
+  `reconciliation_failed` and names its native session. A run the host's own stop cut (a drain,
+  shutdown, or update, marked `host_stopped_at` as the stop ended its runtime, T283) is the one
+  exception: it is no lost holder, so after the restart the same run continues its own native
+  conversation when its runtime can resume and its handle was recorded, else its prompt is sent
+  again in the same worktree (on its session's conversation, if any), with a `reconciliation` decision
+  of rule `agent-workers.resume-cut` and no attempt spent; an agent process still present, or a run
+  cut more than five times, is taken by the verdict as before. A run whose
   lease another process holds is looked at again when that lease would expire, so a crashed
   holder never strands it.
 - **Completion.** The SDK's terminal event means *provider terminal*, not acceptance. The

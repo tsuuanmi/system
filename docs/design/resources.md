@@ -301,6 +301,12 @@ case is visible and durable:
   runtime reported. The event names the workflow run, whose view maps the run to its step. Nothing
   estimates its usage. A run may get two (a stop aborted it before it reported anything, then the
   restart found it interrupted): readers count it once, by its first.
+- **A run the host's stop cut that runs again** (T283: resumed in its native session, or started
+  again in its worktree) keeps the fact its cut execution got. What its runtime reports after the
+  restart is only what it used since, so its record is a lower bound of the run (`partial`: it ran
+  again after the host's stop cut it), a unit of its own (without the runtime's own result id, its
+  `requestId` is the run's with `:again-<n>`), and never reconciles the run: what it used before the
+  stop is left to transcript reconciliation, never invented.
 - **A run with a lower bound counted** (it ended before its runtime's final count, and its runtime
   reported some usage while it ran) gets its record of that lower bound, `usage-record@1.1` whose
   `partial` says why it is one, and a `not-reported` fact (`usage-unknown@1.1`) whose `partial`

@@ -823,6 +823,24 @@ The **`agents` Worker source**: agent runtimes as Workers
     its workflow run's worktree stay held until the operator frees them (below):
     the source runs nothing more in either (`config_error`, unsent), and the
     retention sweep keeps the worktree.
+  - A run this source's own stop cut (a drain, shutdown, or update: its runtime
+    was ended by `stopped`) is marked `host_stopped_at` as it stops (T283), and
+    is not reconciled as lost. At the next start (after waiting, at most a
+    minute, for its runtime to register) the same run runs again: its own native
+    conversation continued, told only to go on, when the runtime resumes one and
+    the run's own handle was recorded (only then is its prompt in it); else its
+    prompt again in the same worktree with a note, as the run would be sent anew
+    (continuing its session's conversation, an earlier run's, where the runtime
+    resumes one), so its task is never left out; a
+    `reconciliation` decision of rule `agent-workers.resume-cut@1` (`resume` or
+    `restart`) and an `agent-workers.run.resumed` event say which. It is no
+    failure, so it spends no attempt and asks no one. Not so when no stop marked
+    it (a crash), an agent process of it is still present, or it was cut more
+    than 5 times (INV-9): those are reconciled as above. Its usage is not
+    invented either: its cut execution keeps the `usage.unknown` fact the stop
+    gave it, and what its runtime reports after the restart is recorded as a
+    lower bound of the run (`partial`), its own unit, so the run stays unknown
+    until its transcript is reconciled.
 
   Its reservation is released,
   and its usage is not invented: no result message means no `runtime-result`

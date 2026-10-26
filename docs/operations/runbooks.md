@@ -1932,9 +1932,17 @@ check` (37 rows, checked on a copy, 2026-10-23).
   this DSH home): no new run is admitted, the drain waits at most that long, then the daemon is sent
   SIGTERM and exits, and `system start`, the unit's main process, with it. What still runs then is
   cut at once:
-  - an agent step is aborted, its session and worktree kept; the agent run is reconciled at the next
-    start and ends `host-stopped`, so its run's failure is a free retry of the same attempt on its
-    session ([ADR-0069](../decisions/adr/0069-an-attempt-is-not-spent-on-an-infrastructure-failure.md));
+  - an agent step is aborted, its session and worktree kept, and its agent run is marked
+    `host_stopped_at` as the stop ends it (T283). At the next start the same agent run runs again,
+    never failed: it continues its own native conversation when its runtime can resume one and the
+    run's handle was recorded, else its prompt is sent again in the same worktree (on its session's
+    conversation, when it has one), so its task is never left out. That is no attempt and asks no
+    one (a `reconciliation` decision of rule `agent-workers.resume-cut` and an
+    `agent-workers.run.resumed` event); a step cut more than five times, a run whose agent process
+    is still present, and a run no stop marked (the host or the agent crashed) are reconciled as
+    before and go to the operator, as `reconciliation_failed` ([a run's liveness is
+    unknown](#a-runs-liveness-is-unknown)), a failure marked `host-stopped`, a free retry
+    ([ADR-0069](../decisions/adr/0069-an-attempt-is-not-spent-on-an-infrastructure-failure.md));
     a run whose step outlived the stop resumes in place;
   - a website turn already sent is never resent: the next start reconciles it from the page
     ([provider turns](../design/provider-turns.md), INV-4); one whose outcome the page cannot tell
@@ -1958,12 +1966,13 @@ check` (37 rows, checked on a copy, 2026-10-23).
   2026-10-26 the update to 2a64dad8 with `--cut-running` still took ten minutes to stop (10:30 to
   10:40): the unit's drain waited for the cut steps anyway. The short stop is T269's answer.
 - **The report** (T269), when it cut: after the upgrade checks, `what the stop cut, and how it
-  resumed:` reads the store (read-only) and says, for each step of `cut.json`, `free retry (T218)`
-  (its step ended `host-stopped`; the task's next run named when there is one), `resumed` (the step
-  went on in its session from its recorded state), `not settled yet` (it resumes by itself; follow it
-  with `system explain <run>`), or that its run failed for a reason not the host's (the attempt
-  counts: look at it); then each check the stop cut that ran again since the cut, with its decision.
-  A check is no step, so the wait never names it: the report does. Also in `<dir>/cut-report.txt`.
+  resumed:` reads the store (read-only) and says, for each step of `cut.json`, `resumed` (its agent
+  run went on in its native session, no attempt spent), `restarted` (its runtime cannot resume, so it
+  started again from the same worktree), `free retry (T218)` (its step ended `host-stopped`: the
+  engine's JSON mark is read, not a bare word; the task's next run named when there is one), `not
+  settled yet` (it resumes by itself; follow it with `system explain <run>`), or that its run failed
+  for a reason not the host's, with that reason (the attempt counts: look at it); then each check
+  the stop cut that ran again since the cut, with its decision. A check is no step, so the wait never names it: the report does. Also in `<dir>/cut-report.txt`.
 - The backup, taken once the daemon has stopped, so it is the store a rollback returns to: `system
   backup` (the store by `VACUUM INTO`, and the vault; the key stays in `~/.dsh/system`, as in
   [backup and restore](#backup-and-restore)), verified by a restore preview; and the profile's files.

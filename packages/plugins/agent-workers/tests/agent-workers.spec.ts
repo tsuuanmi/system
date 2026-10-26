@@ -367,8 +367,10 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     const queued = source.start({ key: 'k-2', worker: 'agent:reviewer', prompt: 'next', requirement: requirement(), decisions: admitted.decisions })
     await new Promise((resolve) => setTimeout(resolve, 300))
     await first.stop()
-    // A crash: the dead process still holds the queued run's lease for a few seconds.
+    // A crash: the dead process still holds the queued run's lease for a few seconds, and no stop
+    // marked its started run as cut by the host (T283), so that one is never run again (INV-4).
     const db = new DatabaseSync(join(dir, 'system.db'))
+    db.prepare('UPDATE agent_runs SET host_stopped_at = NULL').run()
     db.prepare("INSERT OR REPLACE INTO leases (resource, owner, token, generation, expires_at) VALUES (?, 'dead:1:x', 'dead', 7, ?)").run(`agent-run:${queued.id}`, Date.now() + 3000)
     db.close()
     const again = new ScriptedAgent()
@@ -377,7 +379,7 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect(again.runs.map((r) => r.prompt)).toEqual(['next'])
   }, 60_000)
 
-  it('never runs a started run again after a restart: it fails for the operator to inspect (INV-4)', async () => {
+  it('never runs a started run again after a crash: it fails for the operator to inspect (INV-4)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-agents-'))
     // The agent's process is reported, and ends with the stop: the verdict can find it gone (PROP-0013).
     const first = await boot(new ScriptedAgent({ holdMs: 30_000, process: true }), undefined, dir)
@@ -386,6 +388,10 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     const started = source.start({ key: 'k', worker: 'agent:reviewer', prompt: 'long', requirement: requirement(), decisions: admitted.decisions })
     await new Promise((resolve) => setTimeout(resolve, 300))
     await first.stop()
+    // A crash, not a stop: nothing marked the run as cut by the host (T283).
+    const crashed = new DatabaseSync(join(dir, 'system.db'))
+    crashed.prepare('UPDATE agent_runs SET host_stopped_at = NULL WHERE run_id = ?').run(started.id)
+    crashed.close()
     const again = new ScriptedAgent()
     const second = await boot(again, { workers: [worker()], deadAfterSeconds: 1 }, dir)
     const done = await second.ctx.workers.source('agents')!.wait(started.id, 10_000)
