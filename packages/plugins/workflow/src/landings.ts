@@ -47,6 +47,8 @@ import { type NodeRecord, now, type TaskLanding, type TaskRebase, type TaskRow }
 const SUBMITTED = new Set(['accepted', 'review', 'reconciled'])
 /** The landing states still in progress: the sweep looks at them. */
 const OPEN = ['watch', 'commit', 'rebase', 'resolving', 'returning', 'recheck', 'committed', 'asked', 'merging'] as const
+/** The landing states the task's dossier records as evidence (ADR-0070): committed, asked to merge, and every end. */
+const DOSSIER_STATES: ReadonlySet<TaskLanding['state']> = new Set(['committed', 'asked', 'merged', 'returned', 'refused', 'rejected', 'none'])
 /** Rebases one landing makes at most: a target that keeps moving past them is the operator's to merge (INV-9). */
 export const MAX_REBASES = 3
 /** How long a rebase's conflict waits for its author's Worker to be admitted before the landing gives it up (INV-9). */
@@ -678,6 +680,13 @@ export class TaskLandings {
   }
 
   private save(row: TaskRow, landing: TaskLanding): void {
+    // A landing that reached an outcome is the System's evidence in the task's dossier (ADR-0070), once
+    // per state: committed, asked, and where it ended; never the steps between.
+    if (landing.state !== this.view(row)?.state && DOSSIER_STATES.has(landing.state)) {
+      this.e.tasks.dossiers.safely('the landing', () => this.e.tasks.dossiers.evidence(row.run_id,
+        `Landing of run ${row.run_id}'s accepted result: ${landing.state}${landing.commit ? `, commit ${landing.commit}` : ''}${landing.requestId ? `, merge request ${landing.requestId}` : ''}${landing.reason ? `: ${landing.reason}` : ''}.`,
+        landing.decisions?.length ? [landing.decisions.at(-1)!] : [], landing.subject ? { type: 'git-head', ref: landing.subject.ref, version: landing.subject.version } : undefined))
+    }
     this.e.ctx.store.transaction((db) => {
       // The landing keeps its own time (`at`): the row's updated_at stays the report's.
       db.prepare('UPDATE workflow_tasks SET landing = ? WHERE run_id = ?').run(JSON.stringify(landing), row.run_id)

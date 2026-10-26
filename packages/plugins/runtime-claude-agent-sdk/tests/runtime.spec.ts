@@ -4,8 +4,8 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { type Confinement, confinedCommand, meteringOf, type ToolCall } from '@tsuuanmi/system-agent-runtime-core'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { type Confinement, confinedCommand, type HostTool, meteringOf, type ToolCall } from '@tsuuanmi/system-agent-runtime-core'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { agentRuntimeProviderConformance, expectConsistentMetering } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
 import { BWRAP, needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
 import { ClaudeAgentRuntime, type ConfinedRun, commandSandbox, type QueryFn, type RuntimeOptions, type SpawnConfined } from '../src/index.ts'
@@ -81,7 +81,7 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
     expect(await runtime(scripted()).probe()).toEqual({
       available: true, detail: 'Claude Code 2.1.294; host state hidden by /usr/bin/bwrap; commands confined: a sandbox with no network starts inside it', version: '2.1.294',
       sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: true, gatesToolCalls: true, homes: true, cleanShells: false,
-      readTools: ['Read', 'Grep', 'Glob'],
+      readTools: ['Read', 'Grep', 'Glob'], hostTools: true,
     })
     expect(await runtime(scripted(), null).probe()).toMatchObject({ available: false, detail: expect.stringMatching(/not installed/) })
   })
@@ -113,6 +113,46 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
       cwd: workspace, permissionMode: 'dontAsk', permissionPrompts: 'none', allowedTools: ['Read(./**)', 'Grep(./**)', 'Glob(./**)'], tools: ['Read', 'Grep', 'Glob'],
       settingSources: [], mcpServers: {}, strictMcpConfig: true, pathToClaudeCodeExecutable: '/usr/bin/claude', model: 'opus-x', maxTurns: 5, resume: 'h-0',
     })
+  })
+
+  it('gives the run its host tools as an in-process server `system`, each pre-approved by its exact name, the input checked before the tool is called (ADR-0070)', async () => {
+    const calls: Call[] = []
+    const seen: Array<Record<string, unknown>> = []
+    const hostTools: HostTool[] = [{
+      name: 'dossier_append', description: 'Append an entry', readOnly: false,
+      inputSchema: { type: 'object', additionalProperties: false, required: ['kind', 'text'], properties: { kind: { type: 'string', enum: ['plan', 'progress'] }, text: { type: 'string', minLength: 1, maxLength: 10 } } },
+      call: async (input) => (seen.push(input), { text: 'appended #1', isError: false }),
+    }]
+    await runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'read-only', hostTools }, new AbortController().signal)
+    expect(calls[0]!.options).toMatchObject({
+      allowedTools: ['Read(./**)', 'Grep(./**)', 'Glob(./**)', 'mcp__system__dossier_append'], strictMcpConfig: true,
+      mcpServers: { system: { type: 'sdk', name: 'system' } },
+    })
+    expect(Object.keys(calls[0]!.options.mcpServers as object)).toEqual(['system'])
+    // The server the SDK connects: it lists the tool with its own schema, and answers a call only on an input the schema takes.
+    const server = (calls[0]!.options.mcpServers as { system: { instance: { connect(t: unknown): Promise<void> } } }).system.instance
+    const sent: Array<Record<string, unknown>> = []
+    const transport: { onmessage?: (m: unknown) => void; send(m: unknown): Promise<void> } = { send: async (m) => void sent.push(m as Record<string, unknown>) }
+    await server.connect(transport)
+    const ask = async (message: Record<string, unknown>): Promise<Record<string, unknown>> => {
+      const before = sent.length
+      transport.onmessage!({ jsonrpc: '2.0', ...message })
+      return vi.waitFor(() => sent[before] ?? Promise.reject(new Error('no answer yet')))
+    }
+    expect(await ask({ id: 1, method: 'tools/list' })).toMatchObject({ id: 1, result: { tools: [{ name: 'dossier_append', inputSchema: hostTools[0]!.inputSchema, annotations: { readOnlyHint: false } }] } })
+    expect(await ask({ id: 2, method: 'tools/call', params: { name: 'dossier_append', arguments: { kind: 'plan', text: 'go', runId: 'run_other' } } }))
+      .toMatchObject({ id: 2, result: { isError: true, content: [{ text: expect.stringContaining('"runId" is not an argument of this tool') }] } })
+    expect(await ask({ id: 3, method: 'tools/call', params: { name: 'dossier_append', arguments: { kind: 'evidence', text: 'go' } } }))
+      .toMatchObject({ result: { isError: true, content: [{ text: 'refused: kind is none of plan, progress' }] } })
+    expect(seen).toEqual([])
+    expect(await ask({ id: 4, method: 'tools/call', params: { name: 'dossier_append', arguments: { kind: 'plan', text: 'go' } } }))
+      .toMatchObject({ result: { isError: false, content: [{ type: 'text', text: 'appended #1' }] } })
+    expect(seen).toEqual([{ kind: 'plan', text: 'go' }])
+    // A host tool the seam cannot render is refused before anything runs.
+    const before = calls.length
+    await expect(runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'read-only', hostTools: [{ ...hostTools[0]!, name: 'Bad Name' }] }, new AbortController().signal))
+      .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('is not a host tool name') })
+    expect(calls).toHaveLength(before)
   })
 
   it('never runs with no tools: an empty list means the minimal read set (live 2026-10-12)', async () => {

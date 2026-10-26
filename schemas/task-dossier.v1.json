@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:task-dossier:v1",
+  "title": "Task dossier view",
+  "description": "Body of a `report` artifact: a board task's dossier as one reader is given it, at one entry (docs/design/task-dossier.md, ADR-0070). A step's brief points at a slice (a summary and the latest entries within `maxChars`, progressive disclosure); a run's workspace is given the whole dossier as `.system/DOSSIER.md`, within its own bound. Rendered by the engine from the entries it names, never by a model.",
+  "type": "object",
+  "required": ["schema", "projectId", "taskId", "entries", "head", "shown", "maxChars", "text"],
+  "properties": {
+    "schema": { "const": "task-dossier@1.0" },
+    "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "entries": { "description": "How many entries the dossier holds at `head`.", "type": "integer", "minimum": 1, "maximum": 10000 },
+    "head": {
+      "description": "The latest entry: the dossier this view is of.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+    },
+    "shown": {
+      "description": "The entries whose text the view holds, oldest first.",
+      "type": "array",
+      "maxItems": 10000,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+    },
+    "maxChars": { "description": "The bound `text` was rendered within, in characters (code points).", "type": "integer", "minimum": 1000, "maximum": 262144 },
+    "text": { "type": "string", "minLength": 1, "maxLength": 262144 }
+  },
+  "additionalProperties": false
+}

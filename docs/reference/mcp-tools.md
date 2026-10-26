@@ -540,6 +540,19 @@ Scope: `client`
 
 No arguments.
 
+## `dossier_read`
+
+A board task's dossier (by taskId, or a runId serving it): its append-only entries whole, oldest first from `from`.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `taskId` | string |  |  |
+| `runId` | string |  |  |
+| `from` | integer |  |  |
+| `limit` | integer |  |  |
+
 ## `drain`
 
 Drain the host before a stop or upgrade: admit no new run, and report the runs still executing. Call again to poll.

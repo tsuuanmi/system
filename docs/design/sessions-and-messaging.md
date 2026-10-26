@@ -1,9 +1,10 @@
 # Worker sessions, direct messaging, and long-running work
 
 > Target state. Seam: `ctx.workerSessions` ([plugin model](../architecture/plugin-model.md#seam-catalog)).
-> Decision: [ADR-0015](../decisions/adr/0015-worker-sessions-and-peer-messaging.md).
+> Decision: [ADR-0015](../decisions/adr/0015-worker-sessions-and-peer-messaging.md); for Workers that
+> share no session, [ADR-0070](../decisions/adr/0070-workers-that-share-no-session-work-through-a-tasks-dossier.md).
 > Requirements: REQ-SES-1..8. Shapes: [`worker-session.v1.json`](../../schemas/worker-session.v1.json),
-> [`message.v1.json`](../../schemas/message.v1.json).
+> [`message.v1.json`](../../schemas/message.v1.json), [`task-dossier-entry.v1.json`](../../schemas/task-dossier-entry.v1.json).
 >
 > Implemented in [`worker-sessions`](../../packages/plugins/worker-sessions/README.md) (sessions,
 > groups, mailboxes, budgets) and [`workflow`](../../packages/plugins/workflow/README.md)
@@ -174,6 +175,22 @@ what ran off it. Each fix's result is kept as its own commit of the run's
 review history (`refs/system/reviews/<runId>`), never on the worktree's HEAD,
 which stays the commit the task binds its result to
 ([review cycles](workflow-engine.md#review-cycles)).
+
+### Workers that share no session: the task's dossier
+
+A step that moves off its session, a fix that cannot continue its author's session, a new attempt, and a review
+(which never shares the author's conversation) all reach a Worker that cannot be messaged and never
+saw the conversation. For a board task they work through one artifact instead, the task's
+[dossier](task-dossier.md) ([ADR-0070](../decisions/adr/0070-workers-that-share-no-session-work-through-a-tasks-dossier.md)):
+an append-only chain of entries (`plan`, `progress`, `review`, `response`, `evidence`), carried
+across the task's attempts. Each step's brief points at a bounded slice of it, and the whole of it is
+readable on demand. A continued session keeps writing it; a handoff's `prior` pointers still carry
+the session's earlier results, and the dossier carries what the Workers wrote about the work. A
+reviewer reads the dossier, never the author's conversation. A Worker appends through a narrow,
+gated tool its run holds (`dossier_append`, with `dossier_read`), bound by its source to the step it
+runs and its execution, never named by the Worker: an agent Worker's host tools where its runtime
+offers them (Claude Code). The engine writes the evidence, and the entry of a step that wrote none (a
+website Worker's answer as it is).
 
 ## A2A alignment (for the planned adapter)
 

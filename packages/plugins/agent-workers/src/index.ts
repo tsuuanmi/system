@@ -54,6 +54,7 @@ import {
   type WorkerExecution, type WorkerSandbox, type WorkerStart, type WorkScope,
 } from '@tsuuanmi/system-workers-core'
 import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MAX_SLOTS } from './accounts.ts'
+import { type DossierCaller, dossiersOf, dossierTools, type StepDossiers } from './dossier.ts'
 import { DENIAL_MIGRATION, GATE_MIGRATION, type Deferral, readToolsOf, recordDenial, runGate, unaskedNote } from './gate.ts'
 import { repositoryLessons } from './lessons.ts'
 import { type Applied, CUTOVER_MIGRATION, Cutover, type CutoverRecord, type MigrationPlan, type Moved, planMigration, type RolledBack } from './migrate.ts'
@@ -1994,6 +1995,7 @@ export class AgentWorkers extends Service {
       const evidence = await this.evidence(worker, 'proven').catch(() => undefined)
       const note = unaskedNote(await approvals.policy(), workspace, {
         shellReads: evidence?.cleanShells === true, workspaceReads: evidence?.workspaceReads === true, readTools: readToolsOf(evidence, worker.tools), resumes: row.session_id !== null && row.session_id !== undefined, sandbox: worker.sandbox,
+        dossier: this.dossierOf(row, evidence) !== undefined,
       })
       return { ...turn, prompt: `${turn.prompt}\n\n${note}` }
     } catch (error) {
@@ -2052,6 +2054,19 @@ export class AgentWorkers extends Service {
     return repository === undefined ? undefined : `its workspace ${workspace} is inside the repository ${repository}, whose files a runtime may read on its own`
   }
 
+  /**
+   * The engine's dossier and the step a run's dossier tools are bound to (ADR-0070), when the run
+   * gets them: its runtime offers host tools (`evidence.hostTools`), it serves a step of a board
+   * task's workflow run (its row's workflow run, step, and task, from the engine's own start request),
+   * it is no review member's (whose gate allows no call), and an engine that keeps a dossier is
+   * loaded. The execution is this run itself.
+   */
+  private dossierOf(row: RunRow, evidence: RuntimeEvidence | undefined): { dossiers: StepDossiers; caller: DossierCaller } | undefined {
+    if (evidence?.hostTools !== true || row.scope === REVIEW_MEMBER || !row.task_id || !row.workflow_run_id || !row.step_node) return undefined
+    const dossiers = dossiersOf(this.ctx)
+    return dossiers ? { dossiers, caller: { runId: row.workflow_run_id, nodeId: row.step_node, execution: row.run_id } } : undefined
+  }
+
   private async execute(row: RunRow, worker: WorkerSpec, turn: Turn, signal: AbortSignal, lease: () => Lease): Promise<void> {
     const provider = this.ctx.agentRuntimes.get(worker.runtime)
     if (!provider) throw new ProviderError('config_error', `no ${worker.runtime} runtime is registered`)
@@ -2098,6 +2113,10 @@ export class AgentWorkers extends Service {
     const member = row.scope === REVIEW_MEMBER
     const problem = member ? this.profileProblem(worker, workspace) : undefined
     if (problem) throw new ProviderError('config_error', `${row.worker} cannot run a review member's step under the review-member profile: ${problem}; nothing was run`)
+    // Its board task's dossier tools (ADR-0070), bound to the step this run serves from its own row,
+    // never from the agent's input; only where the runtime offers host tools.
+    const dossier = this.dossierOf(row, evidence)
+    const hostTools = dossier ? dossierTools(dossier.dossiers, dossier.caller) : []
     // Every tool call passes the run's gate before it runs; the runtime's own policy still holds.
     // Under the review-member profile, the gate denies every one.
     const gate = runGate(this.ctx, {
@@ -2109,6 +2128,8 @@ export class AgentWorkers extends Service {
       workspaceReads: evidence.workspaceReads === true,
       // A shell inspection command the agent has a reading tool for is denied at once, naming it (T222).
       readTools: readToolsOf(evidence, worker.tools),
+      // Only the host tools this run was given are classified (ADR-0070).
+      hostTools: hostTools.map((tool) => tool.name),
     })
     const spec: RunSpec = {
       prompt: turn.prompt, workspace, sandbox: worker.sandbox,
@@ -2120,6 +2141,7 @@ export class AgentWorkers extends Service {
       ...(named ? { home: named.home } : {}),
       // A runtime that gives its agent the workspace reads server bounds it so (T200b); one that gives none ignores it.
       workspaceReads: this.readBounds,
+      ...(hostTools.length ? { hostTools } : {}),
       toolGate: gate.gate,
     }
     // Metered: nothing runs without a reservation (INV-2, INV-9).

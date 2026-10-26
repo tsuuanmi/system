@@ -21,6 +21,7 @@ import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { type Advisor, MAX_TRAINING } from './advisor.ts'
 import { sweepDeferrals } from './continuations.ts'
 import { dispatchProblems, type DispatchPass, type DispatchStatus } from './dispatch.ts'
+import type { DossierAppendInput, DossierCaller, DossierPage } from './dossiers.ts'
 import { checkTemplate, Engine } from './engine.ts'
 import { MIGRATIONS } from './migrations.ts'
 import { approve, continueRun, stop, supersede } from './operator.ts'
@@ -37,6 +38,8 @@ export { compose, DEFAULT_TEMPLATES, preflight, resolve } from './spec.ts'
 export type { Instructions, NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
 export { WorkflowFailure } from './types.ts'
 export { dispatchProblems, dispatchSettings, MAX_LOOKED } from './dispatch.ts'
+export { DOSSIER_FILE, DOSSIER_KINDS, DOSSIER_LIMITS, renderDossier, ROLE_KINDS } from './dossiers.ts'
+export type { DossierAppendInput, DossierCaller, DossierEntry, DossierEntryView, DossierKind, DossierPage, DossierView } from './dossiers.ts'
 export { adviceProblem, adviseInShadow, advisorStop, ANSWER_SCHEMA, brierScores, featuresOf, fitLogistic, LocalAdvisor, modelPrompt, OUTCOME_EVENT, QUESTION_SET, QUESTIONS, SHADOW_ATTEMPTS, vectorOf } from './advisor.ts'
 export type { Advice, AdviceDetail, Advisor, AdvisorCandidate, AdvisorConfig, AdvisorCounts, AdvisorFeatures, AdvisorSettings, AdvisorSignal, CandidateAdvice, OutcomeData, Question, QuestionScore } from './advisor.ts'
 export type { DispatchPass, DispatchPassView, DispatchPause, DispatchSettings, DispatchStarted, DispatchStatus, DispatchWindow } from './dispatch.ts'
@@ -308,6 +311,31 @@ export class Workflow extends Service {
   landing(runId: string): TaskLanding | undefined {
     const row = this.engine.tasks.row(runId)
     return row ? this.engine.tasks.landings.view(row) : undefined
+  }
+
+  /**
+   * A page of a board task's dossier (ADR-0070), by the task or by a run that serves it: every entry
+   * whole, as appended, oldest first from `from`, at most 50; `next` names the next page's `from`.
+   */
+  dossier(input: { taskId?: string | undefined; runId?: string | undefined; from?: number | undefined; limit?: number | undefined }): DossierPage {
+    return this.engine.tasks.dossiers.read(input)
+  }
+
+  /**
+   * Append a Worker's entry to its task's dossier for the step it runs (ADR-0070): the `dossier_append`
+   * a Worker source gives its run, bound to `caller` (the workflow run, step, and execution from the
+   * source's own record, never from the agent's input), whose Worker is the entry's author. Refused
+   * unless `caller.execution` is the one the step runs now, the kind is one its role writes (never
+   * `evidence`), and the text is 1 to 4000 characters. Not a tool of System's own MCP surface: there a
+   * caller would name the step. The entry never changes once appended.
+   */
+  appendToDossier(caller: DossierCaller, input: DossierAppendInput): { id: string; seq: number } {
+    return this.engine.tasks.dossiers.appendByWorker(caller, input)
+  }
+
+  /** `dossier_read` for a step's Worker, bound to `caller` as {@link appendToDossier} is: a page of its own task's dossier. */
+  readDossier(caller: DossierCaller, page: { from?: number | undefined; limit?: number | undefined } = {}): DossierPage {
+    return this.engine.tasks.dossiers.readByWorker(caller, page)
   }
 
   /**

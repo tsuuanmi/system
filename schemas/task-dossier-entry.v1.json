@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:task-dossier-entry:v1",
+  "title": "Task dossier entry",
+  "description": "One entry of a board task's dossier (docs/design/task-dossier.md, ADR-0070): the one append-only record the Workers of a task's attempts coordinate through, carried across attempts. Each entry is its own content-hashed artifact (`plan`, `report`, `finding`, or `evidence` kind by its `kind`); it names the entry before it (`prev`), so the dossier at an entry is a hash chain no entry can be changed in or taken out of unseen. The engine numbers entries per task (`seq`, from 1, no gap) and never rewrites one.",
+  "type": "object",
+  "required": ["schema", "projectId", "taskId", "seq", "attempt", "kind", "author", "text"],
+  "properties": {
+    "schema": { "const": "task-dossier-entry@1.0" },
+    "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "seq": { "description": "The entry's place in its task's dossier, from 1.", "type": "integer", "minimum": 1, "maximum": 10000 },
+    "prev": {
+      "description": "The entry before this one (seq - 1); absent only on the first.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+    },
+    "attempt": { "description": "The attempt of the task the entry was written in.", "type": "integer", "minimum": 1, "maximum": 1000 },
+    "kind": {
+      "description": "`plan`: the author at the start (approach, files, risks). `progress`: after a step (what was done, commits, what remains, small decisions and why). `review`: a reviewer's findings, bound to the subject reviewed, its result linked, not copied. `response`: the author per finding (fixed in which commit, or not and why). `evidence`: the engine's (checks, acceptance, report, landing); a Worker never writes one.",
+      "enum": ["plan", "progress", "review", "response", "evidence"]
+    },
+    "author": {
+      "description": "Who wrote it: a Worker through its step's gated tool or as its step's answer, or the engine (`system`, ref `workflow`).",
+      "type": "object",
+      "required": ["type", "ref"],
+      "properties": {
+        "type": { "enum": ["worker", "system"] },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "runId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "nodeId": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "execution": { "description": "The Worker execution of the step that appended it.", "type": "string", "minLength": 1, "maxLength": 200 }
+      },
+      "additionalProperties": false
+    },
+    "text": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "refs": {
+      "description": "Artifacts the entry links, never copies: a step's result, a review's assessment, a decision, a check run.",
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+    },
+    "subject": {
+      "description": "The exact subject the entry is about: what a review reviewed, the tree a step left.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/subject"
+    },
+    "commits": {
+      "description": "Commits the entry names (a progress's, a response's fix), as hex ids.",
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" }
+    },
+    "finding": { "description": "On a response: the finding it answers, as the review named it.", "type": "string", "minLength": 1, "maxLength": 200 },
+    "inReplyTo": {
+      "description": "On a response: the review entry it answers.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+    }
+  },
+  "additionalProperties": false
+}
