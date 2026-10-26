@@ -6,7 +6,14 @@
  * - `list_dir`: one directory's entries, bounded in number, and no more of them read than 10 times that;
  * - `search`: a fixed string or a regular expression over the files under a path, bounded in
  *   matches, files, bytes, and time, in a worker thread of this process with a bounded heap (no
- *   shell, no program).
+ *   shell, no program);
+ * - four read-only git views of the workspace's repository (T223), each git run with an argv the
+ *   server builds (never a shell; a commit only as a hex id, a path only after `--`, as a literal
+ *   pathspec, after the checks below) and every git setting that could run a program pinned off
+ *   ({@link GIT_CONFIG_PINS}, {@link gitEnvironment}), bounded in bytes and time: `git_log` (a
+ *   bounded count, a fixed set of fields), `git_show` (one commit, its stat and/or patch), `git_diff`
+ *   (the worktree or the index against HEAD, or two commits), `git_status` (porcelain). Files named
+ *   as secrets are left out of every stat, patch, and status.
  * Every path is resolved with `realpath` and must stay inside the workspace: a `..` segment, an
  * absolute path outside it, and a symlink whose target is outside it are refused; git's own data
  * (`.git` anywhere in the path, and a bare repository `*.git`), files named as secrets
@@ -22,8 +29,9 @@
  * confinement, as the Codex gate hook is.
  * @module @tsuuanmi/system-agent-runtime-core/workspace-reads
  */
+import { spawn } from 'node:child_process'
 import { type Dirent, closeSync, constants, fstatSync, lstatSync, opendirSync, openSync, readSync, readlinkSync, realpathSync, statSync } from 'node:fs'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { fileURLToPath } from 'node:url'
 import { getHeapStatistics } from 'node:v8'
@@ -32,9 +40,10 @@ import { Worker, isMainThread, parentPort, workerData } from 'node:worker_thread
 /** The server's own file: what a runtime runs with `node` and binds into the confinement. */
 export const WORKSPACE_READS_SCRIPT: string = fileURLToPath(import.meta.url)
 
-/** The name a runtime registers the server under, and its three tools. */
+/** The name a runtime registers the server under, and its tools: three over files, four git views (T223). */
 export const WORKSPACE_READS_SERVER = 'workspace'
-export const WORKSPACE_READ_TOOLS: readonly string[] = ['read_file', 'list_dir', 'search']
+export const WORKSPACE_GIT_TOOLS: readonly string[] = ['git_log', 'git_show', 'git_diff', 'git_status']
+export const WORKSPACE_READ_TOOLS: readonly string[] = ['read_file', 'list_dir', 'search', ...WORKSPACE_GIT_TOOLS]
 
 /** The bounds of the workspace reads server (INV-9): each an integer within its range. */
 export interface WorkspaceReadBounds {
@@ -54,6 +63,12 @@ export interface WorkspaceReadBounds {
   maxPatternChars: number
   /** How long one `search` may take, in milliseconds; past it, it is stopped. */
   searchTimeoutMs: number
+  /** The most commits one `git_log` lists. */
+  maxLogCount: number
+  /** The most bytes of output one git view (`git_log`, `git_show`, `git_diff`, `git_status`) returns. */
+  maxGitBytes: number
+  /** How long one git view may take, in milliseconds, every git it runs counted; past it, git is stopped. */
+  gitTimeoutMs: number
 }
 
 /** Each bound's range, default, command-line flag, and what it bounds. */
@@ -66,6 +81,9 @@ export const WORKSPACE_READ_BOUNDS: Readonly<Record<keyof WorkspaceReadBounds, {
   maxLineChars: { min: 80, max: 10_000, default: 500, flag: '--max-line-chars', description: 'The most characters of one matching line search shows' },
   maxPatternChars: { min: 1, max: 10_000, default: 1000, flag: '--max-pattern-chars', description: 'The longest pattern search takes' },
   searchTimeoutMs: { min: 100, max: 120_000, default: 10_000, flag: '--search-timeout-ms', description: 'How long one search may take, in milliseconds; past it, it is stopped' },
+  maxLogCount: { min: 1, max: 1000, default: 100, flag: '--max-log-count', description: 'The most commits one git_log lists' },
+  maxGitBytes: { min: 1024, max: 8 * 1024 * 1024, default: 256 * 1024, flag: '--max-git-bytes', description: 'The most bytes of output one git view (git_log, git_show, git_diff, git_status) returns' },
+  gitTimeoutMs: { min: 100, max: 120_000, default: 10_000, flag: '--git-timeout-ms', description: 'How long one git view may take, in milliseconds, every git it runs counted; past it, git is stopped' },
 }
 
 const BOUND_NAMES = Object.keys(WORKSPACE_READ_BOUNDS) as Array<keyof WorkspaceReadBounds>
@@ -465,6 +483,32 @@ class Refused extends Error {}
 const inside = (root: string, path: string): boolean => path === root || path.startsWith(root.endsWith(sep) ? root : root + sep)
 const errno = (error: unknown): string | undefined => (error as NodeJS.ErrnoException | undefined)?.code
 const MAX_PATH = 4096
+
+/**
+ * Where `path` (absolute, no `..`), which does not exist, would be: its deepest existing ancestor's
+ * real path, the rest appended (nothing of the rest exists, so no link in it is followed).
+ * Undefined when that ancestor cannot be resolved (a dangling symlink, a permission error).
+ */
+function deepestExisting(path: string): string | undefined {
+  const rest: string[] = []
+  let at = path
+  for (;;) {
+    try {
+      lstatSync(at)
+    } catch (error) {
+      const parent = dirname(at)
+      if (errno(error) !== 'ENOENT' || parent === at) return undefined
+      rest.unshift(basename(at))
+      at = parent
+      continue
+    }
+    try {
+      return join(realpathSync.native(at), ...rest)
+    } catch {
+      return undefined
+    }
+  }
+}
 /** How much of a file's start tells a binary file (a NUL byte). */
 const SNIFF = 8000
 const CHUNK = 64 * 1024
@@ -519,8 +563,10 @@ export class WorkspaceReads {
    * not a string, a NUL, a `..` segment, an absolute path outside the workspace, a real location
    * outside the workspace's real path (a symlink out), git's data, or a secret, as written or as
    * resolved; and, as written and as resolved, a path git ignores that is named like a secret ({@link GitIgnores}).
+   * With `missing` (a git view's path, which may name a file only history has), a path that does
+   * not exist is where its deepest existing ancestor really is, the rest appended.
    */
-  locate(given: unknown, ignores: GitIgnores = new GitIgnores(this.real)): { real: string; rel: string } {
+  locate(given: unknown, ignores: GitIgnores = new GitIgnores(this.real), missing = false): { real: string; rel: string } {
     if (given !== undefined && typeof given !== 'string') throw new Refused('path is not a string')
     const written = given === undefined || given === '' ? '.' : given
     if (written.length > MAX_PATH || written.includes('\0')) throw new Refused('the path is longer than 4096 characters or holds a NUL')
@@ -542,7 +588,9 @@ export class WorkspaceReads {
     try {
       real = realpathSync.native(join(this.real, rel))
     } catch (error) {
-      throw new Refused(errno(error) === 'ENOENT' ? `${written} does not exist` : `${written} cannot be resolved (${errno(error) ?? 'error'})`)
+      const found = missing && errno(error) === 'ENOENT' ? deepestExisting(join(this.real, rel)) : undefined
+      if (found === undefined) throw new Refused(errno(error) === 'ENOENT' ? `${written} does not exist` : `${written} cannot be resolved (${errno(error) ?? 'error'})`)
+      real = found
     }
     // Where it leads outside is not said: the refusal names only what the agent wrote.
     if (!inside(this.real, real)) throw new Refused(`${written} resolves outside the workspace (through a symlink), which is never read`)
@@ -911,6 +959,265 @@ export class WorkspaceReads {
     })
   }
 
+  /**
+   * Runs git once in the workspace with `args` after the pinned options ({@link gitArgv}), never
+   * through a shell, in a process group of its own: its output read up to `maxBytes` (one byte more
+   * tells a longer one, and git is stopped there: `cut`), its exit status one of `ok`, by
+   * `deadline`, or the whole group is killed and the call refused.
+   */
+  private runGit(args: readonly string[], deadline: number, maxBytes: number, overrides: readonly string[], ok: readonly number[] = [0]): Promise<{ out: Buffer; cut: boolean }> {
+    return new Promise((resolvePromise, reject) => {
+      const timedOut = (): Refused => new Refused(`git did not finish within ${this.bounds.gitTimeoutMs} ms (gitTimeoutMs), and was stopped; narrow the view (paths, count)`)
+      const wait = deadline - Date.now()
+      if (wait <= 0) {
+        reject(timedOut())
+        return
+      }
+      const child = spawn('git', gitArgv(args, overrides), { cwd: this.real, env: gitEnvironment(this.real), stdio: ['ignore', 'pipe', 'pipe'], detached: true, shell: false })
+      const chunks: Buffer[] = []
+      let size = 0
+      let cut = false
+      let stderr = ''
+      let settled = false
+      const kill = (): void => {
+        try {
+          if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL')
+        } catch {
+          child.kill('SIGKILL')
+        }
+      }
+      const settle = (fn: () => void): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        fn()
+      }
+      const timer = setTimeout(() => {
+        kill()
+        settle(() => reject(timedOut()))
+      }, wait)
+      child.stdout.on('data', (chunk: Buffer) => {
+        if (cut) return
+        const room = maxBytes + 1 - size
+        if (chunk.length >= room) {
+          chunks.push(chunk.subarray(0, room))
+          size += room
+          cut = true
+          kill()
+          return
+        }
+        chunks.push(chunk)
+        size += chunk.length
+      })
+      child.stderr.on('data', (chunk: Buffer) => {
+        if (stderr.length < 4096) stderr += chunk.toString('utf8')
+      })
+      child.once('error', (error) => settle(() => reject(new Error(`git cannot be run: ${error.message.slice(0, 300)}`))))
+      child.once('close', (code) => settle(() => {
+        if (cut) resolvePromise({ out: Buffer.concat(chunks).subarray(0, maxBytes), cut: true })
+        else if (code !== null && ok.includes(code)) resolvePromise({ out: Buffer.concat(chunks), cut: false })
+        else reject(new Refused(`git failed: ${(stderr.split('\n').find((line) => line.trim() !== '') ?? `exit ${code ?? 'by a signal'}`).slice(0, 300)}`))
+      }))
+    })
+  }
+
+  /**
+   * The `-c` overrides that turn off every filter driver the repository's configuration names
+   * (`filter.<name>.clean`, `.smudge`, `.process` empty, `.required` false): git runs a clean filter
+   * when it reads a file of the worktree to compare or diff it (`git status`, `git diff`), and a
+   * `.gitattributes` in the worktree chooses the driver, so no driver is left to run. Names are read
+   * with `git config` (which runs nothing); one that `-c` cannot carry (an `=`, a newline), or more
+   * than {@link MAX_GIT_FILTERS}, refuses the view.
+   */
+  private async filterOverrides(deadline: number): Promise<string[]> {
+    const { out, cut } = await this.runGit(['config', '-z', '--name-only', '--get-regexp', '^filter\\.'], deadline, 64 * 1024, [], [0, 1])
+    if (cut) throw new Refused('the repository\'s configuration names too many filter settings, so no git view runs')
+    const names = new Set<string>()
+    for (const key of out.toString('utf8').split('\0').flatMap((part) => part.split('\n'))) {
+      if (!key.toLowerCase().startsWith('filter.')) continue
+      const last = key.lastIndexOf('.')
+      if (last <= 'filter.'.length) continue
+      names.add(key.slice('filter.'.length, last))
+    }
+    if (names.size > MAX_GIT_FILTERS) throw new Refused(`the repository's configuration names more than ${MAX_GIT_FILTERS} filter drivers, so no git view runs`)
+    return [...names].flatMap((name) => {
+      if (/[=\n\r]/.test(name) || name.includes('\0')) throw new Refused('the repository\'s configuration names a filter driver git\'s -c cannot turn off (an "=" or a newline in its name), so no git view runs')
+      return [`filter.${name}.clean=`, `filter.${name}.smudge=`, `filter.${name}.process=`, `filter.${name}.required=false`]
+    })
+  }
+
+  /**
+   * A git view's `paths`, each through {@link locate} (a path only history has included) and given
+   * to git as a literal pathspec (`:(literal)`, so no `:` magic or glob is read from it); the
+   * workspace itself is no pathspec. At most {@link MAX_GIT_PATHS}.
+   */
+  private gitPathspecs(given: unknown, ignores: GitIgnores): string[] {
+    if (given === undefined) return []
+    if (!Array.isArray(given) || !given.every((path) => typeof path === 'string')) throw new Refused('paths is not a list of strings')
+    if (given.length > MAX_GIT_PATHS) throw new Refused(`paths names more than ${MAX_GIT_PATHS} paths`)
+    return given.flatMap((path: string) => {
+      if (path === '') throw new Refused('a path in paths is empty')
+      const { rel } = this.locate(path, ignores, true)
+      return rel === '.' ? [] : [`:(literal)${rel}`]
+    })
+  }
+
+  /** Why the file `name` (relative to the repository) is left out of a git view, as {@link locate} refuses it, or undefined. */
+  private secretInGit(name: string, ignores: GitIgnores): string | undefined {
+    const isDir = name.endsWith('/')
+    const rel = isDir ? name.slice(0, -1) : name
+    return hiddenName(rel) ?? (SECRET_LIKE.test(rel) ? ignores.secret(rel, isDir) : undefined)
+  }
+
+  /**
+   * The pathspecs that leave out of a diff the files it touches that are named as secrets
+   * (`:(exclude,literal)<name>`): git lists them first (`listArgs` with `--name-only -z`), and each
+   * so named is excluded. A list longer than {@link MAX_GIT_NAMES} bytes, more than
+   * {@link MAX_GIT_EXCLUDES} such files, or one whose name is not UTF-8 refuses the view.
+   */
+  private async secretExcludes(listArgs: readonly string[], pathspecs: readonly string[], ignores: GitIgnores, deadline: number, overrides: readonly string[]): Promise<string[]> {
+    const { out, cut } = await this.runGit([...listArgs, '--name-only', '-z', '--', ...pathspecs], deadline, MAX_GIT_NAMES, overrides)
+    if (cut) throw new Refused('the view touches too many files to check them for secrets; narrow it with paths')
+    // `show` puts a newline between its (empty) header and the names.
+    const secret = [...new Set(out.toString('utf8').replace(/^\n+/, '').split('\0'))].filter((name) => name !== '' && this.secretInGit(name, ignores) !== undefined)
+    if (secret.length > MAX_GIT_EXCLUDES) throw new Refused(`the view touches more than ${MAX_GIT_EXCLUDES} files named as secrets; narrow it with paths`)
+    if (secret.some((name) => name.includes('�'))) throw new Refused('the view touches a file named as a secret whose name is not UTF-8, so it cannot be left out; narrow it with paths')
+    return secret.map((name) => `:(exclude,literal)${name}`)
+  }
+
+  /** `text` within `maxGitBytes`, and a note when it, or git's output, was cut there. */
+  private gitBounded(header: string, text: string, cutByGit: boolean, hint: string): string {
+    const max = this.bounds.maxGitBytes
+    const over = cutByGit || Buffer.byteLength(text) > max
+    const body = over ? cut(text, max) : text
+    return `${header}\n${body}${over ? `\n[output cut at ${max} bytes (maxGitBytes); ${hint}]` : ''}`
+  }
+
+  /**
+   * `git_log`: at most `count` commits (default 20, at most `maxLogCount`) from HEAD or from a
+   * commit named by its hex id, after `skip` of them, touching `paths` if given; each one line of
+   * the chosen fields ({@link GIT_LOG_FIELDS}; default hash, date, author, subject), tab-separated,
+   * and a requested body below it, indented.
+   */
+  async gitLog(input: Record<string, unknown>): Promise<string> {
+    expectFields(input, { count: 'integer', skip: 'integer', commit: 'string', paths: 'strings', fields: 'strings' }, [])
+    const max = this.bounds.maxLogCount
+    const count = (input.count as number | undefined) ?? Math.min(20, max)
+    if (count < 1 || count > max) throw new Refused(`count must be 1 to ${max} (maxLogCount)`)
+    const skip = (input.skip as number | undefined) ?? 0
+    if (skip < 0 || skip > 10_000_000) throw new Refused('skip must be 0 to 10000000')
+    const commit = input.commit === undefined ? undefined : commitId(input.commit, 'commit')
+    const fields = (input.fields as string[] | undefined) ?? DEFAULT_LOG_FIELDS
+    if (fields.length === 0 || fields.length > Object.keys(GIT_LOG_FIELDS).length || new Set(fields).size !== fields.length) throw new Refused('fields must name each field at most once, at least one')
+    for (const field of fields) if (!Object.hasOwn(GIT_LOG_FIELDS, field)) throw new Refused(`${JSON.stringify(field.slice(0, 64))} is not a field of git_log (${Object.keys(GIT_LOG_FIELDS).join(', ')})`)
+    const deadline = Date.now() + this.bounds.gitTimeoutMs
+    const pathspecs = this.gitPathspecs(input.paths, new GitIgnores(this.real))
+    const overrides = await this.filterOverrides(deadline)
+    const format = `--format=format:%x1e${fields.map((field) => GIT_LOG_FIELDS[field]).join('%x1f')}`
+    const { out, cut: cutByGit } = await this.runGit(
+      ['log', '--no-show-signature', '--no-color', `--max-count=${count}`, `--skip=${skip}`, format, ...(commit ? [`${commit}^{commit}`] : []), '--', ...pathspecs],
+      deadline, this.bounds.maxGitBytes, overrides,
+    )
+    const records = out.toString('utf8').split('\x1e').slice(1)
+    // A record git was stopped inside is not shown.
+    if (cutByGit) records.pop()
+    const lines = records.map((record) => {
+      const values = record.split('\x1f')
+      const body = fields.includes('body') ? (values[fields.indexOf('body')] ?? '').trim() : ''
+      const line = fields.flatMap((field, i) => (field === 'body' ? [] : [(values[i] ?? '').replace(/\n+$/, '')])).join('\t')
+      return `${line}${body ? `\n${body.split('\n').map((l) => `    ${l}`).join('\n')}` : ''}`
+    })
+    const header = `git log: ${records.length} commit${records.length === 1 ? '' : 's'} from ${commit ?? 'HEAD'}${skip ? `, after ${skip}` : ''}${pathspecs.length ? ' touching the paths given' : ''} (${fields.join(', ')})`
+    return this.gitBounded(header, lines.join('\n'), cutByGit, `read on with skip ${skip + Math.max(0, records.length - 1)}`)
+  }
+
+  /**
+   * `git_show`: one commit, named by its hex id: its header (id, parents, author, committer, the
+   * whole message), then its `stat` and its `patch` (both by default; neither: the header alone),
+   * limited to `paths` if given; files named as secrets are left out. No textconv, no external diff.
+   */
+  async gitShow(input: Record<string, unknown>): Promise<string> {
+    expectFields(input, { commit: 'string', stat: 'boolean', patch: 'boolean', paths: 'strings' }, ['commit'])
+    const commit = commitId(input.commit, 'commit')
+    const stat = input.stat !== false
+    const patch = input.patch !== false
+    const deadline = Date.now() + this.bounds.gitTimeoutMs
+    const ignores = new GitIgnores(this.real)
+    const pathspecs = this.gitPathspecs(input.paths, ignores)
+    const overrides = await this.filterOverrides(deadline)
+    const rev = `${commit}^{commit}`
+    // `-m`: a merge's files against each parent, a superset of what its stat or combined patch shows.
+    const excludes = stat || patch ? await this.secretExcludes(['show', '--no-show-signature', '--format=', '-m', ...GIT_DIFF_OPTIONS, rev], pathspecs, ignores, deadline, overrides) : []
+    const format = '--format=format:commit %H%nparents %P%nauthor %an <%ae> %aI%ncommitter %cn <%ce> %cI%n%n%w(0,4,4)%B'
+    const shown = [...(stat ? [`--stat=${STAT_WIDTH}`] : []), ...(patch ? ['--patch'] : []), ...(!stat && !patch ? ['--no-patch'] : [])]
+    const { out, cut: cutByGit } = await this.runGit(['show', '--no-show-signature', format, ...GIT_DIFF_OPTIONS, ...shown, rev, '--', ...pathspecs, ...excludes], deadline, this.bounds.maxGitBytes, overrides)
+    const header = `git show ${commit}${pathspecs.length ? ', the paths given' : ''}${excludes.length ? `; ${excludes.length} file${excludes.length === 1 ? '' : 's'} named as secrets left out` : ''}`
+    return this.gitBounded(header, out.toString('utf8'), cutByGit, 'narrow it with paths, or ask for the stat alone (patch: false)')
+  }
+
+  /**
+   * `git_diff`: the worktree against HEAD (default), the index against HEAD (`cached`), or commit
+   * `from` against commit `to` (both hex ids); a patch, or its `stat`, limited to `paths` if given;
+   * files named as secrets are left out. Submodules are not entered. No textconv, no external diff.
+   */
+  async gitDiff(input: Record<string, unknown>): Promise<string> {
+    expectFields(input, { from: 'string', to: 'string', cached: 'boolean', stat: 'boolean', paths: 'strings' }, [])
+    if ((input.from === undefined) !== (input.to === undefined)) throw new Refused('give both from and to (two commits), or neither (the worktree or the index against HEAD)')
+    if (input.from !== undefined && input.cached === true) throw new Refused('cached compares the index with HEAD: it takes no from and to')
+    const from = input.from === undefined ? undefined : commitId(input.from, 'from')
+    const to = input.to === undefined ? undefined : commitId(input.to, 'to')
+    const deadline = Date.now() + this.bounds.gitTimeoutMs
+    const ignores = new GitIgnores(this.real)
+    const pathspecs = this.gitPathspecs(input.paths, ignores)
+    const overrides = await this.filterOverrides(deadline)
+    const revs = from !== undefined && to !== undefined ? [`${from}^{commit}`, `${to}^{commit}`] : input.cached === true ? ['--cached', 'HEAD'] : ['HEAD']
+    const base = ['diff', ...GIT_DIFF_OPTIONS, '--ignore-submodules=all']
+    const excludes = await this.secretExcludes([...base, ...revs], pathspecs, ignores, deadline, overrides)
+    const { out, cut: cutByGit } = await this.runGit([...base, input.stat === true ? `--stat=${STAT_WIDTH}` : '--patch', ...revs, '--', ...pathspecs, ...excludes], deadline, this.bounds.maxGitBytes, overrides)
+    const what = from !== undefined ? `${from} against ${to}` : input.cached === true ? 'the index against HEAD' : 'the worktree against HEAD'
+    const header = `git diff: ${what}${input.stat === true ? ', stat' : ''}${pathspecs.length ? ', the paths given' : ''}${excludes.length ? `; ${excludes.length} file${excludes.length === 1 ? '' : 's'} named as secrets left out` : ''}`
+    const text = out.toString('utf8')
+    return this.gitBounded(header, text === '' ? '(no difference)' : text, cutByGit, 'narrow it with paths, or ask for the stat (stat: true)')
+  }
+
+  /**
+   * `git_status`: the branch line and one line per changed or untracked path (`XY path`, git's
+   * porcelain v1; a path with a control character, a quote, or a backslash JSON-quoted), limited to
+   * `paths` if given; files named as secrets are counted, not shown. No renames detected, no
+   * submodule entered.
+   */
+  async gitStatus(input: Record<string, unknown>): Promise<string> {
+    expectFields(input, { paths: 'strings' }, [])
+    const deadline = Date.now() + this.bounds.gitTimeoutMs
+    const ignores = new GitIgnores(this.real)
+    const pathspecs = this.gitPathspecs(input.paths, ignores)
+    const overrides = await this.filterOverrides(deadline)
+    const { out, cut: cutByGit } = await this.runGit(
+      ['status', '--porcelain=v1', '-z', '--branch', '--no-renames', '--ignore-submodules=all', '--untracked-files=normal', '--', ...pathspecs],
+      deadline, this.bounds.maxGitBytes, overrides,
+    )
+    const entries = out.toString('utf8').split('\0')
+    // The last entry is cut, or the empty one after the last NUL.
+    entries.pop()
+    const lines: string[] = []
+    let hidden = 0
+    for (const entry of entries) {
+      if (entry.startsWith('## ')) {
+        lines.push(entry)
+        continue
+      }
+      const path = entry.slice(3)
+      if (this.secretInGit(path, ignores) !== undefined) {
+        hidden += 1
+        continue
+      }
+      lines.push(`${entry.slice(0, 3)}${needsQuoting(path) ? JSON.stringify(path) : path}`)
+    }
+    const changed = lines.filter((line) => !line.startsWith('## ')).length
+    const header = `git status: ${changed} path${changed === 1 ? '' : 's'}${pathspecs.length ? ' under the paths given' : ''}${hidden ? `; ${hidden} named as secrets not shown` : ''}`
+    return this.gitBounded(header, lines.join('\n'), cutByGit, 'narrow it with paths')
+  }
+
   /** Runs one tool by its name; a refusal or failure is the call's error result, never a crash. */
   async call(name: unknown, input: unknown): Promise<{ text: string; isError: boolean }> {
     try {
@@ -920,7 +1227,11 @@ export class WorkspaceReads {
       if (name === 'read_file') return { text: this.readFile(record), isError: false }
       if (name === 'list_dir') return { text: this.listDir(record), isError: false }
       if (name === 'search') return { text: await this.search(record), isError: false }
-      throw new Refused(`${String(name).slice(0, 100)} is not a tool of this server (read_file, list_dir, search)`)
+      if (name === 'git_log') return { text: await this.gitLog(record), isError: false }
+      if (name === 'git_show') return { text: await this.gitShow(record), isError: false }
+      if (name === 'git_diff') return { text: await this.gitDiff(record), isError: false }
+      if (name === 'git_status') return { text: await this.gitStatus(record), isError: false }
+      throw new Refused(`${String(name).slice(0, 100)} is not a tool of this server (${WORKSPACE_READ_TOOLS.join(', ')})`)
     } catch (error) {
       return { text: error instanceof Refused ? `refused: ${error.message}` : `failed: ${(error as Error)?.message?.slice(0, 500) ?? String(error)}`, isError: true }
     }
@@ -960,20 +1271,109 @@ function cut(text: string, bytes: number): string {
   return buffer.subarray(0, end).toString('utf8')
 }
 
+/** Whether a path git shows must be JSON-quoted: a control character, a quote, a backslash, or spaces at either end. */
+function needsQuoting(path: string): boolean {
+  for (const c of path) {
+    const code = c.charCodeAt(0)
+    if (code < 0x20 || code === 0x7f || c === '"' || c === '\\') return true
+  }
+  return path !== path.trim()
+}
+
+/**
+ * A commit id as the git views take it: 4 to 64 hex digits (a SHA-1 or SHA-256 id, or a prefix of
+ * one), never a ref name, an option, or a revision expression.
+ */
+export const COMMIT_ID = /^[0-9a-fA-F]{4,64}$/
+
+/** `value` as a commit id ({@link COMMIT_ID}); refused otherwise. */
+function commitId(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !COMMIT_ID.test(value)) throw new Refused(`${field} must be a commit's hex id (4 to 64 hex digits), never a name or an expression`)
+  return value.toLowerCase()
+}
+
+/** The fields `git_log` shows, each a fixed `--format` placeholder (none runs a program: no signature, no mailmap). */
+export const GIT_LOG_FIELDS: Readonly<Record<string, string>> = {
+  hash: '%H', parents: '%P', date: '%aI', author: '%an', email: '%ae', committer: '%cn', committed: '%cI', subject: '%s', body: '%b',
+}
+const DEFAULT_LOG_FIELDS: readonly string[] = ['hash', 'date', 'author', 'subject']
+/** The most paths one git view takes. */
+const MAX_GIT_PATHS = 64
+/** The most bytes of the list of files a diff touches, read to leave out those named as secrets. */
+const MAX_GIT_NAMES = 16 * 1024 * 1024
+/** The most files named as secrets one git view leaves out; more refuses it. */
+const MAX_GIT_EXCLUDES = 512
+/** The most filter drivers the repository's configuration may name for a git view to run. */
+const MAX_GIT_FILTERS = 64
+/** The width of a `--stat` (long names are shortened past it). */
+const STAT_WIDTH = 200
+/** What every diff a git view shows is: no external diff, no textconv, no rename detection, no colour. */
+const GIT_DIFF_OPTIONS: readonly string[] = ['--no-ext-diff', '--no-textconv', '--no-renames', '--no-color']
+
+/**
+ * The configuration every git a view runs is given (`-c`, which no file of the repository's
+ * overrides), each a setting under which a read-only git command could run a program, or reach
+ * outside the workspace, turned off (T223; git-config(1), gitattributes(5), githooks(5)):
+ * - `core.fsmonitor`: a hook program `git status` and `git diff` run to ask what changed (an empty
+ *   value is false);
+ * - `core.pager` (and `--no-pager`): the program output is piped through;
+ * - `core.hooksPath`: hooks; none of these commands runs one (`post-index-change` only where the
+ *   index is written, which `--no-optional-locks` stops), turned off all the same;
+ * - `diff.external` (and `--no-ext-diff`, which also turns off every `diff.<driver>.command`): an
+ *   external diff program; `diff.<driver>.textconv` is turned off by `--no-textconv`;
+ * - `core.attributesFile`: a global attributes file outside the workspace (and `GIT_ATTR_NOSYSTEM`);
+ * - `log.showSignature` (and `--no-show-signature`): `gpg.program` run to verify a signature;
+ * - `protocol.allow`, `core.sshCommand`, `credential.helper`, `core.askPass`: a transport (a lazy
+ *   fetch of a partial clone's missing object) and the programs it would run (and `GIT_NO_LAZY_FETCH`);
+ * - `status.submoduleSummary`, `submodule.recurse`, `diff.submodule`: git run again in a submodule
+ *   (and `--ignore-submodules=all`);
+ * - `log.mailmap`: a mailmap file read from anywhere; `color.ui`; `gc.auto` and
+ *   `maintenance.auto`: no command here starts them, turned off all the same.
+ * Filter drivers (`filter.<name>.clean`, `.process`) run not only on checkout: a clean filter runs
+ * whenever git reads a worktree file to compare or diff it, so every driver the repository's
+ * configuration names is turned off too (the view's `filterOverrides`).
+ */
+export const GIT_CONFIG_PINS: readonly string[] = [
+  'core.fsmonitor=', 'core.pager=cat', 'core.hooksPath=/dev/null', 'diff.external=', 'core.attributesFile=/dev/null',
+  'log.showSignature=false', 'protocol.allow=never', 'core.sshCommand=', 'credential.helper=', 'core.askPass=',
+  'status.submoduleSummary=false', 'submodule.recurse=false', 'diff.submodule=short', 'log.mailmap=false', 'color.ui=false',
+  'gc.auto=0', 'maintenance.auto=false',
+]
+
+/** The argv of one git a view runs: no pager, no optional lock (the index is never written), the pins and `overrides` as `-c`, then `args`. */
+export function gitArgv(args: readonly string[], overrides: readonly string[] = []): string[] {
+  return ['--no-pager', '--no-optional-locks', ...[...GIT_CONFIG_PINS, ...overrides].flatMap((pin) => ['-c', pin]), ...args]
+}
+
+/**
+ * The whole environment of a git a view runs (nothing else of the server's is passed): no system
+ * or global configuration (`GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_GLOBAL=/dev/null`), no system
+ * attributes, no prompt, no optional lock, no lazy fetch, no pager; the repository found only at the
+ * workspace's root (`GIT_CEILING_DIRECTORIES` its parent) and its worktree the workspace
+ * (`GIT_WORK_TREE`, over any `core.worktree`); the C locale; only `PATH` from the server's.
+ */
+export function gitEnvironment(real: string): Record<string, string> {
+  return {
+    PATH: process.env.PATH ?? '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C',
+    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0',
+    GIT_NO_LAZY_FETCH: '1', GIT_PAGER: 'cat', PAGER: 'cat', GIT_CEILING_DIRECTORIES: dirname(real), GIT_WORK_TREE: real,
+  }
+}
+
 /** Refuses a field not listed, one of another type, or a required one missing. */
-function expectFields(input: Record<string, unknown>, fields: Record<string, 'string' | 'integer' | 'boolean'>, required: string[]): void {
+function expectFields(input: Record<string, unknown>, fields: Record<string, 'string' | 'integer' | 'boolean' | 'strings'>, required: string[]): void {
   for (const [key, value] of Object.entries(input)) {
     const type = Object.hasOwn(fields, key) ? fields[key] : undefined
     if (!type) throw new Refused(`${JSON.stringify(key.slice(0, 64))} is not an argument of this tool (${Object.keys(fields).join(', ')})`)
-    const ok = type === 'integer' ? Number.isSafeInteger(value) : typeof value === type
-    if (!ok) throw new Refused(`${key} is not ${type === 'integer' ? 'an integer' : `a ${type}`}`)
+    const ok = type === 'integer' ? Number.isSafeInteger(value) : type === 'strings' ? Array.isArray(value) && value.every((v) => typeof v === 'string') : typeof value === type
+    if (!ok) throw new Refused(`${key} is not ${type === 'integer' ? 'an integer' : type === 'strings' ? 'a list of strings' : `a ${type}`}`)
   }
   for (const key of required) if (input[key] === undefined) throw new Refused(`${key} is required`)
 }
 
 const PATH_DESCRIPTION = 'A path relative to the workspace, or absolute inside it; no ".." segment. Git\'s data (.git) and secret files (.env, keys, credentials, ignored files named like secrets) are never read, nor a file with more than one hard link outside node_modules.'
 
-/** The three tools as `tools/list` gives them: read-only, closed-world. */
+/** The tools as `tools/list` gives them: read-only, closed-world. */
 export function workspaceReadTools(bounds: WorkspaceReadBounds): unknown[] {
   const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   return [
@@ -1004,8 +1404,47 @@ export function workspaceReadTools(bounds: WorkspaceReadBounds): unknown[] {
       },
       annotations,
     },
+    {
+      name: 'git_log', title: 'Git log',
+      description: `Lists commits of the workspace's repository, newest first, from HEAD or from a commit given by its hex id: at most ${bounds.maxLogCount} (count, default ${Math.min(20, bounds.maxLogCount)}), after skip of them, touching paths if given; one line each of the fields asked for, tab-separated (default hash, date, author, subject), a body below it, indented. At most ${bounds.maxGitBytes} bytes.`,
+      inputSchema: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          count: { type: 'integer', minimum: 1, maximum: bounds.maxLogCount }, skip: { type: 'integer', minimum: 0 }, commit: COMMIT_SCHEMA, paths: PATHS_SCHEMA,
+          fields: { type: 'array', items: { type: 'string', enum: Object.keys(GIT_LOG_FIELDS) }, minItems: 1, uniqueItems: true },
+        },
+      },
+      annotations,
+    },
+    {
+      name: 'git_show', title: 'Git show',
+      description: `Shows one commit of the workspace's repository, given by its hex id: its header and whole message, then its stat and its patch (each on by default), limited to paths if given. Files named as secrets are left out. At most ${bounds.maxGitBytes} bytes.`,
+      inputSchema: {
+        type: 'object', additionalProperties: false, required: ['commit'],
+        properties: { commit: COMMIT_SCHEMA, stat: { type: 'boolean', description: 'Show the stat (default true).' }, patch: { type: 'boolean', description: 'Show the patch (default true).' }, paths: PATHS_SCHEMA },
+      },
+      annotations,
+    },
+    {
+      name: 'git_diff', title: 'Git diff',
+      description: `Diffs the workspace's worktree against HEAD (default), its index against HEAD (cached), or commit from against commit to (both hex ids): a patch, or with stat its stat, limited to paths if given. Files named as secrets are left out; submodules are not entered. At most ${bounds.maxGitBytes} bytes.`,
+      inputSchema: {
+        type: 'object', additionalProperties: false,
+        properties: { from: COMMIT_SCHEMA, to: COMMIT_SCHEMA, cached: { type: 'boolean', description: 'The index (staged changes) against HEAD.' }, stat: { type: 'boolean', description: 'The stat, not the patch.' }, paths: PATHS_SCHEMA },
+      },
+      annotations,
+    },
+    {
+      name: 'git_status', title: 'Git status',
+      description: `The workspace's git status, porcelain: its branch line, then XY path for each changed or untracked path, limited to paths if given; files named as secrets are counted, not shown. At most ${bounds.maxGitBytes} bytes.`,
+      inputSchema: { type: 'object', additionalProperties: false, properties: { paths: PATHS_SCHEMA } },
+      annotations,
+    },
   ]
 }
+
+const COMMIT_SCHEMA = { type: 'string', pattern: COMMIT_ID.source, description: 'A commit\'s hex id, 4 to 64 hex digits (from git_log); never a branch name or an expression.' }
+const PATHS_SCHEMA = { type: 'array', items: { type: 'string' }, maxItems: MAX_GIT_PATHS, description: `${PATH_DESCRIPTION} A path may name a file only history has.` }
 
 /** The MCP protocol versions the server answers in; the first is its own. */
 export const WORKSPACE_READS_PROTOCOLS: readonly string[] = ['2025-06-18', '2025-03-26', '2024-11-05']
@@ -1037,7 +1476,7 @@ export async function answerMessage(reads: WorkspaceReads, message: unknown): Pr
       return {
         jsonrpc: '2.0', id, result: {
           protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'system-workspace-reads', version: '1.0.0' },
-          instructions: `Read-only tools over this run's workspace ${reads.root}: read_file, list_dir, search. Read the workspace with them, never with a shell.`,
+          instructions: `Read-only tools over this run's workspace ${reads.root}: ${WORKSPACE_READ_TOOLS.join(', ')}. Read the workspace and its git history with them, never with a shell.`,
         },
       }
     }

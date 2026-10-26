@@ -117,6 +117,9 @@
 | `workspaceReads.maxLineChars` | number (80…10000) | `500` | The most characters of one matching line search shows (80 to 10000) |
 | `workspaceReads.maxPatternChars` | number (1…10000) | `1000` | The longest pattern search takes (1 to 10000) |
 | `workspaceReads.searchTimeoutMs` | number (100…120000) | `10000` | How long one search may take, in milliseconds; past it, it is stopped (100 to 120000) |
+| `workspaceReads.maxLogCount` | number (1…1000) | `100` | The most commits one git_log lists (1 to 1000) |
+| `workspaceReads.maxGitBytes` | number (1024…8388608) | `262144` | The most bytes of output one git view (git_log, git_show, git_diff, git_status) returns (1024 to 8388608) |
+| `workspaceReads.gitTimeoutMs` | number (100…120000) | `10000` | How long one git view may take, in milliseconds, every git it runs counted; past it, git is stopped (100 to 120000) |
 
 ## `approvals`
 

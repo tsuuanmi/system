@@ -15,6 +15,7 @@ import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
 import type { WorkspaceReadBounds } from './workspace-reads.ts'
 
 export {
+  COMMIT_ID, GIT_CONFIG_PINS, GIT_LOG_FIELDS, WORKSPACE_GIT_TOOLS, gitArgv, gitEnvironment,
   SECRET_LIKE, SECRET_NAMES, SECRET_PATHS, WORKSPACE_READS_PROTOCOLS, WORKSPACE_READS_SCRIPT, WORKSPACE_READS_SERVER, WORKSPACE_READ_BOUNDS, WORKSPACE_READ_TOOLS, type WorkspaceReadBounds,
   WorkspaceReads, answerMessage, parseWorkspaceReadArgs, searchResourceLimits, serveWorkspaceReads, workspaceReadArgs, workspaceReadBounds, workspaceReadBoundsProblem, workspaceReadTools,
 } from './workspace-reads.ts'
@@ -68,7 +69,8 @@ export interface RuntimeEvidence {
   /**
    * It gives every run's agent the workspace reads server ({@link WORKSPACE_READS_SCRIPT}, T200b),
    * started under the run's read confinement with the workspace bound read-only, proven to start on
-   * this host now: its three read-only tools (`read_file`, `list_dir`, `search`) reach the agent as
+   * this host now: its read-only tools (`read_file`, `list_dir`, `search`, and the git views
+   * `git_log`, `git_show`, `git_diff`, `git_status`, T223) reach the agent as
    * MCP tools of the server {@link WORKSPACE_READS_SERVER}, so it reads without a shell. Absent or
    * false: it offers none (Claude Code keeps its own Read, Grep, and Glob).
    */

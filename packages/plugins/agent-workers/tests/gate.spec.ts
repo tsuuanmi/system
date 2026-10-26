@@ -361,7 +361,8 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     expect(unaskedNote({ policies: [], effective }, '/ws')).not.toContain('Bash read-only inspection')
     expect(unaskedNote({ policies: [], effective }, '/ws', { shellReads: true })).toContain('- Bash read-only inspection, every path absolute and inside /ws')
     const reads = unaskedNote({ policies: [], effective }, '/ws', { workspaceReads: true })
-    expect(reads).toContain('- Reading tools (the workspace server\'s read_file, list_dir, and search) on paths inside your workspace /ws.')
+    expect(reads).toContain('- Reading tools (the workspace server\'s read_file, list_dir, search, git_log, git_show, git_diff, and git_status) on paths inside your workspace /ws.')
+    expect(reads).toContain('Read its git history the same way, never with git in a shell: git_log (count, skip, commit, paths)')
     expect(reads).toContain('- Read your workspace with the workspace server\'s tools, never with a shell: read_file (path; startLine and endLine for a range)')
     expect(reads).toContain('read with the workspace server\'s tools, never with a shell.')
     // A read-only Worker is told the same, whatever the policy runs unasked.
@@ -1089,6 +1090,45 @@ describe('classify: a tool call as the action the policy judges', () => {
     }
   })
 
+  it('classifies exactly the workspace reads server\'s four git views as reads: commits only as hex ids, every path inside the workspace and not git\'s data (T223)', () => {
+    const served = { workspaceReads: true }
+    const hash = 'a'.repeat(40)
+    expect(classify({ tool: 'mcp__workspace__git_log', input: {} }, ws, served)).toMatchObject({ class: 'read', summary: 'mcp__workspace__git_log the workspace' })
+    expect(classify({ tool: 'mcp__workspace__git_log', input: { count: 5, skip: 1, commit: 'abc1234', paths: ['src/a.ts', 'src/gone.ts'], fields: ['hash', 'subject'] } }, ws, served))
+      .toMatchObject({ class: 'read', summary: 'mcp__workspace__git_log src/a.ts src/gone.ts' })
+    expect(classify({ tool: 'mcp__workspace__git_show', input: { commit: hash, stat: true, patch: false, paths: [join(ws, 'src')] } }, ws, served)).toMatchObject({ class: 'read' })
+    expect(classify({ tool: 'mcp__workspace__git_diff', input: { from: hash, to: 'ABCDEF12', stat: true } }, ws, served)).toMatchObject({ class: 'read' })
+    expect(classify({ tool: 'mcp__workspace__git_diff', input: { cached: true } }, ws, served)).toMatchObject({ class: 'read' })
+    expect(classify({ tool: 'mcp__workspace__git_status', input: { paths: ['src'] } }, ws, served)).toMatchObject({ class: 'read' })
+    // A commit that is not a hex id: refused, whichever field names it.
+    for (const commit of ['HEAD', 'main', 'HEAD~1', `${hash}^{tree}`, '--output=/tmp/x', 'abc', 'g1234', '']) {
+      expect(classify({ tool: 'mcp__workspace__git_show', input: { commit } }, ws, served), commit).toMatchObject({ refused: expect.stringContaining('not a commit\'s hex id'), reason: 'invalid-input' })
+      expect(classify({ tool: 'mcp__workspace__git_log', input: { commit } }, ws, served), commit).toMatchObject({ reason: 'invalid-input' })
+      expect(classify({ tool: 'mcp__workspace__git_diff', input: { from: hash, to: commit } }, ws, served), commit).toMatchObject({ reason: 'invalid-input' })
+    }
+    // A path outside the workspace, through a symlink out, climbing, into git's data, or empty: refused.
+    mkdirSync(join(ws, '.git'), { recursive: true })
+    const reasons: Record<string, string> = {
+      '/etc/hostname': 'outside-workspace', 'link-dir': 'outside-workspace', 'src/up/secret': 'outside-workspace', '../outside/secret': 'outside-workspace',
+      'src/../src/a.ts': 'outside-workspace', '.git/config': 'git-data', '.git': 'git-data', '': 'invalid-input',
+    }
+    for (const [path, reason] of Object.entries(reasons)) {
+      for (const tool of ['mcp__workspace__git_log', 'mcp__workspace__git_diff', 'mcp__workspace__git_status']) {
+        expect(classify({ tool, input: { paths: ['src', path] } }, ws, served), `${tool} ${path}`).toMatchObject({ refused: expect.any(String), reason })
+      }
+    }
+    // Fields the server does not take, or of another type.
+    expect(classify({ tool: 'mcp__workspace__git_log', input: { revision: 'HEAD' } }, ws, served)).toMatchObject({ reason: 'unsupported-field' })
+    expect(classify({ tool: 'mcp__workspace__git_log', input: { paths: 'src' } }, ws, served)).toMatchObject({ reason: 'unsupported-field' })
+    expect(classify({ tool: 'mcp__workspace__git_show', input: { commit: 1234 } }, ws, served)).toMatchObject({ reason: 'unsupported-field' })
+    // Only the four: no other git tool of that server.
+    for (const tool of ['mcp__workspace__git', 'mcp__workspace__git_checkout', 'mcp__workspace__git_blame']) {
+      expect(classify({ tool, input: {} }, ws, served), tool).toMatchObject({ reason: 'unclassified-tool' })
+    }
+    // Without the server's evidence, refused like the other tools of that name.
+    expect(classify({ tool: 'mcp__workspace__git_status', input: {} }, ws, {})).toMatchObject({ refused: expect.stringContaining('gives its agent no workspace reads server'), reason: 'unclassified-tool' })
+  })
+
   it('takes the workspace reads server\'s tools for reads only where the runtime reports it gives its agent that server: otherwise any tool of that name is refused (T200b)', () => {
     for (const options of [{}, { workspaceReads: false }, { shellReads: true }, { shellReads: true, workspaceReads: false }]) {
       for (const call of [
@@ -1147,7 +1187,7 @@ describe('classify: a tool call as the action the policy judges', () => {
     expect(readToolsOf({ readTools: ['Read', 'Grep', 'Glob'] }, undefined)).toEqual(['Read', 'Grep', 'Glob'])
     expect(readToolsOf({ readTools: ['Read', 'Grep', 'Glob'] }, [])).toEqual(['Read', 'Grep', 'Glob'])
     expect(readToolsOf({ readTools: ['Read', 'Grep', 'Glob'] }, ['Read', 'Bash'])).toEqual(['Read'])
-    expect(readToolsOf({ workspaceReads: true }, ['Bash'])).toEqual(['read_file', 'list_dir', 'search'])
+    expect(readToolsOf({ workspaceReads: true }, ['Bash'])).toEqual(['read_file', 'list_dir', 'search', 'git_log', 'git_show', 'git_diff', 'git_status'])
     expect(readToolsOf({ workspaceReads: false }, undefined)).toEqual([])
   })
 
@@ -1308,7 +1348,7 @@ describe('a Codex Worker under the bundle\'s default policy, end to end (docs/de
     expect(await ctx.approvals.list()).toEqual([])
     // Its brief says to read with the server's tools, never with a shell, names no shell read as unasked, and says a shell inspection is denied.
     expect(prompts()[0]).toContain('- Read your workspace with the workspace server\'s tools, never with a shell: read_file')
-    expect(prompts()[0]).toContain('- Reading tools (the workspace server\'s read_file, list_dir, and search) on paths inside your workspace')
+    expect(prompts()[0]).toContain('- Reading tools (the workspace server\'s read_file, list_dir, search, git_log, git_show, git_diff, and git_status) on paths inside your workspace')
     expect(prompts()[0]).not.toContain('Bash read-only inspection')
     expect(prompts()[0]).toContain('A Bash inspection command you have a reading tool for is denied at once, never asked: cat, head, tail, sed -n: use read_file')
   })

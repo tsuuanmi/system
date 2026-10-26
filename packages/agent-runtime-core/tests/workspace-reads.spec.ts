@@ -1,15 +1,15 @@
 // The workspace reads server (T200b): three read-only tools over one run's workspace, every path
 // resolved and kept inside it, every bound a validated argument, MCP over stdio with its root fixed.
 import { type ChildProcessWithoutNullStreams, execFile, execFileSync, spawn } from 'node:child_process'
-import { closeSync, linkSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
-  WORKSPACE_READS_PROTOCOLS, WORKSPACE_READS_SCRIPT, WORKSPACE_READ_BOUNDS, WorkspaceReads, answerMessage, confinedCommand, parseWorkspaceReadArgs, searchResourceLimits, serveWorkspaceReads,
-  workspaceReadArgs, workspaceReadBounds, workspaceReadBoundsProblem,
+  GIT_CONFIG_PINS, WORKSPACE_READS_PROTOCOLS, WORKSPACE_READS_SCRIPT, WORKSPACE_READ_BOUNDS, WorkspaceReads, answerMessage, confinedCommand, gitArgv, gitEnvironment, parseWorkspaceReadArgs,
+  searchResourceLimits, serveWorkspaceReads, workspaceReadArgs, workspaceReadBounds, workspaceReadBoundsProblem,
 } from '../src/index.ts'
 import { BWRAP, needsBubblewrap } from './host.ts'
 
@@ -448,12 +448,12 @@ describe('search', () => {
 
 describe('MCP over stdio, its root fixed at start', () => {
   const r = reads()
-  it('answers initialize in a protocol version it speaks, lists exactly its three read-only tools, and ignores roots', async () => {
+  it('answers initialize in a protocol version it speaks, lists exactly its read-only tools (three over files, four git views), and ignores roots', async () => {
     expect(await answerMessage(r, { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: { roots: { listChanged: true } } } }))
       .toMatchObject({ id: 1, result: { protocolVersion: '2025-03-26', capabilities: { tools: { listChanged: false } } } })
     expect(await answerMessage(r, { jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: '1999-01-01' } })).toMatchObject({ result: { protocolVersion: WORKSPACE_READS_PROTOCOLS[0] } })
     const listed = await answerMessage(r, { jsonrpc: '2.0', id: 3, method: 'tools/list' }) as { result: { tools: Array<{ name: string; annotations: Record<string, boolean> }> } }
-    expect(listed.result.tools.map((t) => t.name)).toEqual(['read_file', 'list_dir', 'search'])
+    expect(listed.result.tools.map((t) => t.name)).toEqual(['read_file', 'list_dir', 'search', 'git_log', 'git_show', 'git_diff', 'git_status'])
     for (const tool of listed.result.tools) expect(tool.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: false })
     // Roots change nothing: a notification is not answered, and no request widens what is read.
     expect(await answerMessage(r, { jsonrpc: '2.0', method: 'notifications/roots/list_changed' })).toBeUndefined()
@@ -523,6 +523,214 @@ describe('MCP over stdio, its root fixed at start', () => {
       expect(failed?.code, args.join(' ')).toBe(2)
       expect(failed?.stderr, args.join(' ')).toMatch(/^workspace reads: /)
     }
+  })
+})
+
+describe('read-only git views of the workspace\'s repository, no shell (T223)', { timeout: 60_000 }, () => {
+  // The test's own git: no configuration of the host's, never signing.
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
+  const gitIn = (dir: string) => (...args: string[]): string =>
+    execFileSync('git', ['-C', dir, '-c', 'user.name=Tester', '-c', 'user.email=t@example.test', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8', env }).trim()
+  const repo = join(root, 'repo')
+  mkdirSync(join(repo, 'src'), { recursive: true })
+  execFileSync('git', ['init', '-q', '-b', 'main', repo], { env })
+  const git = gitIn(repo)
+  writeFileSync(join(repo, '.env'), 'TOKEN=hunter2\n')
+  writeFileSync(join(repo, 'src', 'gone.txt'), 'soon deleted\n')
+  git('add', '-A')
+  git('commit', '-q', '-m', 'first, with a secret')
+  for (let i = 1; i <= 30; i += 1) {
+    writeFileSync(join(repo, 'src', 'n.txt'), `line ${i}\n`)
+    git('add', '-A')
+    git('commit', '-q', '-m', `commit ${i}`, '-m', `the body of commit ${i}`)
+  }
+  rmSync(join(repo, 'src', 'gone.txt'))
+  writeFileSync(join(repo, 'big.txt'), Array.from({ length: 4000 }, (_, i) => `a long line of the big file, number ${i}`).join('\n'))
+  git('add', '-A')
+  git('commit', '-q', '-m', 'a big file; gone.txt removed')
+  const commits = git('log', '--format=%H').split('\n')
+  // The worktree: an unstaged change, a staged file, an untracked one, and a changed secret.
+  writeFileSync(join(repo, 'src', 'n.txt'), 'line changed\n')
+  writeFileSync(join(repo, 'staged.txt'), 'staged\n')
+  git('add', 'staged.txt')
+  writeFileSync(join(repo, 'untracked.txt'), 'new\n')
+  writeFileSync(join(repo, '.env'), 'TOKEN=changed\n')
+  symlinkSync(outside, join(repo, 'escape-dir'))
+  const view = async (name: string, input: unknown, bounds: Partial<ReturnType<typeof workspaceReadBounds>> = {}) => new WorkspaceReads(repo, workspaceReadBounds(bounds)).call(name, input)
+
+  it('runs git with an argv it builds: no pager, no optional lock, every pin as -c; an environment of its own, no system or global configuration', () => {
+    const argv = gitArgv(['status'], ['filter.x.clean='])
+    for (const pin of ['core.fsmonitor=', 'core.pager=cat', 'core.hooksPath=/dev/null', 'diff.external=', 'core.attributesFile=/dev/null']) expect(GIT_CONFIG_PINS).toContain(pin)
+    expect(argv).toEqual(['--no-pager', '--no-optional-locks', ...[...GIT_CONFIG_PINS, 'filter.x.clean='].flatMap((pin) => ['-c', pin]), 'status'])
+    expect(gitEnvironment(repo)).toMatchObject({ GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0', GIT_WORK_TREE: repo, GIT_CEILING_DIRECTORIES: root })
+    expect(Object.keys(gitEnvironment(repo))).not.toContain('HOME')
+  })
+
+  it('git_log: at most count commits (default 20), within maxLogCount, the fields asked for, from a hex id, after skip, touching paths; cut at maxGitBytes', async () => {
+    const all = await view('git_log', {})
+    expect(all.isError, all.text).toBe(false)
+    const lines = all.text.split('\n')
+    expect(lines[0]).toBe('git log: 20 commits from HEAD (hash, date, author, subject)')
+    expect(lines).toHaveLength(21)
+    expect(lines[1]).toMatch(new RegExp(`^${commits[0]}\\t\\d{4}-\\d\\d-\\d\\dT[^\\t]+\\tTester\\ta big file; gone\\.txt removed$`))
+    expect((await view('git_log', { count: 5, fields: ['subject'] })).text.split('\n').slice(1)).toEqual(['a big file; gone.txt removed', 'commit 30', 'commit 29', 'commit 28', 'commit 27'])
+    expect((await view('git_log', { count: 2, skip: 3, fields: ['subject'] })).text.split('\n').slice(1)).toEqual(['commit 28', 'commit 27'])
+    expect((await view('git_log', { count: 2, commit: commits[5]!.slice(0, 10), fields: ['hash'] })).text.split('\n').slice(1)).toEqual([commits[5], commits[6]])
+    expect((await view('git_log', { count: 100, paths: ['src/gone.txt'], fields: ['subject'] })).text.split('\n').slice(1)).toEqual(['a big file; gone.txt removed', 'first, with a secret'])
+    expect((await view('git_log', { count: 1, fields: ['subject', 'body'], skip: 1 })).text.split('\n').slice(1)).toEqual(['commit 30', '    the body of commit 30'])
+    // The count's bound, and the fixed set of fields.
+    expect((await view('git_log', { count: 11 }, { maxLogCount: 10 })).text).toMatch(/^refused: count must be 1 to 10 \(maxLogCount\)/)
+    expect((await view('git_log', {}, { maxLogCount: 10 })).text.split('\n')).toHaveLength(11)
+    expect((await view('git_log', { count: 0 })).isError).toBe(true)
+    for (const fields of [['hash', 'hash'], [], ['%H'], ['raw']]) expect((await view('git_log', { fields })).text, JSON.stringify(fields)).toMatch(/^refused: /)
+    // Output past maxGitBytes is cut, and a commit cut inside is not shown.
+    const cut = await view('git_log', { count: 31, fields: ['hash', 'subject', 'body'] }, { maxGitBytes: 1024 })
+    expect(Buffer.byteLength(cut.text)).toBeLessThan(1024 + 200)
+    expect(cut.text).toMatch(/\[output cut at 1024 bytes \(maxGitBytes\); read on with skip \d+\]$/)
+  })
+
+  it('git_show: one commit by its hex id, its stat and patch (each optional), limited to paths, files named as secrets left out, cut at maxGitBytes', async () => {
+    const shown = await view('git_show', { commit: commits[1]! })
+    expect(shown.isError, shown.text).toBe(false)
+    expect(shown.text).toContain(`commit ${commits[1]}\nparents ${commits[2]}\nauthor Tester <t@example.test>`)
+    expect(shown.text).toContain('    commit 30\n')
+    expect(shown.text).toMatch(/src\/n\.txt \| 2 \+-/)
+    expect(shown.text).toContain('-line 29\n+line 30')
+    const stat = await view('git_show', { commit: commits[1]!, patch: false })
+    expect(stat.text).toMatch(/src\/n\.txt \| 2 \+-/)
+    expect(stat.text).not.toContain('diff --git')
+    const bare = await view('git_show', { commit: commits[1]!, patch: false, stat: false })
+    expect(bare.text).not.toContain('src/n.txt')
+    expect(bare.text).toContain('the body of commit 30')
+    // The first commit added .env: it is left out of the stat and the patch, and said so.
+    const first = await view('git_show', { commit: commits.at(-1)! })
+    expect(first.text).toContain('src/gone.txt')
+    expect(first.text).not.toContain('hunter2')
+    expect(first.text).not.toContain('.env')
+    expect(first.text.split('\n')[0]).toContain('1 file named as secrets left out')
+    expect((await view('git_show', { commit: commits.at(-1)!, paths: ['src'] })).text).toContain('src/gone.txt')
+    const big = await view('git_show', { commit: commits[0]! }, { maxGitBytes: 1024 })
+    expect(Buffer.byteLength(big.text)).toBeLessThan(1024 + 200)
+    expect(big.text).toMatch(/\[output cut at 1024 bytes \(maxGitBytes\); narrow it with paths/)
+    expect((await view('git_show', {})).text).toMatch(/^refused: commit is required/)
+  })
+
+  it('git_diff: the worktree or the index against HEAD, or two commits by hex id; a patch or its stat, limited to paths, secrets left out, cut at maxGitBytes', async () => {
+    const worktree = await view('git_diff', {})
+    expect(worktree.isError, worktree.text).toBe(false)
+    expect(worktree.text.split('\n')[0]).toBe('git diff: the worktree against HEAD; 1 file named as secrets left out')
+    expect(worktree.text).toContain('-line 30\n+line changed')
+    expect(worktree.text).toContain('+staged')
+    expect(worktree.text).not.toContain('TOKEN')
+    const cached = await view('git_diff', { cached: true })
+    expect(cached.text).toContain('+staged')
+    expect(cached.text).not.toContain('line changed')
+    const between = await view('git_diff', { from: commits[2]!, to: commits[1]!, stat: true })
+    expect(between.text).toMatch(/src\/n\.txt \| 2 \+-/)
+    expect(between.text).not.toContain('diff --git')
+    expect((await view('git_diff', { paths: ['staged.txt'] })).text).not.toContain('line changed')
+    expect((await view('git_diff', { from: commits[0]!, to: commits[0]! })).text).toContain('(no difference)')
+    const big = await view('git_diff', { from: commits[1]!, to: commits[0]! }, { maxGitBytes: 1024 })
+    expect(Buffer.byteLength(big.text)).toBeLessThan(1024 + 200)
+    expect(big.text).toMatch(/\[output cut at 1024 bytes \(maxGitBytes\)/)
+    expect((await view('git_diff', { from: commits[1]! })).text).toMatch(/^refused: give both from and to/)
+    expect((await view('git_diff', { from: commits[1]!, to: commits[0]!, cached: true })).text).toMatch(/^refused: cached/)
+  })
+
+  it('git_status: porcelain, its branch line, limited to paths, secrets counted and not shown, cut at maxGitBytes', async () => {
+    const status = await view('git_status', {})
+    expect(status.isError, status.text).toBe(false)
+    const lines = status.text.split('\n')
+    expect(lines[0]).toBe('git status: 4 paths; 1 named as secrets not shown')
+    expect(lines[1]).toMatch(/^## main/)
+    expect(lines.slice(2).sort()).toEqual(['?? escape-dir', '?? untracked.txt', ' M src/n.txt', 'A  staged.txt'].sort())
+    expect((await view('git_status', { paths: ['src'] })).text.split('\n').slice(2)).toEqual([' M src/n.txt'])
+    const names = Array.from({ length: 60 }, (_, i) => join(repo, `untracked-${String(i).padStart(2, '0')}-${'x'.repeat(20)}.txt`))
+    for (const name of names) writeFileSync(name, 'x\n')
+    try {
+      const cut = await view('git_status', {}, { maxGitBytes: 1024 })
+      expect(cut.text).toMatch(/\[output cut at 1024 bytes \(maxGitBytes\); narrow it with paths\]$/)
+      expect(Buffer.byteLength(cut.text)).toBeLessThan(1024 + 200)
+    } finally {
+      for (const name of names) rmSync(name)
+    }
+  })
+
+  it('refuses a commit that is not a hex id, and a path outside the workspace, through a symlink out, climbing, or into git\'s data or a secret', async () => {
+    for (const commit of ['HEAD', 'main', 'HEAD~1', `${commits[0]}~1`, `${commits[0]}^{tree}`, '--output=/tmp/x', '-p', 'abc', 'g1234', `${commits[0]} `, '', 'a'.repeat(65)]) {
+      for (const [name, input] of [['git_show', { commit }], ['git_log', { commit }], ['git_diff', { from: commit, to: commits[0] }], ['git_diff', { from: commits[0], to: commit }]] as const) {
+        const result = await view(name, input)
+        expect(result.isError, `${name} ${commit}`).toBe(true)
+        expect(result.text, `${name} ${commit}`).toMatch(/^refused: (commit|from|to) must be a commit's hex id/)
+      }
+    }
+    // A hex id of no commit is git's refusal, not a crash.
+    expect((await view('git_show', { commit: 'deadbeef' })).text).toMatch(/^refused: git failed: /)
+    for (const path of ['/etc/hostname', join(outside, 'secret.txt'), 'escape-dir/secret.txt', 'escape-dir', '../outside/secret.txt', 'src/../../outside', '.git/config', '.git', '.env', '']) {
+      for (const name of ['git_log', 'git_show', 'git_diff', 'git_status']) {
+        const result = await view(name, { paths: [path], ...(name === 'git_show' ? { commit: commits[0] } : {}) })
+        expect(result.isError, `${name} ${path}`).toBe(true)
+        expect(result.text, `${name} ${path}`).toMatch(/^refused: /)
+        expect(result.text, `${name} ${path}`).not.toContain('outside needle')
+      }
+    }
+    expect((await view('git_log', { paths: 'src' })).text).toMatch(/^refused: paths is not a list of strings/)
+    expect((await view('git_log', { paths: Array.from({ length: 65 }, () => 'src') })).text).toMatch(/^refused: paths names more than 64/)
+    expect((await view('git_log', { revision: 'HEAD' })).text).toMatch(/^refused: "revision" is not an argument of this tool/)
+  })
+
+  it('never runs a program the repository\'s configuration names: core.fsmonitor, a filter, a textconv, a diff command, an external diff (a marker file proves each)', async () => {
+    const evil = join(root, 'evil')
+    const markers = join(root, 'markers')
+    mkdirSync(markers)
+    mkdirSync(evil)
+    execFileSync('git', ['init', '-q', '-b', 'main', evil], { env })
+    const g = gitIn(evil)
+    writeFileSync(join(evil, '.gitattributes'), 'a.txt filter=evil\nb.txt diff=evil\n')
+    writeFileSync(join(evil, 'a.txt'), 'a\n')
+    writeFileSync(join(evil, 'b.txt'), 'b\n')
+    g('add', '-A')
+    g('commit', '-q', '-m', 'one')
+    writeFileSync(join(evil, 'b.txt'), 'b two\n')
+    g('add', '-A')
+    g('commit', '-q', '-m', 'two')
+    const script = (name: string): string => {
+      const path = join(root, `${name}.sh`)
+      writeFileSync(path, `#!/bin/sh\necho ran >> ${JSON.stringify(join(markers, name))}\ncat\n`, { mode: 0o755 })
+      return path
+    }
+    // Set only now: committing would have run the filter.
+    appendFileSync(join(evil, '.git', 'config'), [
+      '[core]', `\tfsmonitor = ${script('fsmonitor')}`, '[filter "evil"]', `\tclean = ${script('clean')}`, `\tprocess = ${script('process')}`, '\trequired = true',
+      '[diff "evil"]', `\ttextconv = ${script('textconv')}`, `\tcommand = ${script('command')}`, '[diff]', `\texternal = ${script('external')}`, '[log]', '\tshowSignature = true', '',
+    ].join('\n'))
+    writeFileSync(join(evil, 'a.txt'), 'a changed\n')
+    writeFileSync(join(evil, 'b.txt'), 'b three\n')
+    const ran = (): string[] => ['fsmonitor', 'clean', 'process', 'textconv', 'command', 'external'].filter((name) => existsSync(join(markers, name)))
+    // The setup is real: git itself, as a shell would run it, runs them.
+    for (const args of [['status', '--porcelain'], ['diff'], ['diff', '--no-ext-diff']]) {
+      try {
+        execFileSync('git', ['-C', evil, ...args], { env, stdio: 'ignore' })
+      } catch {
+        // A filter or driver that fails is still a program that ran.
+      }
+    }
+    expect(ran()).toContain('fsmonitor')
+    expect(ran().length).toBeGreaterThan(1)
+    rmSync(markers, { recursive: true })
+    mkdirSync(markers)
+    const reads = new WorkspaceReads(evil, workspaceReadBounds())
+    const head = g('rev-parse', 'HEAD')
+    for (const [name, input] of [
+      ['git_status', {}], ['git_diff', {}], ['git_diff', { cached: true }], ['git_diff', { from: g('rev-parse', 'HEAD~1'), to: head }], ['git_show', { commit: head }], ['git_log', { paths: ['b.txt'] }],
+    ] as const) {
+      const result = await reads.call(name, input)
+      expect(result.isError, `${name} ${result.text}`).toBe(false)
+    }
+    expect((await reads.call('git_diff', {})).text).toContain('+a changed')
+    expect((await reads.call('git_show', { commit: head })).text).toContain('+b two')
+    expect(ran()).toEqual([])
+    expect(readFileSync(join(evil, '.git', 'config'), 'utf8')).toContain('fsmonitor')
   })
 })
 
