@@ -47,7 +47,7 @@ const SITE: Failure = { submitted: true, error: { kind: 'overloaded', dispositio
  * search, `chat:b` only reasons, each of its own provider family unless `families` says otherwise.
  * `frontier` adds `chat:c`, a frontier Worker of chat:a's family, so a rejected result can escalate on it.
  */
-function scholar(ctx: Context, families: [string, string] = ['fam-a', 'fam-b'], options: { refuseFirstReview?: boolean; deep?: boolean; unavailable?: boolean; stallReview?: boolean; stallFallback?: boolean; reviewFailure?: Failure; fallbackFailure?: Failure; frontier?: boolean; uncitedFallback?: boolean } = {}): string[] & { sessions: Array<string | undefined>; workers: string[] } {
+function scholar(ctx: Context, families: [string, string] = ['fam-a', 'fam-b'], options: { refuseFirstReview?: boolean; deep?: boolean; unavailable?: boolean; stallReview?: boolean; stallFallback?: boolean; reviewFailure?: Failure; fallbackFailure?: Failure; frontier?: boolean; uncitedFallback?: boolean; researcher?: 'ready' | 'unavailable' } = {}): string[] & { sessions: Array<string | undefined>; workers: string[] } {
   const prompts = Object.assign([] as string[], { sessions: [] as Array<string | undefined>, workers: [] as string[] })
   const executions = new Map<string, WorkerExecution>()
   const sessions = new Map<string, string>()
@@ -59,9 +59,16 @@ function scholar(ctx: Context, families: [string, string] = ['fam-a', 'fam-b'], 
     // `unavailable`: the second family's Worker (chat:b) is signed out or down, as Gemini web often is (D89).
     state: (options.unavailable && id === 'chat:b' ? 'unavailable' : 'ready') as 'ready' | 'unavailable', observedAt: AT,
   })
+  // `researcher`: a read-only research Worker on an agent runtime (T262, ADR-0074) of a third family: agent-plan
+  // quota, local, research work only; it proves reason and web-search and keeps no conversation.
+  const researcher = () => ({
+    schema: 'capability-descriptor@1.6' as const, worker: 'agent:research', provider: 'test', family: 'fam-c', tier: 'standard' as const, quotaClass: 'agent-plan' as const, locality: 'local' as const,
+    kinds: ['research'], capabilities: ['reason', 'web-search'].map((capability) => ({ capability, evidence: { kind: 'probe' as const, at: AT } })),
+    state: options.researcher!, observedAt: AT,
+  })
   ctx.workers.register({
     name: 'chat',
-    describe: async () => [descriptor('chat:a', families[0], true), descriptor('chat:b', families[1], false), ...(options.frontier ? [descriptor('chat:c', families[0], true)] : [])],
+    describe: async () => [descriptor('chat:a', families[0], true), descriptor('chat:b', families[1], false), ...(options.frontier ? [descriptor('chat:c', families[0], true)] : []), ...(options.researcher ? [researcher()] : [])],
     affinity: (sessionId) => (sessions.has(sessionId) ? [sessions.get(sessionId)!] : undefined),
     start: (request) => {
       // What a text-prompted source sends: the brief rendered, its pointers resolved at start.
@@ -168,6 +175,45 @@ describe('the scientific-research profile, on the unchanged engine (REQ-WF-9)', 
     expect(criteria).toHaveLength(1)
     expect(criteria[0]).toMatchObject({ bodySchema: 'hypothesis-set@1.0', body: { schema: 'hypothesis-set@1.0', hypotheses: [{ id: 'H1' }, { id: 'H2' }] } })
     expect(ctx.artifacts.list({ kind: 'evidence', runId: done.runId })[0]).toMatchObject({ bodySchema: 'evidence-table@1.1', inputs: [ctx.workflow.records(done.runId)[3]!.outputReceipt!.result] })
+  })
+
+  it('routes review B to a research Worker of another family that searches, then to one that only reasons, and to the single-family fallback last (T262, D91)', async () => {
+    const ctx = await boot()
+    await ctx.plugin(Science)
+    scholar(ctx, ['fam-a', 'fam-b'], { researcher: 'ready' })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'research', input: 'Does X lower Y?' }).runId, 30_000)
+    expect(done.status).toBe('completed')
+    // Review A on the website Worker that searches; review B prefers a Worker that searches too, of another family; the rest never reach the research Worker.
+    expect(done.nodes.map((n) => [n.nodeId, n.worker])).toEqual([
+      ['frame:1', 'chat:a'], ['literature:1', 'chat:a'], ['literature:2', 'agent:research'], ['evidence:1', 'chat:a'], ['critique:1', 'chat:b'], ['conclusion:1', 'chat:a'],
+    ])
+    const routeOf = (runId: string, nodeId: string, c: Context = ctx) => c.artifacts.get(c.workflow.records(runId).find((r) => r.nodeId === nodeId)!.execution!.route)!.body as { candidates: Array<{ option: string; selected: boolean; reasons: string[] }> }
+    const route = routeOf(done.runId, 'literature:2')
+    expect(route.candidates.find((c) => c.selected)!.reasons).toContain('proves web-search, which the work prefers')
+    expect(route.candidates.find((c) => c.option === 'chat:b')!.reasons).toEqual(['admitted; agent:research proves web-search, which the work prefers, and this one does not'])
+    expect(JSON.stringify(route)).not.toMatch(/fam-[abc]/)
+    // The research Worker takes research work only: the frame, an ordinary step, was never its.
+    expect(routeOf(done.runId, 'frame:1').candidates.find((c) => c.option === 'agent:research')!.reasons).toContain('takes research work only; this work names no kind')
+
+    // The research Worker unavailable: review B goes to the Worker of another family that only reasons, as before.
+    const other = await boot()
+    await other.plugin(Science)
+    scholar(other, ['fam-a', 'fam-b'], { researcher: 'unavailable' })
+    const reasons = await other.workflow.wait(other.workflow.start({ template: 'research', input: 'Does X lower Y?' }).runId, 30_000)
+    expect(reasons.status).toBe('completed')
+    expect(reasons.nodes.filter((n) => n.nodeId.startsWith('literature')).map((n) => [n.nodeId, n.worker])).toEqual([['literature:1', 'chat:a'], ['literature:2', 'chat:b']])
+
+    // Neither of another family can take it: T260's single-family fallback, last, marked so.
+    const last = await boot()
+    await last.plugin(Science)
+    scholar(last, ['fam-a', 'fam-b'], { researcher: 'unavailable', unavailable: true })
+    const single = await last.workflow.wait(last.workflow.start({ template: 'research', input: 'Does X lower Y?' }).runId, 30_000)
+    expect(single.status).toBe('completed')
+    expect(single.nodes.find((n) => n.nodeId === 'literature:2')!.worker).toBe('chat:a')
+    expect(last.workflow.explain(single.runId)!.nodes.find((n) => n.nodeId === 'literature:2')!.decisions).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'admission', outcome: 'single-family' })]))
+
+    // The template's steps: both reviews are research work, and review B prefers web-search.
+    expect(Science.RESEARCH.filter((n) => n.nodeId.startsWith('literature')).map((n) => [n.nodeId, n.kind, n.prefers ?? []])).toEqual([['literature:1', 'research', []], ['literature:2', 'research', ['web-search']]])
   })
 
   it('routes review B after review A backs off and is routed again: no deadlock (ADR-0027)', async () => {

@@ -420,4 +420,35 @@ describe('ctx.workers: configured preferences', () => {
       await dispose()
     }
   })
+
+})
+
+describe('ctx.workers: what the work prefers (work-requirement@1.3 prefers, T262)', () => {
+  const routeBody = (ctx: Context, ref: string) => ctx.artifacts.get(ref)?.body as { candidates: Array<{ option: string; selected: boolean; reasons: string[] }> }
+
+  it('ranks a Worker that proves what the work prefers first, before tier and quota class, never refuses one that does not, and records why', async () => {
+    const { ctx, dispose } = await boot()
+    try {
+      // w:a reasons on the preferred quota class at the lowest tier; w:b also searches, on agent-plan quota at a higher tier.
+      ctx.workers.register(source('test', [worker('w:a', { tier: 'economy' }), worker('w:b', { tier: 'standard', quotaClass: 'agent-plan', proves: ['reason', 'web-search'] })]))
+      const plain = await ctx.workers.route(requirement())
+      expect(plain.worker.worker).toBe('w:a')
+      plain.release()
+      const preferring = await ctx.workers.route(requirement({ schema: 'work-requirement@1.3', prefers: ['web-search'] }))
+      expect(preferring.worker.worker).toBe('w:b')
+      preferring.release()
+      const route = routeBody(ctx, preferring.decisions.route)
+      expect(route.candidates.find((c) => c.selected)!.reasons).toContain('proves web-search, which the work prefers')
+      expect(route.candidates.find((c) => c.option === 'w:a')!.reasons).toEqual(['admitted; w:b proves web-search, which the work prefers, and this one does not'])
+      // With no Worker that proves it, the work still routes, and the decision says so.
+      const none = await ctx.workers.route(requirement({ schema: 'work-requirement@1.3', prefers: ['deep-research'] }))
+      expect(none.worker.worker).toBe('w:a')
+      none.release()
+      expect(routeBody(ctx, none.decisions.route).candidates.find((c) => c.selected)!.reasons).toContain('does not prove deep-research, which the work prefers (no Worker that does ranks before it)')
+      // A preference is @1.3: an older record carrying one is refused.
+      await expect(ctx.workers.route(requirement({ prefers: ['web-search'] }))).rejects.toThrow()
+    } finally {
+      await dispose()
+    }
+  })
 })

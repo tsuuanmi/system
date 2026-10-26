@@ -15,6 +15,9 @@
  *   (verified live against traversal, symlinks, and home paths), and `Bash`, whose every command
  *   runs in the SDK's sandbox (ADR-0038): writes to the workspace only, no network, no command
  *   outside it, and a run whose sandbox cannot start fails. A `read-only` run has no `Bash`;
+ * - a research role's run (`RunSpec.web`, T262, ADR-0074) is `read-only` and may list `WebSearch`
+ *   and `WebFetch` beside the reading tools, pre-approved by name (a query or a URL has no workspace
+ *   to scope it to), each call passing the run's gate first, which decides whether it is sent;
  * - Claude Code starts under the read confinement of `ctx.agentRuntimes` (ADR-0024, ADR-0038):
  *   bubblewrap hides the host state, and only its own home (`CLAUDE_CONFIG_DIR`, never the
  *   operator's `~/.claude`) and the workspace come back. The probe proves the confinement on this
@@ -60,7 +63,7 @@ import z from '@deepseek-ai/schemastery'
 import {
   type AgentHome, type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ModelUsage, type ProbeOptions,
   type RunMetering, type RunResult, type RunSpec, type RunObserver, type RuntimeEvidence, type SandboxMode, type TokenUsage, type ToolGate, askToolGate, childEnvironment, confinedCommand,
-  agentHome, agentShellEnvironment, HOST_TOOLS_SERVER, homeProblem, hostToolsProblem, hostToolsServer, identityHmac, maskEmail, observe, proveConfinement, readHomeJson, withMetering,
+  agentHome, agentShellEnvironment, HOST_TOOLS_SERVER, homeProblem, WEB_RUN_TOOLS, hostToolsProblem, hostToolsServer, identityHmac, maskEmail, observe, proveConfinement, readHomeJson, withMetering,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
@@ -77,6 +80,12 @@ const WRITE_TOOLS = ['Edit', 'Write']
 /** The built-in tool that runs commands: in a `workspace-write` run only, every command inside the SDK's sandbox (ADR-0038). */
 const COMMAND_TOOL = 'Bash'
 const ALLOWED: Record<SandboxMode, string[]> = { 'read-only': READ_ONLY_TOOLS, 'workspace-write': [...READ_ONLY_TOOLS, ...WRITE_TOOLS, COMMAND_TOOL] }
+/**
+ * A research role's run (`RunSpec.web`, T262, ADR-0074): read-only, its reading tools and the two
+ * web tools, never a writing tool or `Bash`. Each web call passes the run's gate before it runs,
+ * which judges it under the autonomy policy's web access grant or asks the operator.
+ */
+const RESEARCH_TOOLS: readonly string[] = [...READ_ONLY_TOOLS, ...WEB_RUN_TOOLS]
 
 /**
  * Pre-approval rule for one tool. A file tool's is scoped to the working directory (`./**`): bare
@@ -88,7 +97,7 @@ const ALLOWED: Record<SandboxMode, string[]> = { 'read-only': READ_ONLY_TOOLS, '
  * no network), and the run's tool gate decides whether it runs at all, by its exact argv
  * (docs/design/approvals.md#a-workers-tool-calls).
  */
-const rule = (tool: string): string => (tool === COMMAND_TOOL ? tool : `${tool}(./**)`)
+const rule = (tool: string): string => (tool === COMMAND_TOOL || WEB_RUN_TOOLS.includes(tool) ? tool : `${tool}(./**)`)
 
 /**
  * The SDK's sandbox for the commands of a `workspace-write` run (ADR-0038): on, and a run whose
@@ -218,7 +227,8 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     // Its own reading tools, on every run whose tools list names them (or names none): a gate denies
     // a shell inspection command it has the tool for, naming it (T222).
     // A run's host tools (ADR-0070) are an in-process MCP server of the SDK's, so it offers them on every run.
-    const found = { available: true, version, resume: true, gatesToolCalls: true, homes: true, readTools: [...READ_ONLY_TOOLS], hostTools: true }
+    // A research role's read-only run may list WebSearch and WebFetch (T262): each passes the gate first.
+    const found = { available: true, version, resume: true, gatesToolCalls: true, homes: true, readTools: [...READ_ONLY_TOOLS], hostTools: true, webTools: true }
     const unconfined = (detail: string): RuntimeEvidence => ({ ...found, detail: `Claude Code ${version}; ${detail}`, sandboxes: ['read-only'], executes: false, readsConfined: false })
     if (!this.options.confine) return unconfined('no read confinement is configured')
     try {
@@ -249,13 +259,15 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     const named = spec.home !== undefined ? homeProblem(spec.home) : undefined
     if (named) throw new ProviderError('config_error', `claude-agent-sdk: ${named}; nothing was run`)
     const home = spec.home ?? this.home
-    const allowed = ALLOWED[spec.sandbox]
-    if (!allowed) throw new ProviderError('config_error', `claude-agent-sdk: unknown sandbox ${String(spec.sandbox)}`)
+    if (!ALLOWED[spec.sandbox]) throw new ProviderError('config_error', `claude-agent-sdk: unknown sandbox ${String(spec.sandbox)}`)
+    // A research role's run is read-only, its reading and web tools only (T262).
+    if (spec.web && spec.sandbox !== 'read-only') throw new ProviderError('config_error', `claude-agent-sdk: a research run (web) is read-only; refusing a ${spec.sandbox} one`)
+    const allowed = spec.web ? RESEARCH_TOOLS : ALLOWED[spec.sandbox]
     // Absent or empty means the sandbox's default set; an empty `tools` would disable every tool.
-    const tools = spec.tools?.length ? spec.tools : allowed
+    const tools = spec.tools?.length ? spec.tools : [...allowed]
     const refused = tools.filter((tool) => !allowed.includes(tool))
     if (refused.length) {
-      throw new ProviderError('config_error', `claude-agent-sdk: a ${spec.sandbox} run allows only ${allowed.join(', ')}; refusing ${refused.join(', ')}`)
+      throw new ProviderError('config_error', `claude-agent-sdk: a ${spec.web ? 'research' : spec.sandbox} run allows only ${allowed.join(', ')}; refusing ${refused.join(', ')}`)
     }
     const hosted = spec.hostTools?.length ? hostToolsProblem(spec.hostTools) : undefined
     if (hosted) throw new ProviderError('config_error', `claude-agent-sdk: ${hosted}; nothing was run`)

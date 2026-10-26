@@ -438,7 +438,8 @@ What names a kind today ([templates](../reference/workflow-templates.md#algorith
 |---|---|
 | `algorithm-development` `develop:1`, and the fix a review grows from it | `code`; `docs` in the `docs` variant, `tests` in the `tests` variant |
 | `algorithm-development` `validate:1`: it runs the checks and tests and changes nothing | `validation` |
-| every review (`algorithm-development` `review:1` and its re-reviews, `agent-review`), a planner's steps, every website step (`ask`, `brainstorm`, `review` teams, `research`), digests | none |
+| `research` `literature:1` and `literature:2`, which a [research role](#turn-on-the-research-worker) takes | `research` |
+| every review (`algorithm-development` `review:1` and its re-reviews, `agent-review`), a planner's steps, every other website step (`ask`, `brainstorm`, `review` teams, `research`'s frame, evidence, critique, and conclusion), digests | none |
 
 A Worker given kinds takes only steps of those kinds, and never a step that names none; a Worker
 given none takes any step it proves the capabilities for. With no Worker given kinds, everything
@@ -646,6 +647,92 @@ the model and the options you give it. Accounts × roles only
 
 To undo, put the role's `tier` and runtime `model` back in place of `tiers` and restart: its Workers
 then offer that one tier, as before.
+
+## Turn on the research Worker
+
+Research's second literature review runs on a Claude Worker of another family than the first
+(ChatGPT's) rather than on Gemini's website, which stalled on it (T229, T248; operator decision
+D91). The Worker is a read-only **research role** on Claude Code: it reads the workspace and
+searches the web, and never writes or runs a command
+([a research role](../design/agent-runtimes.md#a-research-role),
+[ADR-0074](../decisions/adr/0074-a-research-roles-web-calls-run-under-a-bounded-egress-checked-grant.md)).
+Three steps, each yours: the role, the assignment, and the web access grant through a
+`policy-change` approval. Until all three hold, `research` routes as before (Gemini's website, then
+the single-family fallback). Accounts × roles only
+([migrate first](#migrate-agent-workers-to-accounts--roles)).
+
+1. **The role.** In the `agent-workers` row of the live profile
+   (`~/.dsh/profiles/system/cordis.patch.yml`), add a role with `research: true` beside your others,
+   its model named there only ([give a role tiers](#give-a-role-tiers)):
+
+   ```yaml
+   - id: agent-workers
+     config:
+       roles:
+         - id: research
+           workspace: /home/tan/workspaces/system   # what it may read; it writes nothing
+           sandbox: read-only
+           research: true                          # tools: Read, Grep, Glob, WebSearch, WebFetch; kinds: [research]
+           description: Searches and fetches the web for research's literature reviews
+           runtimes:
+             claude-agent-sdk:
+               family: <the family of your other Claude Code Workers>
+               tiers:
+                 standard: { model: "<standard model>", maxTurns: 40 }
+   ```
+
+   It is on the standard tier: with no `tiers` (and no `tier`) it still is, on the runtime's default
+   model. `family` must differ from the ChatGPT website Worker's. `system check` refuses a research
+   role that is not `read-only`, is a review member, or names another tool, a tier's included.
+2. **The assignment.** Give the role to the Claude Code account, beside its others:
+
+   ```yaml
+       assignments:
+         - { account: <the Claude Code account>, roles: [develop, review, research] }
+   ```
+
+   Only a runtime that offers web tools takes it (Claude Code); on Codex, the Antigravity CLI, or
+   ACP the Worker is `unavailable`, saying why. Then `system check` and `system restart`. The Worker
+   `agent:<account>/research` offers `reason` for research work only, and `web-search` once its web
+   probe searched, which needs step 3.
+3. **The web access grant, through the queue.** Its web calls are `external-send`, which always
+   asks. The grant lets a research role's call run unasked when the egress check passes on its query
+   or URL, at most `maxWebCallsPerRun` (40) a run, each recorded
+   ([approvals](../design/approvals.md#a-research-roles-web-calls)). Only the studio policy grants;
+   a project's narrows. Nothing applies it silently: the bundle's studio policy grants nothing.
+   1. On the **Autonomy policy** page on `/ui` (or MCP `approvals_policy_propose`), take the studio
+      policy in force at its next `version`, set its `schema` to `autonomy-policy@1.3`, and add:
+
+      ```json
+      "webAccess": { "version": 1, "rules": [
+        { "profile": "research", "tools": ["WebSearch", "WebFetch"], "maxWebCallsPerRun": 40,
+          "maxClassification": "operator-shared", "note": "research's literature reviews (D91, T262)" }
+      ] }
+      ```
+
+      **Propose** it, read its `policy-change` request in the queue, and approve it. Its
+      consequences say that no effective mode moves and, apart, `Web access (external-send still
+      asks; these web calls run unasked once the egress check passes): studio research: WebSearch,
+      WebFetch unasked when the egress check passes, at most 40 per run, content up to
+      operator-shared`. This one approval turns it on.
+   2. The `system` project's policy, [`policies/system.json`](../../policies/system.json) (version 2),
+      carries the same grant, which narrows the studio's (a project's grant can lower its tools,
+      bound, or classification, never raise them; a project with none keeps the studio's). It
+      reaches the live set as any change to that file does, through its own `policy-change`
+      approval; until then the project's policy in force has no grant and the studio's applies.
+4. **Verify.** The roster shows the Worker with `web-search` once its probe searched (`Wikipedia
+   main page`), and without it while the grant is not approved. `system explain <runId>` of a
+   `research` run names `agent:<account>/research` in `literature:2`'s route decision (`proves
+   web-search, which the work prefers`) and lists the run's **web calls**: how many ran unasked,
+   asked, or were denied, and each query or URL with its egress verdict; the run's page on `/ui`
+   shows the same under *Web calls*.
+5. **What asks.** A query or URL that names a path of this machine or holds a credential pattern,
+   content above `operator-shared`, a tool the grant does not name, and every call past the bound ask
+   as any `external-send`; approve or reject it in the queue. A project that forbids
+   `external-send` still forbids it.
+
+To turn it off, propose the studio policy without `webAccess` (every web call asks again), or take
+the role out of the assignment and restart.
 
 ## Turn an off row back on
 
@@ -2694,7 +2781,8 @@ your repeated approvals; it still applies only on your approval
    ([example](../../schemas/examples/autonomy-policy.project.json)). The classes that always ask
    (`merge`, `external-send`, `deploy`, `delete-data`, `spend`, `charter`, `funding`,
    `remediation`, `policy-change`, `promotion`) cannot be given `auto` or `notify`: a merge always
-   asks the operator (D56).
+   asks the operator (D56). A research role's web calls run unasked only under a `webAccess` grant
+   (`autonomy-policy@1.3`), which moves no mode ([turn on the research Worker](#turn-on-the-research-worker)).
 
    **If a change you approved on `/ui` is in force** (`source: store`), a changed configuration
    does not replace it silently: at start the queue is refused, and its log names the stored

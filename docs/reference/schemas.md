@@ -248,6 +248,12 @@ guesses.
   admitted spec (the step's `kind`, or its variant's), never from model text (INV-6). A record
   carrying it below `@1.2` is refused. Readers accept 1.0 to 1.2. Example:
   [`work-requirement.kind.json`](../../schemas/examples/work-requirement.kind.json).
+- `work-requirement@1.3` adds the optional `prefers`: 1 to 8 distinct capabilities the work would
+  like and does not need, none of them among its `capabilities`
+  ([research's second review](../design/routing.md#researchs-second-review),
+  [ADR-0074](../decisions/adr/0074-a-research-roles-web-calls-run-under-a-bounded-egress-checked-grant.md)).
+  Routing ranks a Worker that proves all of them first and never refuses one that does not. A
+  record carrying it below `@1.3` is refused. Readers accept 1.0 to 1.3.
 
 ### `workflow-node`
 
@@ -706,8 +712,10 @@ guesses.
   `tool`, and `actionClass` (and `workerKind` since T207); `deferred` adds `requestId`, the others
   `pendingChecks` when checks are pending (always for `checks-pending`).
 - The data of these four tool events is declared by
-  [`agent-tool-event.v1.json`](../../schemas/agent-tool-event.v1.json) (`agent-tool-event@1.1`,
-  T211; 1.1 adds the reason `use-read-tool`, T222), one definition per event type (`$defs/denied`, `deferred`, `notified`, `checks-pending`).
+  [`agent-tool-event.v1.json`](../../schemas/agent-tool-event.v1.json) (`agent-tool-event@1.2`,
+  T211; 1.1 adds the reason `use-read-tool`, T222; 1.2 adds the reason `research-role` and the event
+  `agent-workers.tool.web`, a research run's web call judged: the usual `agentRun`, `worker`, `tool`, then `verdict`
+  `auto` or `ask`, `egress`, the call's number, the calls made unasked, the bound, and the `gate` decision, which holds the query or URL, never the query or URL itself, T262), one definition per event type (`$defs/denied`, `deferred`, `notified`, `checks-pending`, `web`).
   The data carries no schema tag: a reader names the definition by the entry's type. `reason` is
   an enum of the codes above (a test derives the gate's own list, `DENIAL_REASONS`, and requires each
   in it, so a new code is a minor version of the schema); `explanation` is 1 to 300 characters and
@@ -822,6 +830,16 @@ guesses.
   project's map only makes a path stricter). With no applying map, tiering is off. A map changes
   only as its policy does, through a `policy-change` approval; `policies/system.json` holds the
   system repository's, which `pnpm check` (`check:tiers`) keeps whole.
+- `@1.3` adds the optional `webAccess`, a research role's web access grant
+  ([ADR-0074](../decisions/adr/0074-a-research-roles-web-calls-run-under-a-bounded-egress-checked-grant.md),
+  [a research role's web calls](../design/approvals.md#a-research-roles-web-calls)): its own
+  `version`, raised whenever a grant changes, and at most one rule per `profile` (only `research`),
+  each with `tools` (distinct, `WebSearch` and `WebFetch`), `maxWebCallsPerRun` (1 to 200; the
+  default is 40), `maxClassification` (`public` or `operator-shared`: `local-private` is never
+  granted) and a `note` saying why. A grant moves no effective mode and `external-send` stays `ask`
+  in every rule; the studio's grant is the only one that grants, and a project's only narrows it. A
+  record carrying it below `@1.3` is refused. Like every part of the policy, it changes only
+  through a `policy-change` approval; `policies/system.json` holds the system repository's.
 - An approval request expires at its creation plus the shortest `expiresSeconds` of the rules
   that apply to its class (the studio's and the project's), else the stricter
   `expiry.defaultSeconds`, never more than the stricter `expiry.maxSeconds`.

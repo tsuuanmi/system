@@ -303,14 +303,18 @@ export class Engine {
    * tier and where that came from; its acceptance contract. A review team member's step
    * (proposal, ballot, debate) names its kind of work, `scope: review-member` (`@1.1`), so offers
    * scoped to it count (ADR-0049); its capabilities stay the same. A step that names its kind of
-   * work carries it (`kind`, `@1.2`; ADR-0057), from the admitted spec only.
+   * work carries it (`kind`, `@1.2`; ADR-0057), from the admitted spec only. A step that prefers
+   * capabilities it does not need carries them (`prefers`, `@1.3`; T262), those it needs left out.
    */
   requirementOf(node: ResolvedNode, persistent: boolean, classification: Classification | undefined): WorkRequirement {
     const member = node.team?.kind === 'review' && node.team.member !== undefined
+    const capabilities = [...new Set([...node.capabilities, ...(persistent ? ['persistent-conversation'] : [])])]
+    const prefers = (node.prefers ?? []).filter((c) => !capabilities.includes(c))
     return {
-      schema: node.kind !== undefined ? 'work-requirement@1.2' : member ? 'work-requirement@1.1' : 'work-requirement@1.0',
+      schema: prefers.length ? 'work-requirement@1.3' : node.kind !== undefined ? 'work-requirement@1.2' : member ? 'work-requirement@1.1' : 'work-requirement@1.0',
       objective: node.objective,
-      capabilities: [...new Set([...node.capabilities, ...(persistent ? ['persistent-conversation'] : [])])],
+      capabilities,
+      ...(prefers.length ? { prefers } : {}),
       ...(member ? { scope: 'review-member' as const } : {}),
       ...(node.kind !== undefined ? { kind: node.kind } : {}),
       data: { classification: classification ?? this.ctx.egress.defaultClassification, refs: [] },

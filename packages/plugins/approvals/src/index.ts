@@ -25,7 +25,7 @@ import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
-import { ACTION_CLASSES, commandProblems, effectOf, PolicySet, policyProblems, proposedSet, rank } from './policy.ts'
+import { ACTION_CLASSES, commandProblems, effectOf, PolicySet, policyProblems, proposedSet, rank, webAccessEffect } from './policy.ts'
 import { registerTools } from './tools.ts'
 
 export { ACTION_CLASSES, PolicySet, policyProblems } from './policy.ts'
@@ -549,6 +549,8 @@ export class StoreApprovals extends Approvals {
         ? `Change the autonomy policy ${policy.id}: version ${made.previous.version} to ${policy.version}`
         : `Add project ${String(projectId)}'s autonomy policy ${policy.id} (version ${policy.version})`
     const modes = effect.map((e) => `${e.projectId ?? 'studio'} ${e.actionClass} ${e.from} → ${e.to}`).join('; ')
+    // A web access grant moves no mode (external-send still asks), so the operator is shown it apart (ADR-0074).
+    const web = webAccessEffect(base.set, next)
     const listed = from && next.effective('workspace-write')
     const consequences = clip((from
       ? `Proposed by the queue, not by you: you approved this exact command ${from.requests.length} times among the requests of the last ${span(from.windowSeconds)}, and rejected none and let none expire. `
@@ -556,7 +558,7 @@ export class StoreApprovals extends Approvals {
         + `the set ${hash} replaces the set in force (${baseHash}) at once, and every open request is judged again under it (one made under ${policy.id} version ${made.previous!.version} is withdrawn, and its requester asks again). `
         + 'If rejected or unanswered: nothing changes, and the queue never proposes this command again.'
       : `If approved: the set ${hash} replaces the set in force (${baseHash}) at once, and every open request is judged again under it. `
-        + `If rejected or unanswered: nothing changes. ${effect.length ? `Effective modes: ${modes}.` : 'No effective mode moves (expiry, batching, commands, or required checks only).'}${note ? ` Note: ${note}` : ''}`), 2000)
+        + `If rejected or unanswered: nothing changes. ${effect.length ? `Effective modes: ${modes}.` : 'No effective mode moves (expiry, batching, commands, web access, or required checks only).'}${web ? ` Web access (external-send still asks; these web calls run unasked once the egress check passes): ${web}.` : ''}${note ? ` Note: ${note}` : ''}`), 2000)
     return this.ctx.store.transaction(() => {
       // The base is the set in force when the change is stored, never an older one (INV-5).
       if (this.current().key !== base.key) throw invalid('another policy change came into force while this one was proposed; propose it again on the set in force')

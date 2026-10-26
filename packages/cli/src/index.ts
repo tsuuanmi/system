@@ -1188,6 +1188,17 @@ interface Explained {
   livenessUnread?: Array<{ source: string; detail: string }>
   /** The run's checks stalled now: no output for their bound, still running to their deadline (T235). */
   stalledChecks?: Array<{ check: string; command: string; since: string; quietSince: string; stallSeconds: number }>
+  /** A research role's web calls (T262): how many, unasked, asked, and denied in their session, and each query or URL with its verdict and egress outcome. */
+  webCalls?: { count: number; auto: number; asked: number; denied?: number; calls: Array<{ at: string; nodeId?: string; tool: string; target: string; verdict: string; egress: string; reason?: string; decision: string }> }
+}
+
+/** A run's web calls as `system explain` prints them (T262): the counts, then one line per call. */
+export function formatWebCalls(web: NonNullable<Explained['webCalls']>): string[] {
+  return [
+    `web calls  ${web.count}: ${web.auto} unasked, ${web.asked} asked${web.denied ? `, ${web.denied} denied in their session` : ''}`,
+    ...web.calls.map((c) => `  ${c.at}  ${c.nodeId ?? '-'}  ${c.tool}  ${c.verdict}  egress ${c.egress}${c.reason ? `  (${c.reason})` : ''}  ${JSON.stringify(c.target)}  (${c.decision})`),
+    ...(web.calls.length < web.count ? [`  and ${web.count - web.calls.length} more`] : []),
+  ]
 }
 
 /** The words of each liveness state, as an operator reads them. */
@@ -1210,7 +1221,7 @@ export function formatLiveness(runs: readonly ExplainedLiveness[], unread: Reado
  * `system explain <runId>`: the run's risk tier and why (ADR-0071), when it has one; the run's own
  * decisions (a board task's admission, subject, acceptance, report), then each step's (egress, tier,
  * route, acceptance) with their reasons, then its executions whose liveness needs a look, and its
- * checks stalled now.
+ * checks stalled now, and its research Workers' web calls (T262).
  */
 export function formatExplanation(explained: Explained): string[] {
   const liveness = explained.liveness?.length || explained.livenessUnread?.length ? ['liveness', ...formatLiveness(explained.liveness ?? [], explained.livenessUnread)] : []
@@ -1228,6 +1239,7 @@ export function formatExplanation(explained: Explained): string[] {
     ]),
     ...liveness,
     ...stalled,
+    ...(explained.webCalls?.count ? formatWebCalls(explained.webCalls) : []),
   ]
 }
 

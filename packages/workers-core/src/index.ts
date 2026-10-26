@@ -189,11 +189,19 @@ export interface CapabilityDescriptor {
   observedAt: string
 }
 
-/** The input to routing (`work-requirement@1.0`; `@1.1` adds `scope`, `@1.2` `kind`). */
+/** The input to routing (`work-requirement@1.0`; `@1.1` adds `scope`, `@1.2` `kind`, `@1.3` `prefers`). */
 export interface WorkRequirement {
-  schema: 'work-requirement@1.0' | 'work-requirement@1.1' | 'work-requirement@1.2'
+  schema: 'work-requirement@1.0' | 'work-requirement@1.1' | 'work-requirement@1.2' | 'work-requirement@1.3'
   objective: string
   capabilities: string[]
+  /**
+   * Capabilities the work prefers but does not need (`@1.3`; T262): among the admitted Workers, one
+   * that proves every one of them (for this work, as {@link provesFor} reads it) ranks before one that
+   * does not, after the reserve key and before tier. Never a refusal, and never a family: the research
+   * template's second review prefers `web-search`, so a Worker that can search is chosen before one
+   * that can only cite. Set by the workflow engine from the admitted spec, never from model text.
+   */
+  prefers?: string[]
   /**
    * The kind of work this is (`@1.1`; ADR-0049), so offers scoped to it count: set by the workflow
    * engine from the admitted spec (a review team member's step), never from a template or model text.

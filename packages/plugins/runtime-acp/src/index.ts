@@ -108,7 +108,7 @@ export class AcpAgentRuntime implements AgentRuntimeProvider {
     if (!isAbsolute(spec.workspace)) throw new ProviderError('config_error', `${this.kind}: the workspace must be an absolute path`)
     if (spec.sandbox !== 'read-only') throw new ProviderError('config_error', `${this.kind}: only read-only is offered; the client cannot confine an agent's own writes`)
     if (!this.agent.honoursPermissions) throw new ProviderError('config_error', `${this.kind}: no policy can be enforced on an agent the operator has not vouched for (honoursPermissions)`)
-    for (const [field, value] of [['a tool list', spec.tools?.length], ['a model', spec.model], ['a turn limit', spec.maxTurns], ['a tool gate', spec.toolGate], ['a home of its own (RunSpec.home)', spec.home]] as const) {
+    for (const [field, value] of [['a tool list', spec.tools?.length], ['web tools (RunSpec.web)', spec.web], ['a model', spec.model], ['a turn limit', spec.maxTurns], ['a tool gate', spec.toolGate], ['a home of its own (RunSpec.home)', spec.home]] as const) {
       if (value) throw new ProviderError('config_error', `${this.kind}: ACP cannot express ${field}; refusing instead of ignoring it`)
     }
     if (!this.reads.confine) throw new ProviderError('config_error', `${this.kind}: no read confinement is configured; refusing to run the agent with the host state readable (ADR-0024)`)

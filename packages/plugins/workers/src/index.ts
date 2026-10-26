@@ -49,7 +49,7 @@ interface Ledger {
 /** Each admitted Worker's account quota and its keys in the headroom order, by Worker id. */
 type Quotas = ReadonlyMap<string, { quota: AccountQuota; keys: HeadroomKeys; settings: QuotaSettings }>
 /** One key of routing's order, by name, so a decision says which one a Worker lost on. */
-type OrderKey = { name: 'tier' | 'quota' | keyof HeadroomKeys | 'load' | 'priority'; key: (w: CapabilityDescriptor) => number }
+type OrderKey = { name: 'prefers' | 'tier' | 'quota' | keyof HeadroomKeys | 'load' | 'priority'; key: (w: CapabilityDescriptor) => number }
 /** How long one source may take to describe its Workers inside the routing lock (ADR-0033). */
 const DESCRIBE_MS = 5000
 /** Why a source counted as describing none: it did not answer within `DESCRIBE_MS`. */
@@ -600,6 +600,8 @@ export class WorkerRouter extends Workers {
     const headroom = (name: keyof HeadroomKeys): OrderKey => ({ name, key: (w) => quotas?.get(w.worker)?.keys[name] ?? 0 })
     return [
       headroom('reserve'),
+      // What the work prefers but does not need (work-requirement@1.3, T262): a Worker that proves all of it first.
+      ...(requirement.prefers?.length ? [{ name: 'prefers' as const, key: (w: CapabilityDescriptor) => (provesAll(w, requirement, requirement.prefers!) ? 0 : 1) }] : []),
       { name: 'tier', key: (w) => TIERS.indexOf(tierOf(w, requirement)) }, { name: 'quota', key: (w) => rankOf(quota, w.quotaClass) },
       ...HEADROOM_KEYS.filter((k) => k !== 'reserve').map(headroom),
       { name: 'load', key: busy }, { name: 'priority', key: (w) => rankOf(priority, w.worker) },
@@ -615,6 +617,9 @@ export class WorkerRouter extends Workers {
   private chosenReasons(worker: CapabilityDescriptor, requirement: WorkRequirement): string[] {
     const served = tierOf(worker, requirement)
     const reasons = [`proves ${requirement.capabilities.join(', ')}${requirement.scope ? ` for ${requirement.scope} work` : ''}`, `lowest admissible tier ${served}`, `quota class ${worker.quotaClass}`]
+    if (requirement.prefers?.length) {
+      reasons.splice(1, 0, provesAll(worker, requirement, requirement.prefers) ? `proves ${requirement.prefers.join(', ')}, which the work prefers` : `does not prove ${requirement.prefers.join(', ')}, which the work prefers (no Worker that does ranks before it)`)
+    }
     if (worker.tiers?.length) {
       // One Worker, several tiers (ADR-0073): which it offers, and which of them its models' limits close now.
       const shut = tiersWithin(worker, requirement.tier).filter((o) => o.closed && TIERS.indexOf(o.tier) < TIERS.indexOf(served))
@@ -635,6 +640,7 @@ export class WorkerRouter extends Workers {
     const differs = this.keys(requirement, quotas).find(({ key }) => key(worker) !== key(chosen))
     switch (differs?.name) {
       case undefined: return `${chosen.worker} comes first by id`
+      case 'prefers': return `${chosen.worker} proves ${requirement.prefers!.join(', ')}, which the work prefers, and this one does not`
       case 'tier': return `${chosen.worker} has the lower tier ${tierOf(chosen, requirement)}`
       case 'quota': return `${chosen.worker} has the preferred quota class ${chosen.quotaClass}`
       case 'load': return `${chosen.worker} is less busy (${loadOf(chosen.load)}; this one ${loadOf(worker.load)})`
@@ -741,6 +747,11 @@ function inputBound(chosen: CapabilityDescriptor, workers: readonly CapabilityDe
   if (!over.length) return [own]
   const largest = Math.max(...over.map((w) => w.maxInputChars!))
   return [own, `over the bound of ${over.length} other Worker(s) that could take it otherwise (the largest ${largest} characters)`]
+}
+
+/** Whether a Worker proves every capability of `capabilities` for this work (a scoped offer only for its scope, ADR-0049). */
+function provesAll(worker: CapabilityDescriptor, requirement: WorkRequirement, capabilities: readonly string[]): boolean {
+  return capabilities.every((c) => worker.capabilities.some((p) => p.capability === c && provesFor(p, requirement)))
 }
 
 /** A Worker's load as one number: what runs, waits, or is routed to it; a source that reports none reads 0. */

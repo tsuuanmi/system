@@ -21,9 +21,10 @@ Worker states, and the same requirement always give the same result
 ## Work requirement
 
 ```ts
-WorkRequirement {                    // work-requirement@1.2
+WorkRequirement {                    // work-requirement@1.3
   objective: string;
   capabilities: Capability[];        // all must be proven
+  prefers?: Capability[];            // ranks a Worker that proves all of them first; never a refusal (@1.3)
   scope?: "review-member";           // the kind of work, for offers scoped to it (below)
   kind?: WorkKind;                   // the operator's kind of work, e.g. "code" (work kinds, below)
   data: { classification: "public" | "operator-shared" | "local-private";
@@ -48,7 +49,7 @@ each one with evidence from the sources shown below.
 | Capability | Meaning | Typical evidence |
 |---|---|---|
 | `reason` | general reasoning and synthesis | provider driver conformance (website Workers); a route probe (model Workers, [models](models.md)); for a review member's steps only, a read-only agent Worker under the enforced review-member profile ([scoped offers](#scoped-offers)) |
-| `web-search` | search the live web with citations | feature probe on the account |
+| `web-search` | search the live web with citations | feature probe on the account; for a [research role's](agent-runtimes.md#a-research-role) agent Worker, its web probe's real search of a fixed query, through its gate |
 | `deep-research` | provider-native multi-step research report | plan + feature probe (P2) |
 | `connector:<name>` | a website connector or app enabled on the account, e.g. `connector:github` | connector probe on the account (P2) |
 | `persistent-conversation` | resumable multi-turn identity | driver conformance (website Workers); the runtime probe's `resume` flag (agent Workers); the source's own replay (model Workers; for a review member's steps only, an agent Worker under the review-member profile whose runtime cannot resume: an exact, recorded replay); target for agent Workers: a resume conformance test |
@@ -57,8 +58,9 @@ each one with evidence from the sources shown below.
 | `review` | assess a provided subject against criteria | a read-only agent Worker (runtime probe + read-only sandbox) |
 
 Profiles express each node as capabilities, not Worker kinds. A research node
-requires `deep-research` or `web-search` together with `reason`. An agent review
-node requires `review` and `local-data`. Only agent Workers prove `local-data`,
+requires `deep-research` or `web-search` together with `reason`; research's second review needs
+`reason` and prefers `web-search` ([research's second review](#researchs-second-review)). An agent
+review node requires `review` and `local-data`. Only agent Workers prove `local-data`,
 `develop`, `validate`, and `review`. The Claude Code rows are on in the default composition,
 with no Worker until the operator names a repository
 ([agent Workers](../operations/runbooks.md#agent-workers)).
@@ -134,7 +136,7 @@ flowchart TD
   D -->|no| R
   E -->|no| R
   F -->|no| R
-  G --> H["order: over its reserve last while another has headroom, lowest tier, budget.preferQuota, quotaPreference, quota headroom, least load, priority list, id"]
+  G --> H["order: over its reserve last while another has headroom, proves what the work prefers, lowest tier, budget.preferQuota, quotaPreference, quota headroom, least load, priority list, id"]
   H --> I[first candidate: tier and route decisions, counted pending on it until started]
   R --> J[none admitted: an admission decision and AdmissionFailure with every rejection]
 ```
@@ -298,15 +300,18 @@ The order, each key compared only when every key before it is equal:
    admitted Worker while another admitted Worker's account is free (every window known with
    headroom). So it gets no new step, writing or not, while one has headroom. When none has, this
    key ties, and it ranks by its readings like any other.
-2. **Tier**, lowest admissible first.
-3. **Quota class**, `budget.preferQuota`, then `quotaPreference`.
-4. **Known** before configured-available (`unknown: available`) before unknown or stale: an
+2. **What the work prefers** (`work-requirement@1.3` `prefers`), only when it names any: a Worker
+   that proves every capability it prefers (for this work, as a scoped offer reads) first. It never
+   refuses ([research's second review](#researchs-second-review)).
+3. **Tier**, lowest admissible first.
+4. **Quota class**, `budget.preferQuota`, then `quotaPreference`.
+5. **Known** before configured-available (`unknown: available`) before unknown or stale: an
    unknown reading is never preferred to a known one.
-5. **Use it or lose it**: a window resetting within `useSoonMinutes` with at least
+6. **Use it or lose it**: a window resetting within `useSoonMinutes` with at least
    `minHeadroomPercent` headroom in the binding window (the one with the least headroom) first, the
    earlier reset first.
-6. **Headroom** in the binding window, most first, in `headroomBucketPercent`-point buckets.
-7. **Load**, then the priority list, then **id**.
+7. **Headroom** in the binding window, most first, in `headroomBucketPercent`-point buckets.
+8. **Load**, then the priority list, then **id**.
 
 - **Recorded.** The route decision (`workers.route.deterministic` version 2; version 3 serves a Worker
   that offers several tiers at one of them, ADR-0073) lists every admitted
@@ -349,6 +354,25 @@ without naming a provider ([INV-11](../architecture/invariants.md#inv-11-no-tool
   ([workflow engine](workflow-engine.md#different-provider-families)). Routing itself never
   lifts it; an operator opt-in lets the engine route again without it, recorded
   ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)).
+
+### Research's second review
+
+`research`'s `literature:2` needs `reason`, **prefers** `web-search` (`work-requirement@1.3`
+`prefers`, [ADR-0074](../decisions/adr/0074-a-research-roles-web-calls-run-under-a-bounded-egress-checked-grant.md),
+D91), and differs in family from `literature:1`:
+
+- **`prefers` is an order, not a check.** Among the admitted Workers, one that proves every
+  preferred capability ranks before one that does not, after the quota reserve and before the tier;
+  a Worker that does not prove it is never refused for it, so work no Worker can prefer routes as
+  before. The route decision says why in each candidate's reasons (`proves web-search, which the
+  work prefers`; `<worker> proves web-search, which the work prefers, and this one does not`) and
+  names no family. A requirement's `prefers` never repeats a needed capability.
+- **The order of choices.** With `literature:1` on ChatGPT's website Worker (`reason` and
+  `web-search`), `literature:2` takes, among Workers of another family, one that also proves
+  `web-search`: the [research role's](agent-runtimes.md#a-research-role) Claude Worker; failing it,
+  one that only reasons (Gemini's website Worker, which stalled in T229 and T248); and when none of
+  another family is left, T260's single-family fallback, marked single-family, last. Which Worker
+  that is stays configuration and evidence: nothing here names a vendor.
 
 ## Data locality policy
 
@@ -456,7 +480,9 @@ design.
   offer plain `reason`, so `agent-plan` quota is spent only on capabilities only
   they prove, such as `develop`, `review`, and `local-data` (P1), and on the review member steps
   of the agent Workers the operator names review members, which offer `reason` for that work only
-  ([scoped offers](#scoped-offers)); the quota order still puts a website Worker first there. Tier comes before
+  ([scoped offers](#scoped-offers)); the quota order still puts a website Worker first there. A
+  research role's agent Workers offer `reason` too, and take research work only (their `kinds`), so
+  no ordinary ask reaches them ([research's second review](#researchs-second-review)). Tier comes before
   quota, so a model Worker the operator declares at a lower tier than every website
   Worker serves the `economy` work (P4).
 - The `api-first` preset ([ADR-0025](../decisions/adr/0025-api-first-composition.md)) orders

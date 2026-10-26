@@ -1366,7 +1366,7 @@ export const APP_JS = `'use strict'
     'workflow.node.started': 'a step started', 'workflow.node.completed': 'a step finished', 'workflow.node.retry': 'a step is tried again', 'workflow.node.waiting': 'a step waits',
     'workflow.node.resent': 'a step is sent again in a new conversation',
     'workflow.node.blocked': 'a step waits for you', 'agent-workers.tool.notified': 'a tool call ran', 'agent-workers.tool.checks-pending': 'a tool call ran, its checks pending',
-    'agent-workers.tool.denied': 'a tool call was denied', 'agent-workers.tool.deferred': 'a tool call waits for your verdict', 'agent-workers.run.stalled': 'its agent stalled',
+    'agent-workers.tool.denied': 'a tool call was denied', 'agent-workers.tool.deferred': 'a tool call waits for your verdict', 'agent-workers.tool.web': 'a web call was judged', 'agent-workers.run.stalled': 'its agent stalled',
   }
   // The running runs as they move, by id, or why they are unknown: a failed read is said, never shown as nothing running (T127).
   const liveOf = async () => {
@@ -1923,7 +1923,17 @@ export const APP_JS = `'use strict'
       explain && explain.stalledChecks && explain.stalledChecks.length ? el('section', { class: 'panel', 'aria-label': 'Checks' }, el('h3', {}, 'Checks'),
         explain.stalledChecks.map((c) => el('div', {}, chip('Check stalled', 'warn'), ' ' + c.check + ': no output since ', ago(c.quietSince),
           el('span', { class: 'muted' }, ' · it goes on until its deadline'),
-          fold('Details', el('div', {}, 'command ', el('code', {}, c.command)), el('div', {}, 'stalled at ' + absolute(c.since) + ', after ' + c.stallSeconds + ' s with no output'))))) : null)),
+          fold('Details', el('div', {}, 'command ', el('code', {}, c.command)), el('div', {}, 'stalled at ' + absolute(c.since) + ', after ' + c.stallSeconds + ' s with no output'))))) : null,
+      // A research Worker's web calls (T262): how many, unasked, asked, or denied, and each query or URL with its egress verdict.
+      explain && explain.webCalls && explain.webCalls.count ? el('section', { class: 'panel', 'aria-label': 'Web calls' },
+        el('h3', {}, 'Web calls (' + explain.webCalls.count + ')'),
+        el('p', { class: 'muted' }, explain.webCalls.auto + ' ran unasked under the web access grant, ' + explain.webCalls.asked + ' asked you' + (explain.webCalls.denied ? ', ' + explain.webCalls.denied + ' denied in their session' : '')),
+        fold('Queries and URLs', el('table', { class: 'web-calls' },
+          el('thead', {}, el('tr', {}, el('th', {}, 'When'), el('th', {}, 'Tool'), el('th', {}, 'Query or URL'), el('th', {}, 'Verdict'), el('th', {}, 'Egress'))),
+          el('tbody', {}, explain.webCalls.calls.map((c) => el('tr', {},
+            el('td', {}, ago(c.at)), el('td', {}, c.tool), el('td', {}, el('code', {}, c.target)),
+            el('td', {}, c.verdict === 'auto' ? chip('Unasked', 'ok') : c.verdict === 'deny' ? chip('Denied in its session', 'bad') : chip('Asked' + (c.reason ? ' (' + c.reason + ')' : ''), 'warn')),
+            el('td', {}, c.egress === 'allow' ? 'passed' : c.egress === 'deny' ? 'refused' : 'not checked'))))))) : null)),
     )
   }
 

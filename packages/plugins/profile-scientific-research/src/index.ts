@@ -104,14 +104,17 @@ export const RESEARCH: NodeTemplate[] = [
     // Review B and the critique prefer another family (`diversity: preferred`, D89): when none can
     // take them, each runs once on the first family's provider in a fresh conversation, marked
     // single-family, and every later step and the answer say so; the run never fails or waits for it.
+    // Both reviews are research work (`kind`), the only work a research role's agent Workers take
+    // (ADR-0057, ADR-0074). Review B prefers a Worker that proves web search too (T262), of the other
+    // family, before one that only cites; the single-family fallback above stays last.
     {
       nodeId: 'literature:1', objective: 'Review the published evidence, with citations (review A)', dependsOn: ['frame:1'], prompt: LITERATURE,
-      capabilities: ['reason', 'web-search'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.cited',
+      capabilities: ['reason', 'web-search'], tier: 'standard', kind: 'research', conversation: 'temporary', acceptance: 'acceptance.cited',
       variants: { deep: { capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'own' } },
     },
     {
       nodeId: 'literature:2', objective: 'Review the published evidence, with citations (review B)', dependsOn: ['frame:1'], prompt: LITERATURE,
-      capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.cited', differentFrom: ['literature:1'], diversity: 'preferred',
+      capabilities: ['reason'], prefers: ['web-search'], tier: 'standard', kind: 'research', conversation: 'temporary', acceptance: 'acceptance.cited', differentFrom: ['literature:1'], diversity: 'preferred',
       variants: { deep: { capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'own' } },
     },
     {

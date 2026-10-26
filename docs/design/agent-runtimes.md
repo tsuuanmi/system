@@ -920,8 +920,8 @@ the trusted envelope of account choice
 ```
 
 - **A role** holds what the work needs (workspace, sandbox, tier, quota class, `worktreePerRun`,
-  `reviewMember`, and the `kinds` of work its Workers take,
-  [work kinds](routing.md#work-kinds)) and, under `runtimes.<runtime>`, what differs per runtime
+  `reviewMember`, `research` ([a research role](#a-research-role)), and the `kinds` of work its
+  Workers take, [work kinds](routing.md#work-kinds)) and, under `runtimes.<runtime>`, what differs per runtime
   (`tools`, `model`, `maxTurns`, `family`, `tiers`), never a routing input. So which runtime takes a kind
   of work is the assignments': a role `code` given `kinds: [code]` and assigned to one runtime's
   accounts keeps source-code steps on them (ADR-0057). Capability is the role's (its sandbox, kinds,
@@ -1662,6 +1662,8 @@ source never waits for a re-probe in a describe:
 | `persistent-conversation` | the probe reports `resume`. Target: a resume conformance test passes. This is what qualifies a runtime as a long-lived [team member](teams.md#membership-model-a) |
 | `reason`, for a review member's steps only | the Worker is under the [review-member profile](#review-members) (`reviewMember`, read-only), granted by the profile while it is enforced: the Worker is ready, so its runtime enforces the read-only sandbox, `readsConfined`, and `gatesToolCalls` |
 | `persistent-conversation`, for a review member's steps only | the Worker is under the profile and the probe does not report `resume`: the source keeps the member's conversation by an exact, recorded replay (evidence `conformance`) |
+| `reason`, for research work only | the Worker is a [research role's](#a-research-role) (`research`, read-only): ready, and its runtime's probe reports `webTools`; taken by work whose kind is `research` only |
+| `web-search`, for a research role | the role's [web probe](#a-research-role) made one real search the gate let run, within 24 h; evidence the probe's recorded decision (`agent-workers.web-probe`) |
 
 An agent Worker never offers plain `reason`, so ordinary asks never spend agent-plan quota
 ([P1](../requirements/purpose.md)). The offers a review member adds are scoped to a review member's
@@ -1718,6 +1720,39 @@ is off.
     (INV-12).
 - **Outside a member's steps**, a session that a runtime without `resume` is asked to continue is
   refused (`config_error`, unsent).
+
+### A research role
+
+A role (or a worker) with `research: true` is a **research role**
+([ADR-0074](../decisions/adr/0074-a-research-roles-web-calls-run-under-a-bounded-egress-checked-grant.md),
+T262): it reads the workspace and searches the web, and nothing else. It lets research's second
+literature review run on a Claude Worker, a different family from the first review's.
+
+- **Read-only, no shell.** The configuration is refused unless the sandbox is `read-only`; it is
+  no review member; its tools (the role's, and each tier's, [tiers](#tiers-per-role)) are `Read`,
+  `Grep`, `Glob`, `WebSearch`, `WebFetch` only, all five by default. Its run asks the runtime for
+  web tools (`RunSpec.web`), which a runtime that reports `webTools` alone takes (Claude Code;
+  Codex, the Antigravity CLI and ACP refuse it) and which lists no writing tool or shell and is
+  read-only, or the run is refused before it starts. The gate denies a write or a command call of
+  such a run (`research-role`), and its Tools section of the brief says so.
+- **Standard tier by default**: a research role that gives no `tier` and no
+  `runtimes.<runtime>.tiers` is on the standard tier there; with [tiers](#tiers-per-role), it offers
+  the tiers it declares, usually `standard` alone, its model named in the live profile only. Its
+  Worker takes research work only (`kinds: ['research']`): an ordinary ask never reaches it
+  ([P1](../requirements/purpose.md)).
+- **Proves `reason` and `web-search` by a probe.** The Worker's first offer is made when a probe run
+  (read-only, `WebSearch` its one tool) made one real search of the fixed query `Wikipedia main
+  page` that the gate let run and answered with a URL; the probe is recorded as the decision
+  `agent-workers.web-probe` (the query, the worker, `searched`), valid 24 h, retried after 1 h. Until
+  then, and whenever the probe cannot search (the autonomy policy's [web access
+  grant](approvals.md#a-research-roles-web-calls) is not in force, so the search would ask), it
+  offers no `web-search`. A runtime that reports no `webTools` admits no research Worker.
+- **Its web calls** are judged by the gate's web access rule: unasked within the grant's bound and
+  egress check, asked otherwise, each recorded; `system explain` and `/ui` list them.
+- **Routing.** A research step that needs `reason` and prefers `web-search` goes to a Worker that
+  proves both before one that only reasons ([routing](routing.md#researchs-second-review)).
+- **Turning it on** is configuration plus an operator's approval of the grant: the runbook's
+  [turn on the research Worker](../operations/runbooks.md#turn-on-the-research-worker).
 
 ## Turn semantics
 

@@ -423,6 +423,23 @@ describe('system usage and explain output', () => {
     ])
   })
 
+  it('prints a run\'s web calls last: the counts, then each call\'s query or URL with its verdict and egress outcome (T262)', () => {
+    const web = {
+      count: 3, auto: 1, asked: 1, denied: 1,
+      calls: [
+        { at: '2026-10-26T01:00:00.000Z', nodeId: 'lit:2', tool: 'WebSearch', target: 'X lowers Y', verdict: 'auto' as const, egress: 'allow', decision: 'sha256:01' },
+        { at: '2026-10-26T01:00:01.000Z', nodeId: 'lit:2', tool: 'WebFetch', target: 'https://example.org/', verdict: 'ask' as const, egress: 'not-checked', reason: 'bound', decision: 'sha256:02' },
+      ],
+    }
+    expect(formatExplanation({ runId: 'run_1', template: 'research', status: 'completed', specHash: 'sha256:ab', nodes: [], webCalls: web })).toEqual([
+      'run_1  research  completed  spec sha256:ab',
+      'web calls  3: 1 unasked, 1 asked, 1 denied in their session',
+      '  2026-10-26T01:00:00.000Z  lit:2  WebSearch  auto  egress allow  "X lowers Y"  (sha256:01)',
+      '  2026-10-26T01:00:01.000Z  lit:2  WebFetch  ask  egress not-checked  (bound)  "https://example.org/"  (sha256:02)',
+      '  and 1 more',
+    ])
+  })
+
   it('asks to free a run only on the operator\'s word that its agent is gone, and prints what was freed and each worktree (PROP-0013)', () => {
     expect(() => parseFree(['arun_00000000000000aa'])).toThrow(/your word that its agent is gone.*add --agent-gone/)
     expect(() => parseFree(['--agent-gone'])).toThrow(/name the agent run/)

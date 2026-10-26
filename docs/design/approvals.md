@@ -275,7 +275,7 @@ another type, is denied, its reason naming the field.
 | `write_file`, `edit_file` | `workspace-write`, for the file `Path` names inside the workspace; `write_file`'s other fields are `Content` (text), `Append`, and `Overwrite` (booleans), `edit_file`'s `Target` and `Replacement` (text); `ArtifactMetadata`, which writes one of agy's own artifacts, is denied |
 | `apply_patch` | `workspace-write`, when its patch (`command`) reads strictly in the patch grammar (`*** Begin Patch`; `Add File` with `+` lines, `Delete File`, `Update File` with an optional `Move to`, `@@`, ` `, `+`, `-`, and empty lines, and `*** End of File`; `*** End Patch`) and every file a header names (added, deleted, updated, or moved to) is inside the workspace; a `***` line the grammar does not allow where it stands, a carriage return, or a name with surrounding spaces denies the whole patch |
 | `Bash` | Only where the run's runtime itself starts every call's shell non-login and non-interactive, with no startup file or startup variable, in a shell the agent cannot choose (`cleanShells`, [agent runtimes](agent-runtimes.md#an-agents-shells-read-no-startup-code), T198), can a `Bash` call be a `read`: elsewhere a function or an alias a startup file defined, or a shell the call picked, could run in place of the program a word names, so each of the forms below is the `command` it is. Neither Codex (each call picks its shell and login mode) nor Claude Code (each command sources its shell snapshot) enforces it, so under both every `Bash` call is a `command`. Under a runtime that does: `read`, for a probe that can do nothing: `echo` with zero or more words (any word, `-e` and `-n` included), `pwd` with no argument, `true`, and `false`, each a shell builtin that reads no file and changes nothing (with no metacharacter it only prints its words, the working directory's name, or nothing), so a Worker's probe never waits on the operator; any argument to `pwd`, `true`, or `false` leaves it `command`. `read` also for a fixed read-only inspection command inside the workspace, each word matched exactly ([Codex's gate](agent-runtimes.md#codexs-gate): `cat`, `head`, `tail`, `wc`, `ls`, `stat`, `file`, `sed -n <range>p`, `rg`, `grep`, and `find` without actions, every path absolute and at least one named, since the gate does not see the directory a command runs in; a relative path, a form with no path, and `git` stay `command`); otherwise `command`, its argv the command split on single spaces, so the [exact-argv rule](#the-autonomy-policy) applies as written: a listed argv is judged as `workspace-write`. But a shell inspection command whose reading tool the run's agent has (T222; [agent runtimes](agent-runtimes.md#reading-tools-and-shell-inspection)) is denied at once, never asked, and opens no request (`use-read-tool`): recognised by its first word whatever its other words (relative paths too), it is `cat`, `head`, `tail`, or `sed -n` (use `Read`, or the workspace reads server's `read_file`), `wc` (the same: `Read` numbers a file's lines, so its last line number is the count), `grep` or `rg` (`Grep`, or `search`), `ls` or `find` (`Glob`, or `list_dir`); the reason the agent is told names the tools it has for it. A `sed` other than `sed -n <a>[,<b>]p <path>…` (an in-place edit, a `-e` or `-f` script, a script that writes a file or runs a command) or a `find` with an action (`-exec`, `-delete`, …) is no inspection and stays a `command`; so does every inspection command under a runtime that gives its agent no reading tool for it. Under a runtime that enforces clean shells, an inspection command the table above takes for a read is still one, run unasked. A word with a shell metacharacter (the policy's own set, `SHELL_METACHARACTER`), or an empty word (a doubled, leading, or trailing space), is denied by the gate before the policy is asked; the policy forbids the former too. Its input fields are `command`, `description`, `timeout`, and `run_in_background`: `dangerouslyDisableSandbox` is denied. Codex reports its `exec_command` as `Bash` with `command` alone |
-| `WebFetch`, `WebSearch` | `external-send`, which always asks |
+| `WebFetch`, `WebSearch` | `external-send`, which always asks; but a [research role's](#a-research-roles-web-calls) call runs unasked under an approved web access grant (T262, ADR-0074) |
 | any other tool (the Antigravity CLI's `run_command` among them: no confinement of its commands is proven), or an input that is not an object | denied by the gate's own rule |
 
 A path is inside the workspace when it is both as written and on disk: its real location, every
@@ -331,6 +331,50 @@ code too. The codes ([events reference](../reference/schemas.md#event)):
 | `no-session`, `run-stopped`, `review-member`, `no-approvals` | an `ask` with no session to resume; a run already stopped at a deferred call; a review member's run; no queue |
 | `unknown-checks`, `unknown-mode`, `gate-error` | a verdict the gate does not know, or a gate that failed |
 | `use-read-tool` | a `Bash` shell inspection command (`cat`, `head`, `tail`, `sed -n`, `wc`, `grep`, `rg`, `ls`, `find`) whose reading tool the run's agent has (T222): denied at once, never asked, no request; the agent is told the tool to use |
+| `research-role` | a write or a command in a [research role's](#a-research-roles-web-calls) run (T262): such a run reads and searches the web only; denied at once, never asked |
+
+### A research role's web calls
+
+A research role ([agent runtimes](agent-runtimes.md#a-research-role), ADR-0074) is read-only and
+searches the web. `WebSearch` and `WebFetch` stay `external-send`, which no rule makes `auto`; the
+studio's autonomy policy (`autonomy-policy@1.3`) may instead carry a **web access grant** that
+lets *this role's* calls run unasked, bounded and checked per call:
+
+```json
+"webAccess": { "version": 1, "rules": [
+  { "profile": "research", "tools": ["WebSearch", "WebFetch"], "maxWebCallsPerRun": 40,
+    "maxClassification": "operator-shared", "note": "literature reviews" } ] }
+```
+
+- **It moves no mode.** `external-send` is `ask` in every rule, and `check` still answers `ask`; the
+  gate's web rule (`agent-workers.web-access`) applies only to a research run's `WebSearch` or
+  `WebFetch` after that answer. Every other role, a research run with no grant, and a tool the grant
+  does not name ask as before.
+- **A call is `auto` only when** the grant names the tool; its query or URL names no local path; the
+  egress check (`egress.classification-and-secrets`, class `agent`) allows it at a classification
+  within `maxClassification` (never `local-private`: a query with a credential pattern or local
+  content is refused); and the run has made fewer than `maxWebCallsPerRun` (1 to 200, default 40)
+  unasked calls. Otherwise it asks, as any `external-send`, with the reason recorded (`bound`,
+  `local-path`, `egress`, `tool-not-granted`, `no-grant`).
+- **One at a time.** A run's web calls are judged one after another, so concurrent calls cannot pass
+  the bound together.
+- **A project only narrows it.** The studio's grant is the only one that grants; a project policy's
+  grant can lower the tools, the bound, and the classification, never raise them. The call is judged
+  with the run's project, so a project's `forbid` of `external-send` binds, and the grant is never
+  consulted.
+- **A session's denial stands.** A call the operator rejected in the session is denied again, recorded
+  as `deny` (`session-denied`), not counted as unasked and not against the bound.
+- **Recorded.** Every call judged is a `gate` decision of rule `agent-workers.web-access`: the tool,
+  the query or URL, the call's number and the bound, the egress outcome (its decision among the
+  inputs), and why it asked. The event `agent-workers.tool.web` carries the counts and the verdict,
+  never the query. `system explain` and the run's page on `/ui` list them.
+- **Taking effect.** The grant is part of the policy set: it is in force only after the operator
+  approves a [policy change](#a-policy-change) carrying it, whose request says, apart from the modes
+  (none moves), which web calls would run unasked. `policies/system.json` ships it for the system
+  project, and the runbook's [turn on the research Worker](../operations/runbooks.md#turn-on-the-research-worker)
+  proposes it.
+- **The probe** of the research Worker's `web-search` is one real search the same rule judges; it
+  proves nothing while the grant is not in force.
 
 A code is never renamed or reused; a new cause gets a new code. Health's `tool-denials` check
 counts the denials of its window (`driftWindowHours`, default 24) by reason code per Worker kind

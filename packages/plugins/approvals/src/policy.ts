@@ -4,7 +4,7 @@
  * policy set gives an action. Pure: no store, no clock. Code decides, never a model.
  */
 import type { Action, ActionClass, AutonomyPolicy, Check, ContentHash, Mode, ModeChange } from '@tsuuanmi/system-approvals-core'
-import { ALWAYS_ASK, applyingPolicies as applying, MODES, riskMapProblems, SHELL_METACHARACTER, tierByRiskProblems, waitSeconds as expiryOf } from '@tsuuanmi/system-approvals-core'
+import { ALWAYS_ASK, applyingPolicies as applying, MODES, riskMapProblems, SHELL_METACHARACTER, tierByRiskProblems, waitSeconds as expiryOf, webAccessLines, webAccessProblems } from '@tsuuanmi/system-approvals-core'
 import { contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
 
 /** Every action class (`common@1`'s `actionClass`), in the order `policy()` reports them. */
@@ -124,6 +124,8 @@ export function policyProblems(policies: unknown, schemas: SchemaRegistry = new 
     if (policy.riskTiers !== undefined) for (const problem of riskMapProblems(policy.riskTiers)) problems.push(`${name}: ${problem}`)
     // The tier-by-risk map's keys and tiers, read by code as the schema states them (ADR-0073).
     if (policy.tierByRisk !== undefined) for (const problem of tierByRiskProblems(policy.tierByRisk)) problems.push(`${name}: ${problem}`)
+    // A web access grant names each role profile once (ADR-0074); the schema cannot say so.
+    if (policy.webAccess !== undefined) for (const problem of webAccessProblems(policy.webAccess)) problems.push(`${name}: ${problem}`)
     if (policy.scope === 'project') {
       if (projects.has(policy.projectId!)) problems.push(`${name}: project ${policy.projectId} already has a policy`)
       projects.add(policy.projectId!)
@@ -277,6 +279,25 @@ export function proposedSet(base: PolicySet, policy: AutonomyPolicy): { policies
   }
   if (policy.scope !== 'project') return { problems: [`policy ${policy.id}: a new policy is a project's; the set has one studio policy (${base.studio.id})`] }
   return { policies: [...base.all(), policy] }
+}
+
+/**
+ * The web access grants a change moves (ADR-0074), for the studio and each project either set has a
+ * policy for, as one line each of what is in force after it ("studio research: …"); undefined when
+ * none moves. A grant moves no effective mode (`external-send` still asks), so a policy change's
+ * consequences name it apart, and the operator approves exactly what comes into force.
+ */
+export function webAccessEffect(before: PolicySet, after: PolicySet): string | undefined {
+  const projects = [...new Set([...before.projectIds(), ...after.projectIds()])].sort()
+  const moved: string[] = []
+  for (const projectId of [undefined, ...projects]) {
+    const was = webAccessLines(before.of(projectId))
+    const now = webAccessLines(after.of(projectId))
+    now.forEach((line, i) => {
+      if (line !== was[i]) moved.push(`${projectId ?? 'studio'} ${line}`)
+    })
+  }
+  return moved.length ? moved.join('; ') : undefined
 }
 
 /** Every effective mode that differs between two sets, for the studio and for each project either set has a policy for. */

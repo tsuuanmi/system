@@ -18,6 +18,12 @@ export interface NodeTemplate {
   prompt: string
   /** Capabilities the node needs (docs/design/routing.md#capability-vocabulary); routing admits Workers by them. */
   capabilities: string[]
+  /**
+   * Capabilities the node prefers but does not need (T262, `work-requirement@1.3` `prefers`): an
+   * admitted Worker that proves them ranks before one that does not, never a refusal. `research`'s
+   * second review prefers `web-search`, so a Worker that searches takes it before one that only cites.
+   */
+  prefers?: string[]
   /** Minimum tier (REQ-WRK-9). */
   tier: Tier
   /**
@@ -377,6 +383,13 @@ export function preflight(nodes: readonly NodeTemplate[]): string[] {
     if (node.kind !== undefined) {
       if (typeof node.kind !== 'string' || !WORK_KIND.test(node.kind)) throw new TypeError(`node ${node.nodeId}: kind ${JSON.stringify(node.kind)} is not a kind of work (${WORK_KIND})`)
       if (node.team || node.snapshot) throw new TypeError(`node ${node.nodeId}: a ${node.team ? 'team' : 'source step'} has no kind`)
+    }
+    // What a step prefers is capabilities it does not need (T262): 1 to 8 distinct names, none it needs already.
+    if (node.prefers !== undefined) {
+      const prefers: unknown = node.prefers
+      if (!Array.isArray(prefers) || !prefers.length || prefers.length > 8 || !prefers.every(TEXT) || new Set(prefers).size !== prefers.length) throw new TypeError(`node ${node.nodeId}: prefers is a list of 1 to 8 distinct capabilities`)
+      if (prefers.some((c) => node.capabilities.includes(c as string))) throw new TypeError(`node ${node.nodeId}: prefers names a capability it needs already (capabilities)`)
+      if (node.team || node.snapshot) throw new TypeError(`node ${node.nodeId}: a ${node.team ? 'team' : 'source step'} prefers nothing`)
     }
     if (node.resultSchema !== undefined && !(typeof node.resultSchema === 'string' && /^[a-z][a-z0-9-]*@\d+\.\d+$/.test(node.resultSchema))) {
       throw new TypeError(`node ${node.nodeId}: resultSchema must be a schema tag such as plan@1.0`)

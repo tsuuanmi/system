@@ -19,10 +19,20 @@ may use.
 |---|---|---|---|
 | `frame:1` | `reason`, standard, the run's conversation | `resultSchema: hypothesis-set@1.0` | 2 to 4 testable hypotheses, as a `criteria` artifact (`hypothesis-set@1.0`) |
 | `literature:1` | `reason` + `web-search`, standard, temporary; variant `deep`: `reason` + `deep-research`, frontier, its own conversation | `acceptance.cited` | review A: a cited review of the published evidence |
-| `literature:2` | `reason`, standard, temporary, on another provider family than `literature:1` (preferred: else once on its family, marked single-family); variant `deep`: as `literature:1` | `acceptance.cited` | review B, in parallel with review A; its citations gate it, since its provider need not prove a search |
+| `literature:2` | `reason`, preferring `web-search`, standard, temporary, on another provider family than `literature:1` (preferred: else once on its family, marked single-family); variant `deep`: as `literature:1` | `acceptance.cited` | review B, in parallel with review A; it goes to a Worker of another family that proves a search (a read-only Claude research Worker), then to one that only reasons, whose citations gate it |
 | `evidence:1` | `reason`, economy, the run's conversation | `resultSchema: evidence-table@1.1` | claims from both reviews with source URLs, which review states each (`reviews`), and their bearing on each hypothesis, as an `evidence` artifact (`evidence-table@1.1`) |
 | `critique:1` | `reason`, standard, temporary, on another provider family than `evidence:1` (preferred, as `literature:2`) | `acceptance.answer` | an independent critique that sees only the hypotheses and the evidence, never the reviews |
 | `conclusion:1` | `reason`, standard, the run's conversation | `acceptance.cited-conclusions` | a conclusion per hypothesis, citing evidence as `[E1]`, saying where the reviews agree and differ |
+
+Both reviews are of kind `research`, and `literature:2` *prefers* `web-search` (`prefers`,
+`work-requirement@1.3`, ADR-0074, operator decision D91: Gemini's website Worker kept stalling,
+T229 and T248). That is an order, never a refusal: a read-only
+[research role](../../../docs/design/agent-runtimes.md#a-research-role) on Claude Code, whose
+Worker proves `web-search` by a real probe search and whose web calls run unasked only under the
+studio policy's approved, egress-checked, bounded
+[web access grant](../../../docs/design/approvals.md#a-research-roles-web-calls), takes the second
+review first; the Worker that only reasons is next, and the single-family fallback last. Turn it on:
+[runbook](../../../docs/operations/runbooks.md#turn-on-the-research-worker).
 
 The synthesis steps share the run's one conversation, in order. The reviews and
 the critique each have their own, so they stay independent of the thread they

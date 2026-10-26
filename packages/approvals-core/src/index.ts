@@ -9,9 +9,11 @@
 import { type Context, Service } from '@deepseek-ai/cordis'
 import type { MapOf, RiskTierMap } from './risk-tiers.ts'
 import type { TierByRisk, TierByRiskOf } from './tier-by-risk.ts'
+import type { WebAccessGrants } from './web-access.ts'
 
 export * from './risk-tiers.ts'
 export * from './tier-by-risk.ts'
+export * from './web-access.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -90,9 +92,9 @@ export function waitSeconds(policies: readonly AutonomyPolicy[], actionClass: Ac
   return Math.min(seconds, ...policies.map((p) => p.expiry.maxSeconds))
 }
 
-/** `autonomy-policy@1.x`: `@1.1` adds the optional path map `riskTiers` (ADR-0071); `@1.2` the tier a step takes at its task's risk tier, `tierByRisk` (ADR-0073). */
+/** `autonomy-policy@1.x`: `@1.1` adds the optional path map `riskTiers` (ADR-0071); `@1.2` the tier a step takes at its task's risk tier, `tierByRisk` (ADR-0073); `@1.3` the optional `webAccess` grants (ADR-0074). */
 export interface AutonomyPolicy {
-  schema: 'autonomy-policy@1.0' | 'autonomy-policy@1.1' | 'autonomy-policy@1.2'
+  schema: 'autonomy-policy@1.0' | 'autonomy-policy@1.1' | 'autonomy-policy@1.2' | 'autonomy-policy@1.3'
   id: string
   version: number
   scope: 'studio' | 'project'
@@ -113,6 +115,12 @@ export interface AutonomyPolicy {
    * (./tier-by-risk.ts, ADR-0073). With no applying policy carrying one, steps keep their templates' tiers.
    */
   tierByRisk?: TierByRisk
+  /**
+   * `@1.3`, optional: web calls a research role's Workers make unasked when the egress check passes,
+   * bounded per run (./web-access.ts, ADR-0074). `external-send` still always asks; the agent gate
+   * applies a grant only to a call the policy said `ask` for. With none, every web call asks.
+   */
+  webAccess?: WebAccessGrants
 }
 
 /** The path maps of a policy set (the studio's, then the project's), each with the policy that carries it. */

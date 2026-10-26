@@ -235,6 +235,8 @@ export class CodexRuntime implements AgentRuntimeProvider {
     // One account's own home (ADR-0051): an owner-only directory that exists, or nothing runs.
     const named = spec.home !== undefined ? homeProblem(spec.home) : undefined
     if (named) throw new ProviderError('config_error', `codex-sdk: ${named}; nothing was run`)
+    // It reports no web tools (RuntimeEvidence.webTools, T262): a research run is refused, never run without them.
+    if (spec.web) throw new ProviderError('config_error', 'codex-sdk: it offers no web tools to a research run (RunSpec.web); nothing was run')
     const home = spec.home ?? this.home
     if (signal.aborted) throw new ProviderError('aborted', 'codex-sdk: the run was stopped before it started')
     if (spec.sandbox !== 'read-only' && spec.sandbox !== 'workspace-write') throw new ProviderError('config_error', `codex-sdk: unknown sandbox ${String(spec.sandbox)}`)

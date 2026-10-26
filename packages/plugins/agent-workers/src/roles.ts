@@ -86,6 +86,13 @@ export interface AgentRoleConfig {
   quotaClass?: QuotaClass | undefined
   worktreePerRun?: boolean | undefined
   reviewMember?: boolean | undefined
+  /**
+   * A read-only research role (T262, ADR-0074, ./research.ts): its Workers' tools are reads and the
+   * web tools only, at every tier, never a writing tool or a shell, and they take research work only
+   * (kinds default `[research]`). Each web call passes the gate under the autonomy policy's web access grant.
+   * With no `tier` and no `tiers` on a runtime, it is on the standard tier there.
+   */
+  research?: boolean | undefined
   /** The kinds of work its Workers take (ADR-0057); unset, any work. */
   kinds?: string[] | undefined
   /** What its Workers are for, in the operator's words (`capability-descriptor@1.7`); never a routing input. */
@@ -125,6 +132,7 @@ export interface DerivedWorker {
   quotaClass: QuotaClass
   worktreePerRun: boolean
   reviewMember: boolean
+  research?: boolean
   kinds?: string[]
   tools?: string[]
   model?: string
@@ -344,7 +352,8 @@ export function deriveWorkers(roles: readonly AgentRoleConfig[], assignments: re
       if (role.reviewMember && own.family === undefined) fail(`${at} (${assignment.account}): the role ${name} is a review member's, so it names the family of ${runtime} (roles.${name}.runtimes.${runtime}.family)`)
       // Capability stays the role's; the tiers it offers on this runtime, else its one tier (ADR-0073).
       const tiers = tiersOf(own, provider, assignment.account)
-      const tier = tiers?.[0]?.tier ?? role.tier ?? fail(`${at} (${assignment.account}): the role ${name} gives no tier on ${runtime}: set its tier, or the tiers it offers there (roles.${name}.runtimes.${runtime}.tiers)`)
+      // A research role with neither is on the standard tier (T262, ADR-0074).
+      const tier = tiers?.[0]?.tier ?? role.tier ?? (role.research ? 'standard' : undefined) ?? fail(`${at} (${assignment.account}): the role ${name} gives no tier on ${runtime}: set its tier, or the tiers it offers there (roles.${name}.runtimes.${runtime}.tiers)`)
       // A one-tier role runs as before, unless its provider gives models pools of their own (ADR-0073):
       // then its one tier names the pools its runs draw on (the account's, and its model's when it has
       // one), so its headroom is never read from another model's pool.
@@ -353,6 +362,7 @@ export function deriveWorkers(roles: readonly AgentRoleConfig[], assignments: re
       out.push({
         id: `${assignment.account}/${name}`, runtime, workspace: role.workspace, sandbox: role.sandbox, tier,
         quotaClass: role.quotaClass ?? 'agent-plan', worktreePerRun: role.worktreePerRun === true, reviewMember: role.reviewMember === true,
+        ...(role.research ? { research: true } : {}),
         ...(role.kinds ? { kinds: [...role.kinds] } : {}),
         ...(own.tools?.length ? { tools: [...own.tools] } : {}), ...(own.model ? { model: own.model } : {}), ...(own.maxTurns ? { maxTurns: own.maxTurns } : {}),
         ...(own.family !== undefined ? { family: own.family } : {}), ...(role.description !== undefined ? { description: role.description } : {}),

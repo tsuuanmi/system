@@ -10,15 +10,20 @@
  * @module @tsuuanmi/system-agent-workers/gate
  */
 import { lstatSync, realpathSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { COMMIT_ID, HOST_TOOLS_SERVER, type ToolCall, type ToolGate, type ToolVerdict, WORKSPACE_GIT_TOOLS, WORKSPACE_READS_SERVER, WORKSPACE_READ_TOOLS } from '@tsuuanmi/system-agent-runtime-core'
-import { type ActionClass, type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, type Check, SHELL_METACHARACTER } from '@tsuuanmi/system-approvals-core'
+import {
+  type ActionClass, type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, type Check, SHELL_METACHARACTER, webAccessOf, type WebTool, withinClassification,
+} from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
 import { contentId } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
+import { namesLocalPath, WEB_PROBE_QUERY, webTarget } from './research.ts'
 
 /**
  * Why the gate denied a call (T207): a stable code, and the plain explanation of it each
@@ -52,6 +57,7 @@ export const DENIAL_REASONS = {
   'unknown-mode': 'The autonomy policy gave a mode the gate does not know.',
   'gate-error': 'The gate failed while it judged the call, so the call is denied.',
   'use-read-tool': 'A Bash inspection command is denied at once, never asked, where the run\'s agent has a reading tool for it: Read or read_file for cat, head, tail, sed -n, and wc (its numbered lines count them); Grep or search for grep and rg; Glob or list_dir for ls and find.',
+  'research-role': 'A research role\'s run reads its workspace and searches and fetches the web, and nothing else (ADR-0074): a call that writes a file or runs a command is denied, and so is, in its web probe, any call but the probe\'s own search.',
 } as const satisfies Record<string, string>
 /** A stable code of why the gate denied a call. */
 export type DenialReason = keyof typeof DENIAL_REASONS
@@ -553,6 +559,11 @@ export interface ToolsNoteOptions {
   readTools?: readonly string[] | undefined
   /** The run holds its board task's dossier tools (ADR-0070): the section says what to write with them. Absent: it does not. */
   dossier?: boolean | undefined
+  /**
+   * A research role's run (T262, ADR-0074): the web tools it has, and the web access grant in force
+   * for it (`null`: none, so every web call asks the operator). Absent: it is no research run.
+   */
+  research?: { tools: readonly string[]; grant: { tools: readonly string[]; maxWebCallsPerRun: number; maxClassification: string } | null } | undefined
 }
 
 /**
@@ -588,6 +599,12 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
     }
   }
   if (unasked('workspace-write') && !readOnly) lines.push(`- Writing tools (Write, Edit) on files inside ${ws}, outside its .git.`)
+  // A research run's web calls under the web access grant (T262): never a call the policy forbids.
+  const research = options.research
+  const webTools = research ? research.tools.filter((t) => research.grant?.tools.includes(t)) : []
+  if (research?.grant && webTools.length && mode('external-send') !== 'forbid') {
+    lines.push(`- Web calls (${webTools.join(', ')}), at most ${research.grant.maxWebCallsPerRun} in this run, each whose query or URL passes the egress check: it names no path of this machine and no credential, and your work is classified at most ${research.grant.maxClassification}. Past the bound, or refused by the egress check, a web call waits for the operator. Put nothing from your workspace or brief in a query or URL but the words you search for.`)
+  }
   // The policy's rule (approvals policy.ts `judge`, T209): a command on the commands list is judged
   // as a workspace write, not as a command, unless the command class is forbidden. So a listed
   // command follows the workspace-write mode, any other command the command mode. The gate runs a
@@ -631,6 +648,7 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
       ? ['- Read your workspace with the workspace server\'s tools, never with a shell: read_file (path; startLine and endLine for a range), its lines numbered; list_dir (path; default the workspace); search, the lines that hold a fixed string (pattern) or match a regular expression (regex: true), under a path (default the workspace). Read its git history the same way, never with git in a shell: git_log (count, skip, commit, paths), git_show (commit; stat, patch), git_diff (the worktree, or cached: the index, against HEAD; or from and to), git_status; a commit is always its hex id (from git_log), never a branch name. Each path is relative to the workspace, or absolute inside it, with no "..".']
       : []),
     ...(readOnly ? ['- Your sandbox is read-only: no tool call writes a file (Write, Edit, and any command that changes one fail), so read, and answer with what you found.'] : []),
+    ...(research ? [`- You are a research role: you read your workspace and search and fetch the web (${research.tools.length ? research.tools.join(', ') : 'no web tool'}), and nothing else; a call that writes a file or runs a command is denied.${research.grant ? '' : ' No web access is granted now, so each web call waits for the operator.'}`] : []),
     ...(options.dossier === true
       ? ['- Your board task\'s dossier, through which its Workers work (none reads your conversation): dossier_read pages through it; dossier_append adds your entry as this step\'s Worker: a plan at the start, progress after each step (what you did, its commits, what remains, small decisions and why), a response per review finding (fixed in which commit, or not and why); a reviewer, its review.']
       : []),
@@ -908,8 +926,24 @@ export interface GateRun {
   /**
    * The run's step is a review team member's, under the review-member profile (ADR-0049): its
    * material is its prompt alone, so the gate denies every tool call, each a recorded decision.
+   * `research` (T262, ADR-0074): the run is a research role's, which reads and searches the web only:
+   * a call that writes or runs a command is denied (`research-role`), and a web call is judged under
+   * the autonomy policy's web access grant ({@link runGate}).
    */
-  profile?: 'review-member' | undefined
+  profile?: 'review-member' | 'research' | undefined
+  /**
+   * The board task's project the run serves (its brief's, from the engine's own record): a research
+   * run's calls are judged under that project's policy as well as the studio's, so a project's
+   * prohibition binds and its grant narrows the studio's.
+   */
+  projectId?: string | undefined
+  /** The workflow step (node id) the run serves, from the engine's own start: its web calls' decisions name it. */
+  nodeId?: string | undefined
+  /**
+   * The research role's web probe (./web-probe.ts): the only call that runs is `WebSearch` with exactly
+   * {@link WEB_PROBE_QUERY}; every other is denied (`research-role`). Only with profile `research`.
+   */
+  webProbe?: boolean | undefined
   /**
    * The run's runtime enforces that its shells read no startup code (`RuntimeEvidence.cleanShells`,
    * T198): only then does the gate take a `Bash` probe or inspection command for a read ({@link classify}).
@@ -1007,6 +1041,15 @@ function mismatch(request: ApprovalRequest, call: { ref: string; version: string
 }
 
 const RULE = { type: 'rule', id: 'agent-workers.tool-gate', version: '1' } as const
+/** The web access rule's decider (T262, ADR-0074): every web call of a research run it judges is one of its decisions. */
+export const WEB_RULE = { type: 'rule', id: 'agent-workers.web-access', version: '1' } as const
+
+/** Whether a `WebSearch` input is exactly the web probe's own search: its fixed query and no other field. */
+function isProbeSearch(input: unknown): boolean {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return false
+  const keys = Object.keys(input)
+  return keys.length === 1 && keys[0] === 'query' && (input as { query?: unknown }).query === WEB_PROBE_QUERY
+}
 /** The checks a policy rule can require (`autonomy-policy@1.0`): the only ones a verdict may leave pending. */
 export const CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review']
 
@@ -1023,7 +1066,7 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
   /** The action classes this run already showed pending checks for: one event per class and run. */
   const pendingShown = new Set<ActionClass>()
 
-  const event = (kind: 'notified' | 'checks-pending' | 'denied' | 'deferred', call: ToolCall, decision: ArtifactRef | undefined, data: Record<string, unknown> = {}): void => {
+  const event = (kind: 'notified' | 'checks-pending' | 'denied' | 'deferred' | 'web', call: ToolCall, decision: ArtifactRef | undefined, data: Record<string, unknown> = {}): void => {
     try {
       ctx.get('eventLog')?.append({
         type: `agent-workers.tool.${kind}`, ...(run.workflowRunId ? { runId: run.workflowRunId } : {}), ...(run.sessionId ? { sessionId: run.sessionId } : {}),
@@ -1164,6 +1207,8 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
       action: { class: action.class, summary: action.summary, consequences: action.consequences },
       requester: {
         component: 'worker', runId: run.runId, sessionId: run.sessionId,
+        // Judged again under the project its verdict was (a research run's, T262).
+        ...(researchProject() !== undefined ? { projectId: researchProject()! } : {}),
         ...(call.callId && call.callId.length <= 128 ? { toolUseId: call.callId } : {}),
       },
       verdict, ...(action.command ? { command: action.command } : {}), classification: run.classification,
@@ -1175,14 +1220,118 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
     return defer(call, action, verdict, created.requestId)
   }
 
+  /** The project a research run's calls are judged under (T262), as its task's brief names it; none for any other run, judged under the studio policy as before. */
+  const researchProject = (): string | undefined => (run.profile === 'research' ? run.projectId : undefined)
+
+  /** The web calls this run made unasked under the web access grant (T262): at most its `maxWebCallsPerRun`. */
+  let webCalls = 0
+  /** The web calls of this run the web access rule judged, allowed or asked, in order: what each decision numbers. */
+  let webJudged = 0
+  /**
+   * The web access rule's turns (T262): one call is judged at a time, from its bound check to its
+   * recorded outcome, so concurrent calls never all pass a bound only one of them may take.
+   */
+  let webTurn: Promise<unknown> = Promise.resolve()
+  const serially = <T>(work: () => Promise<T>): Promise<T> => {
+    const next = webTurn.then(work, work)
+    webTurn = next.catch(() => undefined)
+    return next
+  }
+
+  /**
+   * The web access rule (T262, ADR-0074), for a research run's `WebSearch` or `WebFetch` call the
+   * policy said `ask` for: it runs unasked only under the grant in force for the research profile
+   * (the studio's, narrowed by the run's project's), for a tool the grant names, from a run whose
+   * content is classified at most as the grant allows, within the grant's calls per run, with a
+   * query or URL that names no path of this machine and passes the egress check (class `agent`: its
+   * classification permitted, no credential pattern). Every call it judges is a `gate` decision of
+   * rule `agent-workers.web-access` (its query or URL, the call's number, the bound, the egress
+   * decision, and why) and, but for a denial, an `agent-workers.tool.web` event (ids only); a call it
+   * does not let run asks as before (undefined: the caller asks). A call the grant would let run but
+   * that this session was denied stays denied: that is resolved first, recorded as a `deny` of the
+   * rule, and it takes no place in the bound. Run one call at a time ({@link serially}).
+   */
+  const webAccess = async (approvals: Approvals, call: ToolCall, action: ToolAction, verdict: AutonomyVerdict): Promise<ToolVerdict | undefined> => {
+    const target = webTarget(call.tool, call.input) ?? ''
+    const grant = webAccessOf((await approvals.policy(run.projectId)).policies, 'research')
+    let why: { code: string; reason: string } | undefined
+    let egress: { allowed: boolean; decision: ArtifactRef; reason: string } | undefined
+    if (!grant) why = { code: 'no-grant', reason: `the autonomy policy grants the research role no web access${run.projectId ? ` (for project ${run.projectId})` : ''}` }
+    else if (!grant.tools.includes(call.tool as WebTool)) why = { code: 'tool-not-granted', reason: `the web access grant names ${grant.tools.join(', ')}, not ${call.tool}` }
+    else if (!withinClassification(run.classification, grant.maxClassification)) why = { code: 'classification', reason: `the run's content is ${run.classification}, above the grant's ${grant.maxClassification}` }
+    else if (webCalls >= grant.maxWebCallsPerRun) why = { code: 'bound', reason: `the run already made ${webCalls} web calls unasked, the grant's bound (maxWebCallsPerRun ${grant.maxWebCallsPerRun})` }
+    else if (namesLocalPath(target, [resolve(run.workspace), homedir()])) why = { code: 'local-path', reason: `the ${call.tool === 'WebSearch' ? 'query' : 'URL'} names a path of this machine (the workspace or the home directory), which is local-private` }
+    else {
+      const checked = await ctx.egress.check({ payload: target, classification: run.classification, workerClass: 'agent' })
+      egress = { allowed: checked.allowed, decision: checked.decision as ArtifactRef, reason: checked.reason }
+      if (!checked.allowed) why = { code: 'egress', reason: `the egress check refused it: ${checked.reason}` }
+    }
+    const inputs = [verdict.decision, ...(egress ? [egress.decision] : [])]
+    // A call this session was denied stays denied, whatever the grant says (as under auto): resolved
+    // before anything is recorded as unasked, so it neither counts as one nor takes a place in the bound.
+    const prior = why === undefined ? (await priorOf(approvals, call, action, inputs)).verdict : undefined
+    const option: 'auto' | 'ask' | 'deny' = prior ? 'deny' : why === undefined ? 'auto' : 'ask'
+    if (option === 'auto') webCalls += 1
+    webJudged += 1
+    const bound = grant ? `${webCalls} of at most ${grant.maxWebCallsPerRun}` : 'no grant'
+    const denied = prior ? `this exact call was denied in session ${run.sessionId}, so it stays denied whatever the grant says` : ''
+    // Filed under the workflow run, its step named in the detail only: a step's decision chain stays the engine's.
+    const decision = ctx.artifacts.recordDecision({
+      decisionType: 'gate', question: `May ${run.worker}'s ${call.tool} call in run ${run.runId} go out unasked under the web access grant?`,
+      inputs,
+      candidates: [
+        {
+          option: 'auto', selected: option === 'auto',
+          reasons: option === 'auto' ? [`the research role's web access grant (${grant!.from.map((p) => `${p.id} version ${p.version}, webAccess ${p.webAccess}`).join('; ')}) names ${call.tool}`, `web call ${bound} this run`, `egress: ${egress!.reason}`]
+            : [`not auto: ${why?.reason ?? denied}`],
+        },
+        { option: 'ask', selected: option === 'ask', reasons: option === 'ask' ? [why!.reason, 'it asks the operator, as every external-send does'] : [option === 'auto' ? 'not ask: the grant holds and the egress check passed' : `not ask: ${denied}`] },
+        { option: 'deny', selected: option === 'deny', reasons: option === 'deny' ? [denied] : ['not deny: this session denied no such call'] },
+      ],
+      decider: WEB_RULE,
+      outcome: {
+        option,
+        detail: {
+          agentRun: run.runId, worker: run.worker, tool: call.tool, target: clamp(target), call: webJudged, unasked: webCalls, ...(grant ? { max: grant.maxWebCallsPerRun } : {}),
+          egress: egress ? (egress.allowed ? 'allow' : 'deny') : 'not-checked', ...(why ? { reason: why.code } : prior ? { reason: 'session-denied' } : {}), ...(run.nodeId ? { nodeId: run.nodeId } : {}),
+        },
+      },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'agent-workers' }, ...(run.workflowRunId ? { runId: run.workflowRunId } : {}), classification: run.classification })
+    // A denied call's event is the denial's own (`agent-workers.tool.denied`, from priorOf).
+    if (option !== 'deny') {
+      event('web', call, decision.id as ArtifactRef, {
+        actionClass: 'external-send', verdict: option, egress: egress ? (egress.allowed ? 'allow' : 'deny') : 'not-checked', call: webJudged, unasked: webCalls,
+        ...(grant ? { max: grant.maxWebCallsPerRun } : {}), ...(why ? { reason: why.code } : {}), decision: decision.id,
+      })
+    }
+    return prior ?? (option === 'auto' ? { decision: 'allow' } : undefined)
+  }
+
   const judge = async (call: ToolCall): Promise<ToolVerdict> => {
     if (run.profile === 'review-member') return refuse(call, 'a review member answers from the material in its prompt alone: the review-member profile allows no tool call (ADR-0049)', 'review-member')
     if (deferred) return refuse(call, `the run stopped at its ${deferred.tool} call, which waits for approval request ${deferred.requestId}; no further call runs`, 'run-stopped')
     const approvals = ctx.get('approvals')
     if (!approvals) return refuse(call, 'no approval queue (ctx.approvals) is loaded, and no tool call runs without its autonomy decision', 'no-approvals')
+    // The web probe makes one call, its own fixed search, and no other (./research.ts).
+    if (run.profile === 'research' && run.webProbe && !(call.tool === 'WebSearch' && isProbeSearch(call.input))) {
+      return refuse(call, `the web probe makes one call, WebSearch with the query ${JSON.stringify(WEB_PROBE_QUERY)} and nothing else; this ${call.tool.slice(0, 100)} call is not it`, 'research-role')
+    }
     const action = classify(call, run.workspace, { shellReads: run.shellReads === true, workspaceReads: run.workspaceReads === true, readTools: run.readTools, hostTools: run.hostTools })
     if ('refused' in action) return refuse(call, action.refused, action.reason)
-    const verdict = await approvals.check({ class: action.class, ...(action.command ? { command: action.command } : {}) })
+    // A research role reads and searches the web only (ADR-0074): its board task's dossier is System's own record, no file.
+    if (run.profile === 'research' && (action.class === 'workspace-write' || action.class === 'command') && !call.tool.startsWith(HOST_PREFIX)) {
+      return refuse(call, `a research role's run writes no file and runs no command; this ${call.tool.slice(0, 100)} call is ${action.class}`, 'research-role', [], action.class)
+    }
+    // A research run's calls are judged under its task's project's policy too (T262): the policy that
+    // gives the web grant also binds, so a project's forbid holds whatever the grant says.
+    const projectId = researchProject()
+    const verdict = await approvals.check({ class: action.class, ...(action.command ? { command: action.command } : {}), ...(projectId !== undefined ? { projectId } : {}) })
+    // A research run's web call the policy asks about goes out unasked only under the web access grant (T262).
+    if (run.profile === 'research' && action.class === 'external-send' && verdict.mode === 'ask' && Object.hasOwn(SENDS, call.tool)) {
+      const web = await serially(() => webAccess(approvals, call, action, verdict))
+      if (web) return web
+    }
     switch (verdict.mode) {
       case 'forbid':
         return denied(call, action, verdict, forbidden(action, verdict), await forbidReason(approvals, action))

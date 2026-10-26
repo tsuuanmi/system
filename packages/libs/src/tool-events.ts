@@ -8,14 +8,15 @@
 import { SchemaRegistry } from './schemas.ts'
 
 /** The schema tag the tool events' data is validated under. */
-export const AGENT_TOOL_EVENT_SCHEMA = 'agent-tool-event@1.1'
+export const AGENT_TOOL_EVENT_SCHEMA = 'agent-tool-event@1.2'
 
-/** Each tool event type, and the definition of its data. */
+/** Each tool event type, and the definition of its data; `.web` since 1.2 (T262: a research role's web call). */
 export const AGENT_TOOL_EVENTS = {
   'agent-workers.tool.denied': 'denied',
   'agent-workers.tool.deferred': 'deferred',
   'agent-workers.tool.notified': 'notified',
   'agent-workers.tool.checks-pending': 'checks-pending',
+  'agent-workers.tool.web': 'web',
 } as const
 export type AgentToolEventType = keyof typeof AGENT_TOOL_EVENTS
 

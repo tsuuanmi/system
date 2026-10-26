@@ -2,18 +2,22 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:agent-tool-event:v1",
   "title": "Agent tool event",
-  "description": "The data of the agent Workers' tool-gate events (design/approvals.md#a-workers-tool-calls): `agent-workers.tool.denied`, `.deferred`, `.notified`, and `.checks-pending`, each under `$defs/<kind>`. The data carries no schema tag (event data never did): a reader validates it against the definition its event type names, as `agent-tool-event@1.0`, and counts an entry that does not validate apart, never guessing (INV-14). 1.0 declares the fields T207 added (a denial's `reason`, `explanation`, `actionClass`, `requestId`, `decision`; `workerKind` on every kind) as optional, so an entry from before T207 stays valid. The root describes one entry (its event type and data), which is what the examples are.",
+  "description": "The data of the agent Workers' tool-gate events (design/approvals.md#a-workers-tool-calls): `agent-workers.tool.denied`, `.deferred`, `.notified`, `.checks-pending`, and `.web` (a research role's web call), each under `$defs/<kind>`. The data carries no schema tag (event data never did): a reader validates it against the definition its event type names, as `agent-tool-event@1.0`, and counts an entry that does not validate apart, never guessing (INV-14). 1.0 declares the fields T207 added (a denial's `reason`, `explanation`, `actionClass`, `requestId`, `decision`; `workerKind` on every kind) as optional, so an entry from before T207 stays valid. The root describes one entry (its event type and data), which is what the examples are.",
   "type": "object",
   "required": ["type", "data"],
   "properties": {
-    "type": { "enum": ["agent-workers.tool.denied", "agent-workers.tool.deferred", "agent-workers.tool.notified", "agent-workers.tool.checks-pending"] },
+    "type": {
+      "description": "1.2 adds `agent-workers.tool.web` (T262): a research role's web call the web access rule judged.",
+      "enum": ["agent-workers.tool.denied", "agent-workers.tool.deferred", "agent-workers.tool.notified", "agent-workers.tool.checks-pending", "agent-workers.tool.web"]
+    },
     "data": { "type": "object" }
   },
   "allOf": [
     { "if": { "properties": { "type": { "const": "agent-workers.tool.denied" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/denied" } } } },
     { "if": { "properties": { "type": { "const": "agent-workers.tool.deferred" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/deferred" } } } },
     { "if": { "properties": { "type": { "const": "agent-workers.tool.notified" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/notified" } } } },
-    { "if": { "properties": { "type": { "const": "agent-workers.tool.checks-pending" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/checks-pending" } } } }
+    { "if": { "properties": { "type": { "const": "agent-workers.tool.checks-pending" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/checks-pending" } } } },
+    { "if": { "properties": { "type": { "const": "agent-workers.tool.web" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/web" } } } }
   ],
   "additionalProperties": false,
   "$defs": {
@@ -46,12 +50,29 @@
       }
     },
     "reason": {
-      "description": "Why the gate denied a call, a stable code (T207): never renamed or reused; a new cause gets a new code (a minor version). The gate's own list (`DENIAL_REASONS`, agent-workers) is tested to be in this enum. 1.1 adds `use-read-tool` (T222): a Bash inspection command (cat, head, tail, sed -n, wc, grep, rg, ls, find) denied at once where the run's runtime gives its agent the reading tool for it.",
+      "description": "Why the gate denied a call, a stable code (T207): never renamed or reused; a new cause gets a new code (a minor version). The gate's own list (`DENIAL_REASONS`, agent-workers) is tested to be in this enum. 1.1 adds `use-read-tool` (T222): a Bash inspection command (cat, head, tail, sed -n, wc, grep, rg, ls, find) denied at once where the run's runtime gives its agent the reading tool for it. 1.2 adds `research-role` (T262): a research role's call that would write a file or run a command, or, in its web probe, any call but the probe's own search.",
       "enum": [
         "metacharacter", "empty-word", "outside-workspace", "git-data", "unclassified-tool", "unsupported-field", "invalid-input", "invalid-patch",
         "policy-forbid", "not-listed", "request-rejected", "request-expired", "request-withdrawn", "workflow-denied", "request-mismatch", "request-unreadable",
-        "no-session", "run-stopped", "review-member", "no-approvals", "unknown-checks", "unknown-mode", "gate-error", "use-read-tool"
+        "no-session", "run-stopped", "review-member", "no-approvals", "unknown-checks", "unknown-mode", "gate-error", "use-read-tool", "research-role"
       ]
+    },
+    "web": {
+      "description": "`agent-workers.tool.web` (1.2, T262, ADR-0074): one web call of a research role's run that the web access rule judged `auto` (it ran unasked under the grant) or `ask` (it asks the operator as every external-send does): the egress check's outcome (`not-checked` when an earlier rule already refused it), the call's number among those judged in the run, the calls it made unasked so far, the grant's bound, why it asks (a code), and its `gate` decision, which holds the query or URL. Never the query or URL itself. A call this session was denied before is the rule's `deny` decision and the denial's own `agent-workers.tool.denied` event, never this one.",
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/call" }],
+      "required": ["actionClass", "verdict", "egress", "call", "unasked", "decision"],
+      "properties": {
+        "actionClass": { "const": "external-send" },
+        "verdict": { "enum": ["auto", "ask"] },
+        "egress": { "enum": ["allow", "deny", "not-checked"] },
+        "call": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "unasked": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "max": { "type": "integer", "minimum": 1, "maximum": 200 },
+        "reason": { "enum": ["no-grant", "tool-not-granted", "classification", "bound", "local-path", "egress"] },
+        "decision": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+      },
+      "unevaluatedProperties": false
     },
     "pendingChecks": {
       "description": "The checks the policy rule leaves pending, which bind when the result is accepted, never per call.",

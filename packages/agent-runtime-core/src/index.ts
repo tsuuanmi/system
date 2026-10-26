@@ -97,7 +97,21 @@ export interface RuntimeEvidence {
    * or false: it offers none, and a source gives it none.
    */
   hostTools?: boolean
+  /**
+   * A `read-only` run that names {@link RunSpec.web} may list the runtime's web tools ({@link WEB_RUN_TOOLS},
+   * `WebSearch` and `WebFetch`) among its `tools`, each call passing the run's gate first like any
+   * other (T262, ADR-0074: a research role). Absent or false: it offers none, and refuses a run that
+   * names `web`.
+   */
+  webTools?: boolean
 }
+
+/**
+ * The web tools a research role's run may list (T262): the two calls that send a query or a URL out
+ * of this machine. A runtime that reports {@link RuntimeEvidence.webTools} offers them on a
+ * `read-only` run that names {@link RunSpec.web}, never otherwise.
+ */
+export const WEB_RUN_TOOLS: readonly string[] = ['WebSearch', 'WebFetch']
 
 /** The name a runtime gives the server of a run's host tools: an MCP client names its tools `mcp__system__<name>`. */
 export const HOST_TOOLS_SERVER = 'system'
@@ -409,6 +423,13 @@ export interface RunSpec {
    * refuses tools {@link hostToolsProblem} finds a problem in (`config_error`), before running anything.
    */
   hostTools?: HostTool[] | undefined
+  /**
+   * A research role's run (T262, ADR-0074): with a `read-only` sandbox only, its `tools` may list
+   * the web tools ({@link WEB_RUN_TOOLS}) beside the reading ones, and no other. A runtime that does
+   * not report {@link RuntimeEvidence.webTools} refuses it (`config_error`), before running anything;
+   * so does one asked for it with any other sandbox.
+   */
+  web?: boolean | undefined
 }
 
 /**

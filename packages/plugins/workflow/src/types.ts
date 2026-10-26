@@ -485,6 +485,43 @@ export interface Explanation {
    * and when it last printed. Only while the run is running and there are any.
    */
   stalledChecks?: StalledCheck[]
+  /**
+   * The run's web calls (T262, ADR-0074): each `WebSearch` or `WebFetch` call of a research role's
+   * Worker the web access rule judged, from its `agent-workers.web-access` decision: how many, how
+   * many ran unasked, asked, and were denied in their session, and each call's query or URL, verdict,
+   * and egress outcome. Only when there are any.
+   */
+  webCalls?: WebCalls
+}
+
+/** A run's web calls, as `explain` and `/ui` show them (T262). */
+export interface WebCalls {
+  count: number
+  /** Calls that ran unasked under the grant. */
+  auto: number
+  /** Calls that asked the operator (past the bound, an egress refusal, no grant). */
+  asked: number
+  /** Calls the grant would have let run that this session was denied before: they never ran. */
+  denied: number
+  /** The calls, oldest first, at most {@link MAX_WEB_CALLS_SHOWN}; `count` counts them all. */
+  calls: WebCall[]
+}
+
+/** The web calls a run's view lists at most (INV-9). */
+export const MAX_WEB_CALLS_SHOWN = 200
+
+/** One web call: its tool, its query or URL (as recorded, at most 500 characters), and what the rule said. */
+export interface WebCall {
+  at: string
+  nodeId?: string
+  tool: string
+  target: string
+  /** `auto`: it ran unasked; `ask`: it asked the operator; `deny`: the grant would have let it run, but this session was denied that exact call. */
+  verdict: 'auto' | 'ask' | 'deny'
+  egress: 'allow' | 'deny' | 'not-checked'
+  /** Why it asked or was denied, a code (`bound`, `egress`, `local-path`, `no-grant`, `session-denied`, …), when it did. */
+  reason?: string
+  decision: ArtifactRef
 }
 
 /** A check of a run's result that printed nothing for its bound, and still runs (T235). */

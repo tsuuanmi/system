@@ -660,6 +660,25 @@ describe('a policy change through the queue (docs/design/approvals.md#a-policy-c
     expect((await second.ctx.approvals.policy()).set?.changeId).toBe(next.changeId)
   })
 
+  it('proposes a research role\'s web access grant as a policy change that takes effect only on approval, and says what it lets run unasked (T262, ADR-0074)', async () => {
+    const booted = await boot()
+    const granted: AutonomyPolicy = {
+      ...STUDIO, schema: 'autonomy-policy@1.3', version: 4,
+      webAccess: { version: 1, rules: [{ profile: 'research', tools: ['WebSearch', 'WebFetch'], maxWebCallsPerRun: 40, maxClassification: 'operator-shared', note: 'literature reviews' }] },
+    }
+    const { change, request } = await booted.approvals.proposePolicy({ policy: granted }, T0)
+    // Proposed, not applied: the set in force holds no grant until the operator approves.
+    expect(change.state).toBe('asked')
+    expect((await booted.ctx.approvals.policy()).policies[0]!.webAccess).toBeUndefined()
+    expect(request.action.consequences).toContain('Web access (external-send still asks; these web calls run unasked once the egress check passes)')
+    expect(request.action.consequences).toContain('research: WebSearch, WebFetch unasked when the egress check passes, at most 40 per run, content up to operator-shared')
+    const [result] = await booted.ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'approved' }], after(5))
+    expect(result).toMatchObject({ state: 'approved' })
+    expect((await booted.ctx.approvals.policy()).policies[0]!.webAccess).toEqual(granted.webAccess)
+    // No effective mode moves: external-send is still ask.
+    expect((await booted.ctx.approvals.check({ class: 'external-send' })).mode).toBe('ask')
+  })
+
   it('refuses the plugin when the configuration changed since the stored set was derived from it, and takes the configuration only when it supersedes that exact set (INV-2, INV-13)', async () => {
     const first = await boot()
     const change = await applied(first, NO_MERGE)

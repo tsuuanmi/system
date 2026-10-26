@@ -14,7 +14,8 @@ every template at load (preflight) and refuses a run whose contracts are not reg
 |---|---|
 | Capabilities | what routing admits Workers by ([capability vocabulary](../design/routing.md#capability-vocabulary)); a node in a session also requires `persistent-conversation`; a review team member's step is also review-member work ([scoped offers](../design/routing.md#scoped-offers)) |
 | Tier | the minimum tier; *caller* means the caller's `tier` replaces it |
-| Kind | optional: the kind of work the step is, a label such as `code` (a variant may change it); a Worker the operator gives kinds takes only steps of those kinds, a Worker given none takes any ([work kinds](../design/routing.md#work-kinds)). No built-in template names one |
+| Kind | optional: the kind of work the step is, a label such as `code` (a variant may change it); a Worker the operator gives kinds takes only steps of those kinds, a Worker given none takes any ([work kinds](../design/routing.md#work-kinds)). Only [`research`](#research)'s two literature reviews name one (`research`), so a [research role's](../design/agent-runtimes.md#a-research-role) Worker takes them and nothing else |
+| Prefers | optional: capabilities the step would like and does not need (at most 8, distinct, none already needed; not on a team or source step). Routing ranks a Worker that proves all of them first and never refuses one that does not (`work-requirement@1.3`, [research's second review](../design/routing.md#researchs-second-review)) |
 | Conversation | `temporary`: a new one-shot conversation; `persistent`: the caller's session or a new one; `caller`: the caller's session, or a new one with `persist`; `own`: a new persistent conversation of this node alone ([conversations](../design/workflow-engine.md#conversations)) |
 | Acceptance | the contract the result must pass; a rejected result may escalate one tier (`maxEscalations`, default 1) |
 | Diversity | optional, with `differentFrom`: `required` (default) fails closed when no Worker of another provider family is admitted (unless `allowSameFamily`); `preferred` runs the step once on the family it differs from, in a conversation of its own, recorded `single-family` and stated to every later step and in the answer ([`research`](#research)) |
@@ -102,7 +103,9 @@ start it with `system research --deep`, MCP `research` with `deep: true`, or `ru
 The two reviews run in parallel, on two provider families
 ([different provider families](../design/workflow-engine.md#different-provider-families)):
 review A (`literature:1`) proves web search; review B (`literature:2`) runs on another family,
-whose provider need not prove a search, so its citations gate it. `evidence:1` reads both,
+which prefers a Worker that proves web search too (T262, D91: a read-only
+[research role's](../design/agent-runtimes.md#a-research-role) Claude Worker, then one that only
+reasons), so a provider that need not prove a search is gated by its citations. `evidence:1` reads both,
 labelled A and B, and records which review states each claim (`reviews`). `conclusion:1` says
 where the reviews agree and differ.
 
@@ -128,7 +131,7 @@ with `allowSameFamily` on (it records `single-family`, never `same-family`).
 |---|---|---|---|---|
 | `frame:1` | `reason` | standard | persistent (the run's conversation) | `resultSchema: hypothesis-set@1.0`, then `acceptance.answer` |
 | `literature:1` (review A) | `reason`, `web-search` | standard | temporary | `acceptance.cited` |
-| `literature:2` (review B; differs from `literature:1`, preferred) | `reason` | standard | temporary | `acceptance.cited` |
+| `literature:2` (review B; differs from `literature:1`, preferred; prefers `web-search`) | `reason` | standard | temporary | `acceptance.cited` |
 | `literature:1`, `literature:2` (variant `deep`) | `reason`, `deep-research` | frontier | own (each review its own conversation) | `acceptance.cited` |
 | `evidence:1` | `reason` | economy | persistent (the run's conversation) | `resultSchema: evidence-table@1.1`, then `acceptance.answer` |
 | `critique:1` (differs from `evidence:1`, preferred) | `reason` | standard | temporary | `acceptance.answer` |

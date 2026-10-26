@@ -35,9 +35,10 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type AgentRuntimeProvider, type LimitObservation, type RunMetering, type RunObserver, type RunResult, type RunSpec, type RuntimeEvidence, type SandboxMode, WORKSPACE_READ_BOUNDS, type WorkspaceReadBounds,
+  type AgentRuntimeProvider, type LimitObservation, type RunMetering, type RunObserver, type RunResult, type RunSpec, type RuntimeEvidence, type SandboxMode, WEB_RUN_TOOLS, WORKSPACE_READ_BOUNDS, type WorkspaceReadBounds,
   meteringOf, readLimits, workspaceReadBounds,
 } from '@tsuuanmi/system-agent-runtime-core'
+import { webAccessOf } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type { Classification } from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
@@ -66,6 +67,8 @@ import {
   type AgentAssignmentConfig, type AgentProviderConfig, type AgentRoleConfig, checkProviders, DEFAULT_LIMIT_READ_SECONDS, type DerivedTier, type DerivedWorker, deriveWorkers, kindsProblem, MAX_CONCURRENT_PER_ACCOUNT,
   MAX_LIMIT_READ_SECONDS, MAX_MODEL_POOLS, setsDerivedOnly,
 } from './roles.ts'
+import { researchProblem, withResearchDefaults } from './research.ts'
+import { type WebProof, WebProbes } from './web-probe.ts'
 import { CHECKS_MIGRATION, RunChecks } from './checks.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
 import { registerAccountTools, registerRunTools } from './tools.ts'
@@ -137,6 +140,14 @@ export interface AgentWorkerConfig {
   kinds?: string[]
   /** What it is for, in the operator's words (`capability-descriptor@1.7`); never a routing input. */
   description?: string
+  /**
+   * A read-only research Worker (T262, ADR-0074, ./research.ts): its tools, at every tier, are reads
+   * and the web tools only (default all of them), it takes research work only (kinds default
+   * `[research]`), its gate refuses a write or a command, and its web calls are judged under the
+   * autonomy policy's web access grant. It proves `reason`, and `web-search` once its web probe
+   * searched. Default false; refused unless `read-only` and not a review member.
+   */
+  research?: boolean
 }
 
 /** A Worker as this source runs it: a hand-named row, or one derived as account × role (`derived`), with the tiers it offers (ADR-0073). */
@@ -371,7 +382,11 @@ function configuredWorkers(config: Partial<Config>): { derived: boolean; workers
     throw new ProviderError('config_error', `agent-workers.providers (${derivedOnly.provider}): maxConcurrentRunsPerAccount, pool, windows, modelPools, limitCooldownSeconds, and limitReadSeconds apply to Workers derived from roles and assignments; a hand-named Worker sets its own`)
   }
   const workers = new Map<string, WorkerSpec>()
-  for (const worker of [...config.workers ?? [], ...derived ? deriveWorkers(config.roles ?? [], config.assignments ?? [], providers) : []] as WorkerSpec[]) {
+  for (const configured of [...config.workers ?? [], ...derived ? deriveWorkers(config.roles ?? [], config.assignments ?? [], providers) : []] as WorkerSpec[]) {
+    // A research role reads and searches the web only (T262): refused unless it can hold that, then given its defaults.
+    const research = researchProblem(configured)
+    if (research) throw new ProviderError('config_error', `agent Worker ${configured.id}: ${research}`)
+    const worker = withResearchDefaults(configured)
     if (!worker.derived && !ID.test(worker.id)) throw new ProviderError('config_error', `agent Worker id ${worker.id} must match ${ID}`)
     if (typeof worker.workspace !== 'string' || !isAbsolute(worker.workspace)) throw new ProviderError('config_error', `agent Worker ${worker.id}: workspace must be an absolute path`)
     if (workers.has(PREFIX + worker.id)) throw new ProviderError('config_error', `duplicate agent Worker ${worker.id}`)
@@ -451,6 +466,7 @@ export class AgentWorkers extends Service {
       // Not z.array: an omitted array would come back as [], a Worker given no kind at all; checked at load.
       kinds: z.any().description('The kinds of work it takes (ADR-0057), such as [code] or [docs, tests]: only steps that name one of them, never a step that names none; unset, any work. Not for a review member'),
       description: z.string().max(MAX_DESCRIPTION).pattern(DESCRIPTION).description('What it is for, in your words: plain text on one line, at most 200 characters; shown on the roster, never a routing input'),
+      research: z.boolean().default(false).description('A read-only research Worker (ADR-0074): its tools are Read, Grep, Glob, WebSearch, and WebFetch only (default all), it takes research work only (kinds default [research]), its gate denies a write or a command, and its web calls run unasked only under the autonomy policy\'s web access grant; it proves reason, and web-search once its web probe searched'),
     })).default([]).description('Hand-named agent-runtime Workers (the shape before Workers are account × role): they run as before until system account migrate --apply, then are refused; never with roles or assignments. Each policy comes from here only (INV-6)'),
     roles: z.array(z.object({
       id: z.string().pattern(/^[a-z][a-z0-9-]{0,31}$/).required().description('Role id: its Workers are agent:<accountId>/<role>'),
@@ -460,6 +476,7 @@ export class AgentWorkers extends Service {
       quotaClass: z.union(['subscription-chat', 'agent-plan', 'metered', 'local']).default('agent-plan'),
       worktreePerRun: z.boolean().default(false).description('Each run of a workflow run works in that run\'s own git worktree of the workspace, as a hand-named Worker\'s'),
       reviewMember: z.boolean().default(false).description('Its review team member steps run under the enforced review-member profile (ADR-0049); read-only, and each runtime it is assigned on names its family'),
+      research: z.boolean().default(false).description('A read-only research role (ADR-0074): its Workers\' tools are Read, Grep, Glob, WebSearch, and WebFetch only, at every tier (default all), on the standard tier when it gives no tier or tiers, they take research work only (kinds default [research]), their gate denies a write or a command, and their web calls run unasked only under the autonomy policy\'s web access grant; on a runtime that offers web tools'),
       // Not z.array, as a hand-named Worker's.
       kinds: z.any().description('The kinds of work its Workers take (ADR-0057), as a hand-named Worker\'s; unset, any work. Not for a review member'),
       description: z.string().max(MAX_DESCRIPTION).pattern(DESCRIPTION).description('What the role\'s Workers are for, in your words: plain text on one line, at most 200 characters; every Worker of the role shows it on the roster, never a routing input'),
@@ -539,6 +556,8 @@ export class AgentWorkers extends Service {
   private readonly providerOf: Map<string, AgentProviderConfig>
   /** Each runtime's probe, in its own home and in each account home a Worker runs in, refreshed in the background (./probes.ts). */
   private readonly probes: Probes
+  /** Each research Worker's web probe (T262, ./web-probe.ts): what its web-search offer rests on. */
+  private readonly webProbes: WebProbes
   private readonly schedulers = new Map<string, ProviderScheduler>()
   /** One scheduler per account of derived Workers: `maxConcurrentRunsPerAccount` at once, one per Worker. */
   private readonly accountSchedulers = new Map<string, ProviderScheduler>()
@@ -624,6 +643,15 @@ export class AgentWorkers extends Service {
         void tracked.finally(() => this.inflight.delete(tracked))
       },
       warn: (message) => this.warnOnce(message),
+    })
+    this.webProbes = new WebProbes(ctx, {
+      stopped: this.stopped.signal,
+      // A stop waits for a web probe in flight, which the stop aborts (its own deadline bounds it too).
+      track: (probe) => {
+        const tracked = probe.then(() => undefined, () => undefined)
+        this.inflight.add(tracked)
+        void tracked.finally(() => this.inflight.delete(tracked))
+      },
     })
     this.reports = new ReportSchedule({
       targets: () => this.reportTargets(),
@@ -821,7 +849,15 @@ export class AgentWorkers extends Service {
       const why = ready ? undefined
         : refusal ?? (repository && 'problem' in repository ? `it works in a worktree per run, and ${repository.problem}` : undefined) ?? gateWhy ?? 'its account or pool cannot be read'
       const probed = { kind: 'probe' as const, at: observedAt }
-      const proven: CapabilityOffer[] = ready
+      // A research role (T262, ADR-0074) proves reason, and web-search by its web probe's real search only.
+      // It takes research work only (kinds), so its reason never serves an ordinary ask (P1).
+      const web = ready && worker.research ? this.webProofOf(id, worker) : undefined
+      const research: CapabilityOffer[] = [
+        { capability: 'reason', evidence: probed },
+        ...(web ? [{ capability: 'web-search', evidence: { kind: 'probe' as const, ref: web.decision as ArtifactRef, at: web.at } }] : []),
+        ...(evidence.resume ? [{ capability: 'persistent-conversation', evidence: probed }] : []),
+      ]
+      const proven: CapabilityOffer[] = ready && worker.research ? research : ready
         ? [
             ...[
               'local-data',
@@ -927,6 +963,20 @@ export class AgentWorkers extends Service {
     const model = at.model ?? worker.model
     const maxTurns = at.maxTurns ?? worker.maxTurns
     return { tier: at.tier, declared: at.declared, ...(at.modelPool ? { modelPool: at.modelPool } : {}), ...(tools ? { tools } : {}), ...(model ? { model } : {}), ...(maxTurns ? { maxTurns } : {}) }
+  }
+
+  /**
+   * A research Worker's web probe proof now (T262, ./web-probe.ts), when one stands; a probe starts in
+   * the background otherwise, in the home its runs use, on its lowest tier's model. None while that
+   * home cannot be named.
+   */
+  private webProofOf(id: string, worker: WorkerSpec): WebProof | undefined {
+    const provider = this.ctx.agentRuntimes.get(worker.runtime)
+    if (!provider) return undefined
+    const named = this.namedHome(worker, provider)
+    if (named && 'why' in named) return undefined
+    const model = this.atTier(worker, undefined).model
+    return this.webProbes.proof({ worker: id, workerKind: worker.runtime, provider, workspace: worker.workspace, ...(named ? { home: named.home } : {}), ...(model ? { model } : {}) })
   }
 
   /** Each Worker's queued and running runs now, by Worker id. */
@@ -2104,9 +2154,12 @@ export class AgentWorkers extends Service {
     const workspace = worker.worktreePerRun && row.workflow_run_id && RUN_ID.test(row.workflow_run_id) ? this.worktrees.pathOf(worker.workspace, row.workflow_run_id) : worker.workspace
     try {
       const evidence = await this.evidence(worker, 'proven').catch(() => undefined)
+      // A research run is told its web tools and the grant its gate judges them under (T262), the project's as well.
+      const grant = worker.research ? webAccessOf((await approvals.policy(row.project_id ?? undefined)).policies, 'research') : undefined
       const note = unaskedNote(await approvals.policy(), workspace, {
         shellReads: evidence?.cleanShells === true, workspaceReads: evidence?.workspaceReads === true, readTools: readToolsOf(evidence, this.atTier(worker, row.tier).tools), resumes: row.session_id !== null && row.session_id !== undefined, sandbox: worker.sandbox,
         dossier: this.dossierOf(row, evidence) !== undefined,
+        ...(worker.research ? { research: { tools: (this.atTier(worker, row.tier).tools ?? []).filter((t) => WEB_RUN_TOOLS.includes(t)), grant: grant ?? null } } : {}),
       })
       return { ...turn, prompt: `${turn.prompt}\n\n${note}` }
     } catch (error) {
@@ -2232,7 +2285,9 @@ export class AgentWorkers extends Service {
     // Under the review-member profile, the gate denies every one.
     const gate = runGate(this.ctx, {
       runId: row.run_id, worker: row.worker, workerKind: worker.runtime, workspace, sessionId: row.session_id ?? undefined, workflowRunId: row.workflow_run_id ?? undefined,
-      classification: row.classification as 'public' | 'operator-shared' | 'local-private', ...(member ? { profile: REVIEW_MEMBER } : {}),
+      classification: row.classification as 'public' | 'operator-shared' | 'local-private', ...(member ? { profile: REVIEW_MEMBER } : worker.research ? { profile: 'research' as const } : {}),
+      // A research run's web calls are judged under its task's project's policy and grant too, and name its step (T262).
+      ...(row.project_id ? { projectId: row.project_id } : {}), ...(row.step_node ? { nodeId: row.step_node } : {}),
       // A shell command is taken for a read only where the runtime enforces shells that read no startup code (T198).
       shellReads: evidence.cleanShells === true,
       // The workspace reads server's tools are reads only where the runtime gives its agent that server (T200b).
@@ -2247,6 +2302,8 @@ export class AgentWorkers extends Service {
     const at = this.atTier(worker, row.tier)
     const spec: RunSpec = {
       prompt: turn.prompt, workspace, sandbox: worker.sandbox,
+      // A research role's run lists the web tools beside its reads (T262): never on a review member's step.
+      ...(worker.research && !member ? { web: true } : {}),
       // Omitted or empty means the runtime's minimal set: the config schema turns an omitted list into [].
       ...(at.tools?.length ? { tools: at.tools } : {}), ...(at.model ? { model: at.model } : {}), ...(at.maxTurns ? { maxTurns: at.maxTurns } : {}),
       // Only a runtime that reports `resume` is ever asked to continue a conversation.
@@ -2849,9 +2906,12 @@ function closedUntil(pool: PoolState | undefined, windowId: string): number | un
   return times.length ? Math.max(...times) : Number.POSITIVE_INFINITY
 }
 
-/** Whether a runtime's evidence admits a Worker: available, reads confined, its sandbox enforced, and a gate asked before each tool call. */
+/**
+ * Whether a runtime's evidence admits a Worker: available, reads confined, its sandbox enforced, and a
+ * gate asked before each tool call; a research role's (T262), web tools offered on a read-only run too.
+ */
 function admits(evidence: RuntimeEvidence, worker: AgentWorkerConfig): boolean {
-  return evidence.available && evidence.readsConfined && evidence.gatesToolCalls === true && evidence.sandboxes.includes(worker.sandbox)
+  return evidence.available && evidence.readsConfined && evidence.gatesToolCalls === true && evidence.sandboxes.includes(worker.sandbox) && (!worker.research || evidence.webTools === true)
 }
 
 /**
@@ -2875,6 +2935,7 @@ function refusalOf(evidence: RuntimeEvidence, worker: AgentWorkerConfig): string
     ...(evidence.readsConfined ? [] : ['cannot keep host state unreadable']),
     ...(evidence.gatesToolCalls === true ? [] : ["cannot ask the run's gate before each tool call"]),
     ...(evidence.sandboxes.includes(worker.sandbox) ? [] : [`cannot enforce its ${worker.sandbox} sandbox`]),
+    ...(!worker.research || evidence.webTools === true ? [] : ['offers no web tools to a research role\'s read-only run']),
   ]
   return `its ${worker.runtime} runtime ${missing.join(', and ')} (${evidence.detail})`
 }

@@ -9,7 +9,7 @@ import { isSameFamily, waitingUntil } from './recovery.ts'
 import { riskOf } from './risk.ts'
 import { singleFamilyHeader } from './single-family.ts'
 import { tieOf, type TeamRound } from './teams.ts'
-import type { ExplainedDecision, Explanation, NodeRecord, NodeView, RunRow, RunView, StalledCheck, UsageDraws, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
+import { type ExplainedDecision, type Explanation, MAX_WEB_CALLS_SHOWN, type NodeRecord, type NodeView, type RunRow, type RunView, type StalledCheck, type UsageDraws, type UsageFilter, type UsageRunView, type WebCall, type WebCalls, type WorkflowError } from './types.ts'
 
 export function view(e: Engine, run: RunRow): RunView {
   const rows = e.nodeRows(run.run_id)
@@ -182,11 +182,14 @@ export function explain(e: Engine, runId: string): Explanation | undefined {
   const stalled = run.status === 'running' ? stalledChecks(e, runId) : []
   // Its risk tier and why (ADR-0071), when its project's policy has a path map.
   const risk = riskOf(e, runId)
+  // Its research Workers' web calls (T262), from the web access rule's decisions filed under it.
+  const web = webCallsOf(e, runId)
   return {
     runId, template: run.template, status: run.status, specHash: run.spec_hash as ContentId,
     ...(own.length ? { decisions: own } : {}),
     ...(risk ? { risk } : {}),
     ...(stalled.length ? { stalledChecks: stalled } : {}),
+    ...(web ? { webCalls: web } : {}),
     nodes: e.nodeRows(runId).map((node) => {
       const record = JSON.parse(node.record) as NodeRecord
       const kept = node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : []
@@ -245,6 +248,38 @@ function stalledChecks(e: Engine, runId: string): StalledCheck[] {
     })
   }
   return stalled.reverse()
+}
+
+/** The rule whose decisions are a research Worker's web calls (agent-workers `WEB_RULE`, T262). */
+export const WEB_ACCESS_RULE = 'agent-workers.web-access'
+/** The gate decisions of a run read at most for its web calls (INV-9). */
+const WEB_DECISIONS_READ = 1000
+
+/**
+ * A run's web calls (T262): the `gate` decisions of rule {@link WEB_ACCESS_RULE} filed under it, oldest
+ * first, each read from its outcome (tool, query or URL, verdict, egress outcome, why), counted whole
+ * and listed at most {@link MAX_WEB_CALLS_SHOWN}. A decision that does not read as one is skipped.
+ * Undefined when there are none.
+ */
+function webCallsOf(e: Engine, runId: string): WebCalls | undefined {
+  const found = e.ctx.artifacts.list({ kind: 'decision', decisionType: 'gate', runId, limit: WEB_DECISIONS_READ })
+    .filter((a) => (a.body as Decision | undefined)?.decider.id === WEB_ACCESS_RULE)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+  const calls: WebCall[] = []
+  for (const a of found) {
+    const body = a.body as Decision
+    const d = body.outcome.detail as { tool?: unknown; target?: unknown; egress?: unknown; reason?: unknown; nodeId?: unknown } | undefined
+    const verdict = body.outcome.option
+    if ((verdict !== 'auto' && verdict !== 'ask' && verdict !== 'deny') || typeof d?.tool !== 'string' || typeof d.target !== 'string') continue
+    const egress = d.egress === 'allow' || d.egress === 'deny' ? d.egress : 'not-checked'
+    calls.push({
+      at: a.createdAt, ...(typeof d.nodeId === 'string' ? { nodeId: d.nodeId } : a.nodeId ? { nodeId: a.nodeId } : {}), tool: d.tool, target: d.target, verdict, egress,
+      ...(typeof d.reason === 'string' ? { reason: d.reason } : {}), decision: a.id as ArtifactRef,
+    })
+  }
+  if (!calls.length) return undefined
+  const count = (verdict: WebCall['verdict']): number => calls.filter((c) => c.verdict === verdict).length
+  return { count: calls.length, auto: count('auto'), asked: count('ask'), denied: count('deny'), calls: calls.slice(0, MAX_WEB_CALLS_SHOWN) }
 }
 
 /** The decision types the engine records for a run as a whole, under no step. */

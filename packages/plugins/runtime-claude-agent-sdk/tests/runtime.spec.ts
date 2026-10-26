@@ -81,9 +81,20 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
     expect(await runtime(scripted()).probe()).toEqual({
       available: true, detail: 'Claude Code 2.1.294; host state hidden by /usr/bin/bwrap; commands confined: a sandbox with no network starts inside it', version: '2.1.294',
       sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: true, gatesToolCalls: true, homes: true, cleanShells: false,
-      readTools: ['Read', 'Grep', 'Glob'], hostTools: true,
+      readTools: ['Read', 'Grep', 'Glob'], hostTools: true, webTools: true,
     })
     expect(await runtime(scripted(), null).probe()).toMatchObject({ available: false, detail: expect.stringMatching(/not installed/) })
+  })
+
+  it('gives a research run (web) its reading tools and WebSearch and WebFetch, each pre-approved by name and gated; nothing else, and never writing (T262)', async () => {
+    const calls: Call[] = []
+    await runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'read-only', web: true }, new AbortController().signal)
+    expect(calls[0]!.options.tools).toEqual(['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch'])
+    expect(calls[0]!.options.allowedTools).toEqual(['Read(./**)', 'Grep(./**)', 'Glob(./**)', 'WebSearch', 'WebFetch'])
+    // A read-only run that is no research run gets no web tool; a research run never writes or runs a command.
+    await expect(runtime(scripted()).run({ prompt: 'x', workspace, sandbox: 'read-only', tools: ['Read', 'WebFetch'] }, new AbortController().signal)).rejects.toThrow(/refusing WebFetch/)
+    await expect(runtime(scripted()).run({ prompt: 'x', workspace, sandbox: 'read-only', web: true, tools: ['WebSearch', 'Bash'] }, new AbortController().signal)).rejects.toThrow(/a research run allows only .*; refusing Bash/)
+    await expect(runtime(scripted()).run({ prompt: 'x', workspace, sandbox: 'workspace-write', web: true }, new AbortController().signal)).rejects.toThrow(/read-only; refusing a workspace-write one/)
   })
 
   it('starts Claude Code without the daemon\'s credentials; a credential reaches it only when forwarded by name (INV-8)', async () => {
