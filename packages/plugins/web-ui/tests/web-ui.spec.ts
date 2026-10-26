@@ -11,6 +11,7 @@ import { canRunBrowser, testChrome } from '../../browser-patchright/tests/suppor
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import * as WebUi from '../src/index.ts'
 import { lanWebServer } from '../../../gateway-core/tests/lan.ts'
+import { BEFORE_WORDS, inBrowser, noteWords, opened, shoot, wordsInSight } from './glance.ts'
 import { decisionsIn, descriptionOf } from './wording.ts'
 
 const RUN = {
@@ -368,13 +369,18 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await page.getByRole('link', { name: 'Workers', exact: true }).click()
     await expect.poll(() => page.getByRole('heading', { name: 'Workers', exact: true }).count()).toBe(1)
     expect(new URL(page.url()).search).toBe('?view=workers')
-    // The operator's words: free, and resting until a clock time.
-    expect(await page.getByLabel('Worker counts').innerText()).toBe('1 working · 0 free · 1 resting (the first until 11:00) · 0 unavailable')
-    // The account once, how many Workers in its header (their roles under its details), its rest said once for both.
+    // The operator's words as chips (T239): free always, the others when there are any, each with its symbol.
+    expect(await page.getByLabel('Worker counts').innerText()).toBe('○ 0 free\n◆ 1 working\n▲ 1 resting')
+    // The account once, how many Workers in its header (their roles under its details), its rest said once for both, as its chip.
     const account = page.getByRole('region', { name: 'Account Chatgpt · Studio Plus' })
     expect(await account.getByRole('heading', { level: 3 }).innerText()).toMatch(/^Chatgpt · Studio Plus · 2 Workers\b/)
-    expect(await account.innerText()).toContain('Its account is resting until 11:00 (in 2 h)')
+    expect(await account.innerText()).toContain('Resting until 11:00 (in 2 h)')
     expect(await account.locator('details.facts').first().textContent()).toContain('Rolesfrontier, standard')
+    // The earlier run that holds its session for want of a verdict (PROP-0013) is a line on the account, never folded; what frees it is under What to do.
+    const alarms = account.getByRole('list', { name: 'Needs a look' })
+    expect(await alarms.innerText()).toMatch(/^standard: ■ Not known to be gone open run/)
+    // Its Worker cards under one fold (T239), closed until opened.
+    await account.locator('details.workers-fold > summary').click()
     const busy = account.getByRole('article', { name: 'Chatgpt · Studio Plus · standard' })
     expect(await busy.getByRole('heading', { level: 4 }).innerText()).toBe('standard')
     const shown = await busy.innerText()
@@ -385,7 +391,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
       'agent run arun_00000000000000a2 of run run_old ended without being known to be gone, holding session ses_9; free it once its agent is gone (system free arun_00000000000000a2 --agent-gone)']) expect(shown, said).toContain(said)
     // Nothing technical or unknown up front: it is all under the card's details.
     for (const folded of ['Worker id', 'worker:plus/standard', 'unknown (', 'family', 'role none', 'Load']) expect(shown, folded).not.toContain(folded)
-    await busy.getByText('details', { exact: true }).click()
+    await busy.getByText('Details', { exact: true }).click()
     const opened = await busy.innerText()
     for (const said of ['Worker id', 'worker:plus/standard', 'plus · website account, ready', 'standard tier, subscription-chat, remote', '1 of 2 running',
       'Running review run run_xyz, step review:m1:propose, since an unknown time']) expect(opened, said).toContain(said)
@@ -395,11 +401,11 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const rest = await resting.innerText()
     expect(rest).toContain('Resting until 11:00 (in 2 h)')
     expect(rest).not.toContain('derived')
-    await resting.getByText('details', { exact: true }).click()
+    await resting.getByText('Details', { exact: true }).click()
     expect(await resting.innerText()).toContain('chatgpt-web Worker, frontier tier, subscription-chat, remote (no description is configured)')
     // The account's quota that could not be read is folded under its own details.
     expect(await account.innerText()).not.toContain('the resource ledger (ctx.resources) is not mounted')
-    await account.getByText('details', { exact: true }).first().click()
+    await account.getByText('Details', { exact: true }).first().click()
     expect(await account.innerText()).toContain('unknown (the resource ledger (ctx.resources) is not mounted)')
     await busy.getByRole('link', { name: 'Open run run_xyz' }).focus()
     expect(await page.locator('main').innerText()).not.toContain('null')
@@ -415,6 +421,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const busy = page.getByRole('region', { name: 'Account Chatgpt · Studio Plus' })
     const line = (window: string) => busy.getByLabel(`window ${window} of plan/plus`)
     await expect.poll(() => line('five-hour').count()).toBe(1)
+    // Its shortest window in sight, every window under its Details (T239).
+    expect(await busy.locator('.quota-line').innerText()).toMatch(/^5 h used 42 %, resets 09:45\b/)
+    await busy.getByText('Details', { exact: true }).first().click()
     // Read a minute before NOW; reset 15 min and 1 h after it: each on the page's day, so a clock time.
     expect(await line('five-hour').innerText()).toBe('5 h · used 42 % · resets 09:45')
     expect(await line('seven-day').innerText()).toBe('7 d · at its limit · used unknown (its latest reading gives no used share) · resets 10:30')
@@ -426,7 +435,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await line('credit').locator('meter').count()).toBe(0)
     expect(await busy.locator('.window').evaluateAll((lines) => lines.map((l) => l.getAttribute('aria-label')))).toEqual(['window seven-day of plan/plus', 'window five-hour of plan/plus', 'window credit of plan/plus'])
     // The pool at its limit rests: said once, by its account (its limitUntil), not again by the pool.
-    expect(await page.getByRole('region', { name: 'Account Chatgpt · Studio Plus' }).innerText()).toMatch(/Its account is resting until /)
+    expect(await page.getByRole('region', { name: 'Account Chatgpt · Studio Plus' }).innerText()).toMatch(/Resting until /)
     // Each account's capacity on Home in one line, its 5 h bar beside it (T119).
     await page.getByRole('link', { name: 'Home' }).click()
     const capacity = page.getByLabel('Capacity of Chatgpt · Studio Plus')
@@ -435,9 +444,16 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await capacity.locator('meter').getAttribute('value')).toBe('42')
     expect(await page.getByLabel('Capacity of Claude · slot 1').innerText()).toBe('Claude · slot 1: 5 h no reading yet')
     await page.getByRole('link', { name: 'Workers', exact: true }).click()
+    // Its Worker cards are under the account's fold (T239), closed until opened.
+    const slot = page.getByRole('region', { name: 'Account Claude · slot 1' })
+    await expect.poll(() => slot.locator('details.workers-fold').count()).toBe(1)
+    expect(await slot.locator('details.workers-fold').getAttribute('open')).toBeNull()
+    await slot.locator('details.workers-fold > summary').click()
     await expect.poll(() => page.getByRole('article', { name: 'agent:acc-a/develop' }).count()).toBe(1)
-    // No reading yet, with why its account's usage report could not be read, its time on the clock (T111).
-    const agent = page.getByRole('region', { name: 'Account Claude · slot 1' }).getByLabel('window five-hour of plan/agent')
+    // No reading yet in sight; why its account's usage report could not be read, its time on the clock, under its Details (T111, T239).
+    expect(await slot.locator('.quota-line').innerText()).toMatch(/^5 h no reading yet\b/)
+    await slot.locator('details.facts > summary').first().click()
+    const agent = slot.getByLabel('window five-hour of plan/agent')
     expect(await agent.innerText()).toBe('5 h · no reading yet: its account\'s usage report could not be read at 09:20: the runtime gave no answer within 30 s')
     expect(await agent.innerText()).not.toContain('2026-10-24T')
     expect(await page.locator('main').innerText()).not.toContain('null')
@@ -458,17 +474,21 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
       'Allow a merge step: merge apr-1', 'batch-1']) {
       expect(await queue.getByText(text, { exact: true }).count(), text).toBeGreaterThan(0)
     }
-    expect(await queue.innerText()).toMatch(/3 approvals · next expiry /)
-    // Each card (T186): one line, what is asked, for which task, and until when, with what no response does; two short buttons;
-    // who asked, what it is about, its id, and its exact expiry under one closed Details.
+    // Their count is Home's tile (T239); the next expiry in sight once within the hour.
+    expect(await page.getByRole('region', { name: 'Needs your attention', exact: true }).innerText()).toContain('Approvals · 3')
+    expect(await queue.innerText()).toMatch(/Next expiry .+ ago/)
+    // Each card (T186, T239): its title, one line of context, until when; two short buttons; for which task, what no response
+    // does, who asked, what it is about, its id, and its exact expiry under one closed Details.
     const third = page.locator('#request-apr-3')
-    expect(await third.locator('.line').innerText()).toMatch(/^Allow a deploy step: merge apr-3\s+for task apr-3 · Expired .+ ago · No response: denied$/)
+    expect(await third.locator('.line').innerText()).toBe('Allow a deploy step: merge apr-3')
+    expect(await third.locator('.meta').innerText()).toMatch(/^Expired .+ ago$/)
     expect(await third.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny'])
     expect(await third.locator('details.card-details').getAttribute('open')).toBeNull()
     expect(await third.innerText()).not.toContain('Asked by')
     expect(await third.innerText()).not.toContain('request apr-3')
     expect(await third.textContent()).toContain('request apr-3')
     await third.getByText('Details', { exact: true }).click()
+    expect(await third.innerText()).toMatch(/For\s+task apr-3\s+No response\s+denied/)
     expect(await third.innerText()).toContain('Asked by the board, for task task-apr-3 of project p1')
     expect(await third.innerText()).toContain('task apr-3 of project p1, attempt 1')
     expect(await third.innerText()).toContain('request apr-3')
@@ -482,8 +502,10 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const thirdDeny = third.getByRole('button', { name: 'Deny', exact: true })
     expect(await descriptionOf(third.getByRole('button', { name: 'Approve', exact: true }))).toBe('allows this deploy')
     expect(await descriptionOf(thirdDeny)).toBe('holds the task')
-    // The effect is said beside each button too, for every reader, in sight with the buttons (never under Details).
-    expect(await third.locator('.actions').first().innerText()).toMatch(/Approve\s+allows this deploy\s+Deny\s+holds the task/)
+    // The effect is each button's tooltip (T239), not text beside it: out of sight until hovered or focused (layout.spec.ts), never under Details.
+    expect(await third.locator('.actions').first().innerText()).toMatch(/^Approve\s+Deny$/)
+    // The batch's note for all is under its Details (T239).
+    await batch.locator(':scope > details.card-details > summary').click()
     await queue.getByRole('textbox', { name: 'Note for all (optional)' }).fill('ship it')
     await queue.getByRole('button', { name: 'Approve all 2' }).click()
     await expect.poll(() => approvals().calls.length).toBe(1)
@@ -579,7 +601,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
       const described = await decisionsIn(card)
       expect(described.map((d) => d.label), id).toEqual(['Approve', 'Deny'])
       for (const d of described) expect(d.description, `${id}: ${d.label}`).not.toBe('')
-      expect(await card.locator('.line').innerText(), id).toMatch(/·\s*(Expires|Expired) .+ · No response: denied$/)
+      expect(await card.locator('.meta').innerText(), id).toMatch(/^(Expires|Expired) .+$/)
       // Every other fact folded, never dropped: who asked, what it is about, its exact subject, what each verdict does, its id and expiry.
       const details = card.locator('details.card-details')
       expect(await details.count(), id).toBe(1)
@@ -587,7 +609,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
       const shown = await card.innerText()
       for (const folded of ['Asked by', 'About', 'Exact subject', `request ${id}`, 'expires ']) expect(shown, `${id}: ${folded}`).not.toContain(folded)
       const all = await card.textContent()
-      for (const fact of ['Asked by the board', `of project p1, attempt 1`, `content board-task:${id}:attempt:0 @ approval-needed`, `request ${id}`, 'expires ', 'Note (optional)']) expect(all, `${id}: ${fact}`).toContain(fact)
+      for (const fact of ['No responsedenied', 'Asked by the board', `of project p1, attempt 1`, `content board-task:${id}:attempt:0 @ approval-needed`, `request ${id}`, 'expires ', 'Note (optional)']) expect(all, `${id}: ${fact}`).toContain(fact)
     }
     // A merge's consequences as given; a task's step says what approving and denying do.
     expect(await page.locator('#request-apr-1').textContent()).toContain('the branch lands on main')
@@ -672,11 +694,13 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     for (const path of ['/ui/', '/ui/?run=run_abc', '/ui/?view=board', '/ui/?view=workers', '/ui/?view=policy', '/ui/?view=help']) {
       if (path !== '/ui/') await page.goto(origin + path)
       await expect.poll(() => page.locator('main h2.page').count(), { message: path }).toBe(1)
+      // At most one sentence (T239: none where the title says what the page is for): a single full stop, at its end, and short.
       const leads = await page.locator('main h2.page ~ p.lead').allInnerTexts()
-      expect(leads, path).toHaveLength(1)
-      // One sentence: a single full stop, at its end, and short.
-      expect(leads[0], path).toMatch(/^[^.!?]+[.!?]$/)
-      expect(leads[0]!.length, path).toBeLessThanOrEqual(48)
+      expect(leads.length, path).toBe(path.endsWith('policy') || path.endsWith('help') ? 1 : 0)
+      for (const lead of leads) {
+        expect(lead, path).toMatch(/^[^.!?]+[.!?]$/)
+        expect(lead.length, path).toBeLessThanOrEqual(48)
+      }
     }
   }, 60_000)
 
@@ -690,11 +714,17 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const waiting = page.getByRole('region', { name: 'Needs your attention', exact: true })
     await expect.poll(() => waiting.innerText()).toContain('Approvals · 3')
     expect(await waiting.innerText()).toContain('Runs needing attention · 1')
+    // The counts in sight, the names under each count folded (T239), kept open through the refresh once opened.
+    expect(await waiting.innerText()).not.toContain('Allow a merge step: merge apr-1')
+    for (const names of await waiting.locator('details > summary', { hasText: 'Names' }).all()) await names.click()
+    await expect.poll(() => waiting.locator('details[open]').count()).toBe(2)
     expect(await waiting.innerText()).toMatch(/Allow a merge step: merge apr-1 · expires /)
     expect(await waiting.innerText()).toContain('an investigate run · Plan awaiting approval')
     await waiting.getByRole('link', { name: 'Allow a deploy step: merge apr-3' }).click()
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('request-apr-3')
-    expect(await page.getByRole('region', { name: 'Workers at a glance' }).innerText()).toContain('1 working · 0 free · 1 resting · 0 unavailable')
+    // The Workers' counts once, as chips at the top (T239), never again in the Workers' panel below.
+    expect(await page.getByRole('region', { name: 'Workers availability' }).getByLabel('Worker counts').innerText()).toBe('○ 0 free\n◆ 1 working\n▲ 1 resting')
+    expect(await page.getByRole('region', { name: 'Workers at a glance' }).innerText()).not.toMatch(/\d working/)
     // The blocked run is listed by its title, why as a chip, and one action; its id behind a copy button.
     const look = page.getByRole('region', { name: 'Runs needing attention' })
     expect(await look.innerText()).toContain('Plan awaiting approval')
@@ -725,12 +755,14 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const current = () => nav.locator('[aria-current="page"]').innerText()
     await expect.poll(() => page.getByRole('heading', { name: 'Home', exact: true }).count()).toBe(1)
     expect(await current()).toBe('Home')
-    expect(await page.locator('p.lead').innerText()).toBe('Your next actions and recent activity.')
-    for (const [link, purpose] of [['Board', 'Projects and tasks.'], ['Workers', 'Availability, quota, and current work.'], ['Autonomy policy', 'Control which actions need approval.']] as const) {
+    // A sentence of what a page is for only where its title does not say it (T239).
+    expect(await page.locator('p.lead').count()).toBe(0)
+    for (const [link, purpose] of [['Board', null], ['Workers', null], ['Autonomy policy', 'Control which actions need approval.']] as const) {
       await nav.getByRole('link', { name: link }).click()
       await expect.poll(() => page.getByRole('heading', { name: link, exact: true }).count()).toBe(1)
       expect(await current()).toBe(link)
-      expect(await page.locator('p.lead').innerText()).toContain(purpose)
+      if (purpose) expect(await page.locator('p.lead').innerText()).toContain(purpose)
+      else expect(await page.locator('p.lead').count()).toBe(0)
       expect(await page.title()).toMatch(new RegExp(`^(\\(\\d+\\) )?system — ${link}$`))
     }
     // Keyboard: the navigation is links, reached and followed without a pointer.
@@ -740,7 +772,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await page.getByRole('link', { name: 'investigate run' }).first().click()
     await expect.poll(() => page.locator('h2.page[data-page="run:run_abc"]').count()).toBe(1)
     expect(await page.getByRole('heading', { level: 2 }).first().innerText()).toBe('investigate run')
-    expect(await page.locator('p.lead').innerText()).toBe('Result and progress.')
+    expect(await page.locator('p.lead').count()).toBe(0)
     expect(await page.locator('main').innerText()).not.toContain('← ')
   }, 60_000)
 
@@ -752,23 +784,29 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await page.goto(`${origin}/ui/?run=run_abc#token=${token}`)
     await expect.poll(() => page.locator('h2.page[data-page="run:run_abc"]').count()).toBe(1)
     const text = await page.locator('main').innerText()
-    expect(await page.locator('p.status-line').innerText()).toMatch(/^▲ Needs your attention Plan awaiting approval · started .+ ago$/)
-    expect(text).toContain('Plan awaiting approval · plan:1:gate')
-    expect(text).toContain('No answer yet.')
-    // The run's id, its template, and its last change behind a copy button and under Technical details.
+    // Its state as a chip, when it started, and Stop run; what it waits on is the card below (T239), its step under its Details.
+    expect(await page.locator('.status-line').innerText()).toMatch(/^▲ Needs your attention\s+started .+ ago\s+Stop run$/)
+    const plan = page.getByRole('region', { name: 'Plan awaiting approval' })
+    expect(await plan.getByRole('heading', { level: 3 }).innerText()).toBe('Plan awaiting approval')
+    expect(await plan.textContent()).toContain('step plan:1:gate')
+    // A running run with no answer yet says nothing of it.
+    expect(text).not.toContain('No answer')
+    // The run's id behind a copy button, its template and its last change, under Technical details.
     expect(text).not.toContain('run_abc')
-    expect(await page.getByRole('button', { name: 'Copy run ID' }).getAttribute('data-copy')).toBe('run_abc')
     expect(await page.locator('details', { hasText: 'Technical details' }).textContent()).toMatch(/Template investigate · last changed .+ · spec sha256:00/)
     const steps = page.locator('ol.timeline > li')
     expect(await steps.count()).toBe(2)
-    expect(await steps.nth(0).innerText()).toMatch(/^plan:1 done · worker:a\/standard · standard tier/)
-    expect(await steps.nth(1).innerText()).toContain('plan:1:gate waiting for you · needs an economy tier Worker')
-    // Decisions and the spec are folded until asked for.
+    expect(await steps.nth(0).innerText()).toMatch(/^plan:1 done · worker:a\/standard/)
+    expect(await steps.nth(1).innerText()).toMatch(/^plan:1:gate waiting for you/)
+    // What a step needs, how it was decided, and its id are folded under its Details until asked for.
+    expect(await steps.nth(1).textContent()).toContain('needs an economy tier Worker')
     expect(await page.locator('details', { hasText: 'How it was decided (1)' }).getAttribute('open')).toBeNull()
     expect(await page.getByText('proves reason').isVisible()).toBe(false)
-    await page.getByText('How it was decided (1)').click()
+    await steps.nth(0).locator('summary', { hasText: 'Details' }).click()
     expect(await page.getByText('proves reason').isVisible()).toBe(true)
     expect(await page.getByText('sha256:00').isVisible()).toBe(false)
+    await page.getByText('Technical details', { exact: true }).click()
+    expect(await page.getByRole('button', { name: 'Copy run ID' }).getAttribute('data-copy')).toBe('run_abc')
     // The plan's verdicts are Approve / Deny, as every approval's, each described by its effect (T191).
     expect(await decisionsIn(page.locator('main .panel', { hasText: 'Plan awaiting approval' }))).toEqual([
       { label: 'Approve', description: 'the step goes on with this plan' }, { label: 'Deny', description: 'this plan does not run' }])
@@ -831,22 +869,30 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const page = await pinnedPage(browser)
     await page.goto(`${origin}/ui/?view=workers#token=${token}`)
     const card = page.getByRole('article', { name: 'Chatgpt · Studio Plus · standard' })
-    // The operator's own choice as a chip, never folded; what it means behind its "?" (T171).
+    // The operator's own choice as a chip on its card, under its account's Workers (T239); what it means behind its "?" (T171).
+    const openWorkers = async () => {
+      const account = page.getByRole('region', { name: 'Account Chatgpt · Studio Plus' })
+      await expect.poll(() => account.locator('details.workers-fold').count()).toBe(1)
+      if (await account.locator('details.workers-fold').getAttribute('open') === null) await account.locator('details.workers-fold > summary').click()
+    }
+    await openWorkers()
     await expect.poll(() => card.innerText()).toContain('◆ Excluded from teams')
     expect(await card.getByRole('button', { name: 'What is team?' }).count()).toBe(1)
-    await card.getByText('details', { exact: true }).click()
+    await card.getByText('Details', { exact: true }).click()
     expect(await card.innerText()).toContain('Kept out of teams by the operator: its account is named in teams.excludeWorkers')
-    // Right now, by name: a count each, then who is free, who is stalled, and which account has no quota left (T141, T171).
+    // Right now, by name, folded on the Workers page (T239): a count each, then who is free, who is stalled, and which account has no quota left (T141, T171).
     const now = page.getByRole('region', { name: 'Right now' })
+    await now.locator('summary').click()
     expect(await now.innerText()).toContain('Free: 0')
     expect(await now.innerText()).toContain('Stalled: 0')
     expect(await now.innerText()).toContain('No quota left: 1 — Chatgpt · Studio Plus until 11:00 (in 2 h)')
     // An engine that cannot tell: no chip on the card, the unknown under its details (INV-2).
     workflow.excluded = new Error('the router is busy')
     await page.reload()
+    await openWorkers()
     await expect.poll(() => card.count()).toBe(1)
     expect(await card.innerText()).not.toContain('Excluded from teams')
-    await card.getByText('details', { exact: true }).click()
+    await card.getByText('Details', { exact: true }).click()
     expect(await card.innerText()).toContain('Teams\nunknown (it could not be read: the router is busy)')
   }, 60_000)
 
@@ -866,6 +912,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const lines = async () => {
       const now = page.getByRole('region', { name: 'Right now' })
       await expect.poll(() => now.count()).toBe(1)
+      // Folded on the Workers page (T239), open on Home.
+      const folded = now.locator('details.right-now:not([open]) > summary')
+      if (await folded.count()) await folded.click()
       const said = (await now.innerText()).split('\n')
       return Object.fromEntries(['Free', 'Stalled', 'No quota left'].map((head) => [head, said.find((l) => l.startsWith(`${head}: `))]))
     }
@@ -907,6 +956,32 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     // The page approves the plan it shows (INV-5).
     expect(workflow.calls[0]![2]).toMatchObject({ verdict: 'approved', plan: 'sha256:11' })
   }, 60_000)
+})
+
+describe('web UI: clearer at a glance (T239)', () => {
+  // Home, a run waiting on its plan, and Workers, over the queue's three requests and the roster's accounts with their quota,
+  // at one fixed instant in UTC: each first screen at most half the words it held before T239 (BEFORE_WORDS, glance.ts).
+  inBrowser('holds the first screen (1280×800) of Home, a run, and Workers to at most half the words each held before T239', async () => {
+    const { origin, token } = await boot({ approvals: true, roster: true, pools: true })
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const words: Record<string, number> = {}
+    for (const width of [1280, 360]) {
+      const context = await browser.newContext({ viewport: { width, height: width === 1280 ? 800 : 740 }, timezoneId: 'UTC', locale: 'en-GB' })
+      const page = await context.newPage()
+      await page.clock.setFixedTime(NOW)
+      await opened(page, `${origin}/ui/#token=${token}`)
+      for (const [name, path] of [['home', '/ui/'], ['run', '/ui/?run=run_abc'], ['workers', '/ui/?view=workers']] as const) {
+        await opened(page, origin + path)
+        if (width === 1280) noteWords(name, words[name] = await wordsInSight(page))
+        await shoot(page, `${name}-${width}`)
+      }
+      await context.close()
+    }
+    for (const name of ['home', 'run', 'workers'] as const) {
+      expect(words[name], `${name}'s first screen: ${words[name]} words, ${BEFORE_WORDS[name]} before T239`).toBeLessThanOrEqual(Math.floor(BEFORE_WORDS[name] / 2))
+    }
+  }, 90_000)
 })
 
 describe('web UI: the shared building blocks and the production states (T172)', () => {
@@ -954,8 +1029,8 @@ describe('web UI: the shared building blocks and the production states (T172)', 
     // The count with its unit.
     await page.goto(`${origin}/ui/`)
     const queue = page.getByRole('region', { name: 'Approval queue' })
-    await expect.poll(() => queue.locator('.qty').first().innerText()).toBe('3 approvals')
-    expect(await queue.locator('.qty .n').first().innerText()).toBe('3')
+    await expect.poll(() => queue.locator('.qty').first().innerText()).toBe('2 related requests')
+    expect(await queue.locator('.qty .n').first().innerText()).toBe('2')
     // The copy button: the id behind it, copied on a press (or shown, selected, where no clipboard is).
     const copy = page.getByRole('region', { name: 'Runs needing attention' }).getByRole('button', { name: 'Copy run ID' })
     expect(await copy.getAttribute('data-copy')).toBe('run_abc')

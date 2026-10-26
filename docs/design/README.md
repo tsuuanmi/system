@@ -33,5 +33,6 @@ verified live.
 | [models.md](models.md) | API and local models as Workers: the model catalog, keys by reference, egress, bounds, restart; the `api-first` preset | capabilities |
 | [gateways.md](gateways.md) | Messages and Responses gateways, the text tool protocol, threads, drain; MCP inversion as target | gateways |
 | [roster.md](roster.md) | the roster: every Worker in one read model (account and its enrolled or quarantined state, role, tier, availability, current work, load, pools and windows), projected on read, each unreadable fact unknown with why, bounded | gateways (surface) |
+| [web-ui.md](web-ui.md) | the operator's web UI at a glance: what needs you first as cards, a button's effect as its tooltip, the word bound on the first screen, one spacing and one type scale, light and dark, a 360 px phone; its screenshots | gateways (surface) |
 | [reports.md](reports.md) | the baseline report: what a period recorded, per project or for every one, counted by code; the weekly investor report | gateways (surface) |
 | [notifications.md](notifications.md) | out-of-band notices from recorded events: what each event tells, the expiry reminder, deduplication, the bounded queue, the desktop and webhook sinks behind the egress gate, health | gateways (surface) |

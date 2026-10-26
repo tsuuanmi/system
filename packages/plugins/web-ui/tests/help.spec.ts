@@ -135,10 +135,9 @@ describe('web UI: help in plain words (T126)', () => {
     await activeProject(booted.ctx)
     await page.goto(`${origin}/ui/?view=board`)
     const column = (name: string) => page.getByRole('region', { name, exact: true })
-    await expect.poll(() => column('Ready').innerText()).toContain('No ready tasks')
-    expect(await column('Proposed').innerText()).toContain('No proposed tasks')
-    expect(await column('Working').innerText()).toContain('No active tasks')
-    expect(await column('Review').innerText()).toContain('No reviews')
+    // An empty column says None under its count (T239); Needs your attention, that nothing does.
+    await expect.poll(() => column('Ready').innerText()).toMatch(/^Ready \(0\)[^\n]*\n+None$/)
+    for (const name of ['Proposed', 'Working', 'Review']) expect(await column(name).innerText(), name).toMatch(new RegExp(`^${name} \\(0\\)\\n+None$`))
     expect(await column('Needs your attention').innerText()).toContain('Nothing needs you')
     // How a task moves between them is Help's Task lifecycle, folded under each state there.
     await page.goto(`${origin}/ui/?view=help`)

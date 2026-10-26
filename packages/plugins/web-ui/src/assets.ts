@@ -10,7 +10,7 @@ export const PAGE = `<!doctype html>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
-<header><h1><a href="/ui/" id="home">system</a></h1><nav aria-label="Pages"><a href="/ui/" id="home-link">Home</a> <a href="/ui/?view=board" id="board-link">Board</a> <a href="/ui/?view=workers" id="workers-link">Workers</a> <a href="/ui/?view=policy" id="policy-link">Autonomy policy</a> <a href="/ui/?view=help" id="help-link">Help</a></nav><span id="status" aria-live="off"></span></header>
+<header><h1><a href="/ui/" id="home">system</a></h1><nav aria-label="Pages"><a href="/ui/" id="home-link">Home</a> <a href="/ui/?view=board" id="board-link">Board</a> <a href="/ui/?view=workers" id="workers-link">Workers</a> <a href="/ui/?view=policy" id="policy-link" aria-label="Autonomy policy"><span class="wide">Autonomy </span>policy</a> <a href="/ui/?view=help" id="help-link">Help</a></nav><span id="status" aria-live="off"></span></header>
 <div id="stale" class="stale" role="status" hidden></div>
 <div id="outcome"></div>
 <main id="main" tabindex="-1"></main>
@@ -20,78 +20,143 @@ export const PAGE = `<!doctype html>
 `
 
 export const APP_CSS = `
-:root { --fg: #1d1d1f; --bg: #fff; --muted: #6e6e73; --line: #e5e5ea; --accent: #0a66c2; --bad: #b3261e; --ok: #1e7d32; --wait: #8a6d00; }
-@media (prefers-color-scheme: dark) { :root { --fg: #f2f2f7; --bg: #111113; --muted: #a1a1a6; --line: #2c2c2e; --accent: #64a8ff; --bad: #ff6b60; --ok: #5fd068; --wait: #e2c044; } }
+/* The design rules (T239, docs/design/web-ui.md): one spacing scale (--s1..--s4), one type scale of three sizes (--small,
+   --body, --large), a filled primary and an outlined secondary button, status colours always with their shapes, cards on a
+   quiet page, the light or dark scheme the system prefers, and a layout that works from 360 px wide with no horizontal scroll. */
+:root { color-scheme: light dark;
+  --fg: #1d1d1f; --page: #f5f5f7; --bg: #fff; --sunk: #ebebef; --muted: #636366; --line: #e0e0e5; --edge: #c2c2c8; --accent: #0a62bd; --on-accent: #fff; --bad: #b3261e; --ok: #1b7230; --wait: #855f00;
+  --s1: 4px; --s2: 8px; --s3: 16px; --s4: 24px; --small: 12px; --body: 14px; --large: 18px; --radius: 10px; }
+@media (prefers-color-scheme: dark) { :root { --fg: #f2f2f7; --page: #0e0e10; --bg: #1c1c1f; --sunk: #161618; --muted: #a1a1a8; --line: #2e2e33; --edge: #4c4c52; --accent: #6caeff; --on-accent: #06172b; --bad: #ff7d73; --ok: #67d477; --wait: #e9c34f; } }
 * { box-sizing: border-box; }
-body { margin: 0; font: 14px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-header h1 { margin: 0; font-size: 18px; } header a { color: inherit; text-decoration: none; } header nav a { margin-right: 12px; padding-bottom: 2px; white-space: nowrap; display: inline-block; }
-header nav a[aria-current="page"] { font-weight: 600; border-bottom: 2px solid var(--accent); } header nav a:hover { color: var(--accent); }
-h2.page { margin-bottom: 0; } p.lead { color: var(--muted); margin-top: 4px; }
-#status { color: var(--muted); margin-left: auto; }
-main { padding: 16px 24px; }
-table { width: 100%; border-collapse: collapse; margin: 8px 0 24px; }
-th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
-th { color: var(--muted); font-weight: 500; }
-a { color: var(--accent); }
-.state { font-weight: 600; } .COMPLETED, .completed { color: var(--ok); } .FAILED, .failed { color: var(--bad); } .BLOCKED, .RUNNING, .running { color: var(--wait); }
-.ready { color: var(--ok); } .busy, .resting { color: var(--wait); } .unavailable, .quarantined { color: var(--bad); } .unknown { color: var(--muted); font-style: italic; }
-.panel, .request dd, .request p { overflow-wrap: anywhere; }
-.panel { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 12px 0; }
-button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; margin-right: 8px; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-span.does { color: var(--muted); font-size: 13px; margin-right: 12px; }
-input { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; min-width: 240px; }
-.muted { color: var(--muted); } code { font-size: 12px; } .answer { white-space: pre-wrap; }
-table.queue td:last-child { white-space: nowrap; }
-th, td.nowrap { white-space: nowrap; }
-#outcome { padding: 0 24px; }
-#outcome .panel { margin-top: 16px; } .panel.ok { border-color: var(--ok); } .panel.bad { border-color: var(--bad); }
-.panel h3, .panel h4 { margin: 0 0 4px; font-size: 16px; } .panel p { margin: 6px 0; }
-.request .meta, .request .tag { color: var(--muted); } .request .tag { border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; font-size: 12px; margin-right: 6px; }
-.request dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0; } .request dt { color: var(--muted); } .request dd { margin: 0; }
-.request .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; } .request .actions button { margin-right: 0; }
-.request label, .batch-actions label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 12px; }
-.batch-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin: 8px 0; }
-.soon { color: var(--wait); font-weight: 600; } details summary { cursor: pointer; color: var(--muted); }
-ol.timeline { list-style: none; padding: 0; margin: 8px 0; border-left: 2px solid var(--line); } ol.timeline li.step { padding: 4px 0 8px 12px; position: relative; overflow-wrap: anywhere; }
-ol.timeline li.step::before { content: ''; position: absolute; left: -6px; top: 10px; width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
-.actions .muted { margin-right: 12px; } .state.ready { color: var(--ok); }
-.kanban { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; align-items: start; margin: 12px 0; }
-.column h3 { font-size: 14px; margin: 0 0 8px; } .card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 0 0 8px; overflow-wrap: anywhere; }
-.card > * { margin: 2px 0; } .folded details { margin: 8px 0; } .folded .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-top: 8px; }
-@media (max-width: 900px) { .kanban { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 640px) { .kanban { grid-template-columns: 1fr; } .kanban .column.waits { order: -1; } }
-p.glance { margin: 6px 0; } .card .tag { border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; font-size: 12px; } p.teams { border-left: 3px solid var(--accent); padding-left: 8px; } .card .actions.decide button { margin: 4px 8px 0 0; }
-button:disabled { opacity: 0.6; cursor: progress; } button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-textarea { font: 12px/1.4 ui-monospace, monospace; width: 100%; min-height: 320px; padding: 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
-select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
-pre.diff { font-size: 12px; overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 8px 0; }
-pre.diff .add, .stat .add, .files .add { color: var(--ok); } pre.diff .del, .stat .del, .files .del { color: var(--bad); } pre.diff .hunk { color: var(--muted); } pre.diff.file { margin: 4px 0; } pre.report { white-space: pre-wrap; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 8px; overflow-wrap: anywhere; } ul.files, ul.verdicts { list-style: none; padding: 0; margin: 4px 0; } ul.files li { margin: 2px 0; } ul.verdicts ul { margin: 4px 0 4px 16px; padding: 0; list-style: none; } .evidence h4 { margin: 12px 0 4px; } p.pending-checks { color: var(--wait); border-left: 3px solid var(--wait); padding-left: 8px; }
-button.why { padding: 0 6px; margin: 0 2px; font-size: 12px; line-height: 1.5; border-radius: 9px; color: var(--muted); font-weight: 400; vertical-align: baseline; } button.why[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
-.explain-note { font-size: 13px; font-weight: 400; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; display: inline; } .explain-note[hidden] { display: none; }
-.help-contents ul { padding-left: 18px; } ol.flow { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 0; padding: 0; list-style: none; } ol.flow > li { margin: 0; } ol.flow > li:not(:last-child)::after { content: '→'; margin: 0 8px; color: var(--muted); } ol.flow > li > details[open] { max-width: 40ch; }
-dl.glossary { margin: 8px 0; } dl.glossary dt { margin-top: 2px; } dl.glossary dt:focus { outline: 2px solid var(--accent); outline-offset: 2px; } dl.glossary dt button.term { border: 0; padding: 2px 0; margin: 0; font-weight: 600; color: inherit; } dl.glossary dt button.term::before { content: '▸ '; color: var(--muted); } dl.glossary dt button.term[aria-expanded="true"]::before { content: '▾ '; } dl.glossary dd { margin: 0 0 6px 16px; } dl.glossary [hidden] { display: none; }
+body { margin: 0; font: var(--body)/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif; color: var(--fg); background: var(--page); overflow-wrap: break-word; -webkit-text-size-adjust: 100%; }
+h1, h2, h3, h4 { line-height: 1.3; margin: 0; }
+h2 { font-size: var(--large); } h3, h4 { font-size: var(--body); font-weight: 600; }
+/* A section's heading: small, quiet, the same on every page; a card's title is the body size, bold. */
+main h2:not(.page) { font-size: var(--small); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: var(--s4) 0 var(--s2); }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s3); padding: var(--s2) var(--s4); background: var(--bg); border-bottom: 1px solid var(--line); }
+header h1 { font-size: var(--large); } header a { color: inherit; text-decoration: none; } header nav { display: flex; flex-wrap: wrap; gap: 0 var(--s1); }
+header nav a { padding: var(--s1) var(--s2); white-space: nowrap; display: inline-block; border-radius: 6px; color: var(--muted); }
+header nav a[aria-current="page"] { color: var(--fg); font-weight: 600; background: var(--sunk); } header nav a:hover { color: var(--accent); }
+#status { color: var(--muted); margin-left: auto; font-size: var(--small); }
+main { padding: var(--s4); max-width: 1200px; margin: 0 auto; }
+h2.page { margin: 0 0 var(--s3); } ul.chips.availability, .status-line { margin: 0 0 var(--s3); } .overview ul.chips.availability { margin: 0; }
+main section > details.fold, main > details.fold { margin-bottom: var(--s2); } .panel .panel { margin: var(--s3) 0 0; } h2.page:has(+ p.lead) { margin-bottom: 0; } p.lead { color: var(--muted); margin: var(--s1) 0 var(--s3); }
+section { min-width: 0; }
+a { color: var(--accent); text-underline-offset: 2px; }
+p { margin: var(--s2) 0; }
+.muted { color: var(--muted); } code { font-size: var(--small); } .unknown { color: var(--muted); font-style: italic; }
+.state { font-weight: 600; } .COMPLETED, .completed, .ready { color: var(--ok); } .FAILED, .failed, .unavailable, .quarantined { color: var(--bad); } .BLOCKED, .RUNNING, .running, .busy, .resting { color: var(--wait); }
+.soon { color: var(--wait); font-weight: 600; }
+/* A card: a title, one status chip, a short line of context, and its one primary action; the rest under its Details. */
+.panel { border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s3); margin: 0 0 var(--s3); background: var(--bg); overflow-wrap: anywhere; }
+.panel > :first-child { margin-top: 0; } .panel > :last-child { margin-bottom: 0; }
+.panel h3 + p, .panel h4 + p { margin-top: var(--s1); }
+.panel.ok { border-color: var(--ok); } .panel.bad { border-color: var(--bad); }
+.line { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s1) var(--s2); }
+.request .meta { color: var(--muted); margin: var(--s1) 0 0; }
+.request dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--s1) var(--s3); margin: var(--s2) 0; } .request dt { color: var(--muted); } .request dd { margin: 0; overflow-wrap: anywhere; }
+.request .summary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); margin: var(--s2) 0 0; }
+.tag { border: 1px solid var(--line); border-radius: 4px; padding: 0 var(--s1); font-size: var(--small); color: var(--muted); }
+/* Buttons: a secondary one outlined, the primary one filled; what each does is its tooltip and its accessible description. */
+button { font: inherit; min-height: 32px; padding: var(--s1) var(--s3); border-radius: 8px; border: 1px solid var(--edge); background: var(--bg); color: var(--fg); cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+button:disabled { opacity: 0.6; cursor: progress; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin: var(--s3) 0 0; }
+.actions label, .request label, .batch-actions label { display: flex; flex-direction: column; gap: var(--s1); color: var(--muted); font-size: var(--small); }
+.batch-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--s2); margin: var(--s2) 0; }
+.does { display: none; }
+.does.shown { display: block; position: fixed; z-index: 10; max-width: min(36ch, calc(100vw - 16px)); padding: var(--s1) var(--s2); border-radius: 6px; background: var(--fg); color: var(--bg); font-size: var(--small); line-height: 1.4; pointer-events: none; }
+input, select, textarea { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--edge); border-radius: 8px; }
+input { padding: var(--s1) var(--s2); min-height: 32px; min-width: 240px; max-width: 100%; }
+select { min-height: 32px; padding: var(--s1) var(--s2); max-width: 100%; }
+textarea { font: var(--small)/1.4 ui-monospace, monospace; width: 100%; min-height: 320px; padding: var(--s2); }
+input.number { min-width: 0; width: 9em; } textarea.lines { min-height: 96px; }
+button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Tables: aligned columns, a quiet header row. */
+table { width: 100%; border-collapse: collapse; margin: var(--s2) 0 var(--s3); background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+th, td { text-align: left; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+tr:last-child > td { border-bottom: 0; }
+th { color: var(--muted); font-weight: 600; font-size: var(--small); white-space: nowrap; } td.nowrap { white-space: nowrap; }
+/* Folds: a quiet summary, closed by default. */
+details summary { cursor: pointer; color: var(--muted); }
+details.fold { margin: var(--s2) 0 0; } details.fold > summary { font-size: var(--small); } details.fold[open] > summary { margin-bottom: var(--s1); }
+details.fold.inline { display: inline-block; margin: 0 0 0 var(--s1); vertical-align: top; }
+details.card-details > .fold-body > * { margin: var(--s2) 0; }
 /* Shared building blocks (T172): a status chip (word, colour, and symbol), a count, a relative time with its exact time on focus, a fold, and a copy button. */
-.chip { display: inline-block; border: 1px solid currentColor; border-radius: 10px; padding: 0 8px; font-size: 12px; font-weight: 600; line-height: 1.6; white-space: nowrap; vertical-align: baseline; } .chip .glyph { font-size: 10px; }
+.chip { display: inline-block; max-width: 100%; border: 1px solid color-mix(in srgb, currentColor 45%, transparent); border-radius: 999px; padding: 0 var(--s2); font-size: var(--small); font-weight: 600; line-height: 1.7; vertical-align: baseline; background: color-mix(in srgb, currentColor 10%, transparent); }
 .chip.ok { color: var(--ok); } .chip.warn { color: var(--wait); } .chip.bad { color: var(--bad); } .chip.info { color: var(--accent); } .chip.idle { color: var(--muted); }
+ul.chips { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: var(--s1) var(--s2); }
 .glance .n, .qty .n { font-weight: 600; } time.rel { white-space: nowrap; } time.rel:focus::after { content: ' (' attr(data-exact) ')'; color: var(--muted); }
-details.fold { margin: 4px 0; } details.fold > summary { font-size: 13px; } details.fold[open] > summary { margin-bottom: 4px; } details.fold.inline { display: inline-block; margin: 0 0 0 6px; vertical-align: top; }
-button.copy { padding: 0 6px; margin: 0 0 0 6px; font-size: 12px; color: var(--muted); } code.copied { margin-left: 6px; }
-.stale { margin: 0; padding: 8px 24px; border-bottom: 1px solid var(--wait); color: var(--wait); font-weight: 600; } .stale[hidden] { display: none; }
-.loading { color: var(--muted); } .skip { position: absolute; left: -9999px; top: 8px; } .skip:focus { left: 8px; z-index: 1; background: var(--bg); padding: 4px 8px; }
-main p, main li, main dd, p.lead { max-width: 80ch; } ul.plain { list-style: none; padding-left: 0; } .status-line .chip { margin-right: 4px; }
-summary:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.copy { min-height: 0; padding: 0 var(--s1); margin: 0 0 0 var(--s1); font-size: var(--small); color: var(--muted); border-radius: 6px; } code.copied { margin-left: var(--s1); }
+button.why { min-height: 0; padding: 0 var(--s1); margin: 0 0 0 var(--s1); font-size: var(--small); line-height: 1.5; border-radius: 999px; color: var(--muted); font-weight: 400; vertical-align: baseline; text-transform: none; letter-spacing: 0; }
+button.why[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+.explain-note { font-size: var(--small); font-weight: 400; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 0 var(--s1); display: inline; text-transform: none; letter-spacing: 0; } .explain-note[hidden] { display: none; }
+.stale { margin: 0; padding: var(--s2) var(--s4); border-bottom: 1px solid var(--wait); color: var(--wait); background: var(--bg); font-weight: 600; } .stale[hidden] { display: none; }
+#outcome { max-width: 1200px; margin: 0 auto; padding: 0 var(--s4); } #outcome .panel { margin: var(--s3) 0 0; }
+.loading { color: var(--muted); } .skip { position: absolute; left: -9999px; top: var(--s2); } .skip:focus { left: var(--s2); z-index: 11; background: var(--bg); padding: var(--s1) var(--s2); }
+main p, main li, main dd, p.lead { max-width: 80ch; } ul.plain { list-style: none; padding-left: 0; }
+.status-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); }
 @media (prefers-reduced-motion: no-preference) { .loading { animation: pulse 1.2s ease-in-out infinite alternate; } }
 @keyframes pulse { from { opacity: 1; } to { opacity: 0.4; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
-/* Round 8 (T186): a card is one line and two buttons, every other fact under one closed Details; a review leads with chips; a list shows 5 rows and a "show all". */
-.request .line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; } .request .line h3, .request .line h4 { margin: 0; }
-.request .summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 6px 0; } ul.chips { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; }
-.change-stat { border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; font-size: 12px; font-weight: 600; white-space: nowrap; }
-details.card-details > .fold-body > * { margin: 6px 0; } button.show-all { margin: 4px 0; }
-code.exact { display: block; overflow-wrap: anywhere; } .window { color: var(--muted); } .window.limited { color: var(--wait); font-weight: 600; } .window meter, li.capacity meter { width: 64px; height: 10px; margin-right: 8px; vertical-align: middle; } li.capacity .no-bar { display: inline-block; width: 64px; margin-right: 8px; } ul.capacities { list-style: none; padding: 0; margin: 6px 0; } li.capacity { margin: 2px 0; } section.account { margin: 20px 0; } section.account > h3 { margin-bottom: 4px; } section.account > h3 .muted { font-weight: 400; } .quota { margin: 4px 0 8px; } details.facts { margin-top: 6px; } details.facts dl { margin-top: 4px; } .panel.worker h4 { margin: 0 0 4px; } input.number { min-width: 0; width: 9em; } textarea.lines { min-height: 96px; } table.modes select { max-width: 100%; } details.advanced { margin: 8px 0; }
-@media (max-width: 640px) { header nav a { margin-right: 8px; } #status { flex-basis: 100%; margin-left: 0; font-size: 12px; } main { padding: 12px; } .card .actions button { width: 100%; } table:not(.queue):not(.modes) th:nth-child(n+4), table:not(.queue):not(.modes) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; } .request dl { grid-template-columns: 1fr; } .request dt { margin-top: 4px; } }
+/* Home: what needs the operator as count tiles beside the Workers' availability; lists of 5 rows and a "show all". */
+.overview { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--s3); align-items: stretch; margin: var(--s3) 0 0; }
+.overview > .panel { margin: 0; } .overview h3 { color: var(--muted); font-size: var(--small); }
+.overview .head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s2); margin-bottom: var(--s2); }
+ul.tiles { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: var(--s2); }
+ul.tiles > li { border-radius: 8px; padding: var(--s2) var(--s3); background: var(--sunk); }
+ul.tiles > li > a:first-child { font-size: var(--large); font-weight: 600; text-decoration: none; display: block; }
+ul.tiles ul.named { padding-left: var(--s3); margin: var(--s1) 0 0; } ul.tiles .soon, ul.tiles .muted { font-size: var(--small); }
+button.show-all { margin: var(--s1) 0; }
+ol.timeline { list-style: none; padding: 0; margin: var(--s2) 0; border-left: 2px solid var(--line); } ol.timeline li.step { padding: var(--s1) 0 var(--s2) var(--s3); position: relative; overflow-wrap: anywhere; }
+ol.timeline li.step::before { content: ''; position: absolute; left: -6px; top: 10px; width: 10px; height: 10px; border-radius: 50%; background: var(--edge); }
+pre { max-width: 100%; } .answer { white-space: pre-wrap; overflow-wrap: anywhere; margin: var(--s2) 0 0; }
+.answer.clamped { max-height: 9em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 60%, transparent); mask-image: linear-gradient(#000 60%, transparent); }
+/* The Board: a column per state, a card per task, the projects as aligned rows. */
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); margin: var(--s3) 0 0; } .toolbar > p { margin: 0; }
+.kanban { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s3); align-items: start; margin: var(--s3) 0; }
+.column { background: var(--sunk); border-radius: var(--radius); padding: var(--s2); }
+.column h3 { margin: var(--s1) var(--s1) var(--s2); color: var(--muted); font-size: var(--small); } .column > p { margin: var(--s1); }
+.card { border: 1px solid var(--line); border-radius: 8px; padding: var(--s2) var(--s3); margin: 0 0 var(--s2); overflow-wrap: anywhere; background: var(--bg); }
+.card:last-child { margin-bottom: 0; } .card > * { margin: var(--s1) 0 0; } .card > strong:first-child { display: block; margin: 0; }
+.card .actions { margin-top: var(--s2); gap: var(--s2); } .card button { padding: var(--s1) var(--s2); }
+.folded { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s2); } .folded > details { flex: 1 1 240px; } .folded > details[open] { flex-basis: 100%; }
+.folded .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: var(--s2); margin-top: var(--s2); }
+details.column > summary { padding: var(--s1); }
+@media (max-width: 900px) { .kanban { grid-template-columns: repeat(2, minmax(0, 1fr)); } .overview { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) { .kanban { grid-template-columns: minmax(0, 1fr); } .kanban .column.waits { order: -1; } }
+p.teams { border-left: 3px solid var(--accent); padding-left: var(--s2); }
+/* Reviews: the change, the checks, and the verdicts as chips; the long texts under Details. */
+pre.diff { font-size: var(--small); overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; padding: var(--s2); margin: var(--s2) 0; }
+pre.diff .add, .stat .add, .files .add, .change-stat .add { color: var(--ok); } pre.diff .del, .stat .del, .files .del, .change-stat .del { color: var(--bad); } pre.diff .hunk { color: var(--muted); } pre.diff.file { margin: var(--s1) 0; }
+pre.report { white-space: pre-wrap; font-size: var(--small); border: 1px solid var(--line); border-radius: 6px; padding: var(--s2); overflow-wrap: anywhere; }
+ul.files, ul.verdicts { list-style: none; padding: 0; margin: var(--s1) 0; } ul.files li { margin: var(--s1) 0; } ul.verdicts ul { margin: var(--s1) 0 var(--s1) var(--s3); padding: 0; list-style: none; }
+.evidence h4 { margin: var(--s3) 0 var(--s1); } p.pending-checks { color: var(--wait); border-left: 3px solid var(--wait); padding-left: var(--s2); }
+.change-stat { border: 1px solid var(--line); border-radius: 999px; padding: 0 var(--s2); font-size: var(--small); font-weight: 600; white-space: nowrap; }
+code.exact { display: block; overflow-wrap: anywhere; }
+/* Workers: availability as chips, each account a card with its quota in one line, its Workers under one fold. */
+.window { color: var(--muted); } .window.limited { color: var(--wait); font-weight: 600; }
+meter { width: 64px; height: 8px; margin-right: var(--s2); vertical-align: middle; } .no-bar { display: inline-block; width: 64px; height: 8px; margin-right: var(--s2); vertical-align: middle; border: 1px dashed var(--edge); border-radius: 4px; }
+details.right-now > summary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); } details.right-now > summary h3 { display: inline; color: var(--fg); }
+details.right-now > summary::before { content: '▸'; color: var(--muted); } details.right-now[open] > summary::before { content: '▾'; } details.right-now > summary { list-style: none; } details.right-now > summary::-webkit-details-marker { display: none; }
+section.right-now > h3 { margin: var(--s3) 0 0; font-size: var(--small); color: var(--muted); } .right-now ul { margin: var(--s1) 0 0; padding-left: var(--s3); }
+ul.alarms { margin: var(--s2) 0 0; padding-left: var(--s2); border-left: 3px solid var(--bad); } ul.alarms > li { margin: var(--s1) 0; }
+ul.capacities { list-style: none; padding: 0; margin: var(--s2) 0; } li.capacity { margin: var(--s1) 0; }
+section.account > h3 .muted { font-weight: 400; } .quota { margin: var(--s2) 0 0; }
+details.facts, details.workers-fold { margin: var(--s2) 0 0; } details.facts > summary { font-size: var(--small); } details.facts dl { margin-top: var(--s1); }
+.workers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: var(--s3); margin-top: var(--s2); } .workers-grid > .panel { margin: 0; }
+.panel.worker h4 { margin: 0 0 var(--s1); }
+/* Help and the policy. */
+.help-contents ul { padding-left: var(--s3); } ol.flow { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s1) 0; padding: 0; list-style: none; } ol.flow > li { margin: 0; display: flex; align-items: baseline; } ol.flow > li:not(:last-child)::after { content: '→'; margin: 0 var(--s2); color: var(--muted); } ol.flow > li > details[open] { max-width: 40ch; }
+dl.glossary { margin: var(--s2) 0; } dl.glossary dt { margin-top: var(--s1); } dl.glossary dt:focus { outline: 2px solid var(--accent); outline-offset: 2px; } dl.glossary dt button.term { border: 0; min-height: 0; padding: var(--s1) 0; margin: 0; font-weight: 600; color: inherit; background: transparent; } dl.glossary dt button.term::before { content: '▸ '; color: var(--muted); } dl.glossary dt button.term[aria-expanded="true"]::before { content: '▾ '; } dl.glossary dd { margin: 0 0 var(--s2) var(--s3); } dl.glossary [hidden] { display: none; }
+table.modes select { max-width: 100%; } details.advanced { margin: var(--s2) 0; }
+/* A phone (T239): one column, no horizontal scroll, and buttons large enough to press. */
+@media (max-width: 640px) { header { padding: var(--s2) var(--s3); } header h1 { order: 1; } #status { order: 2; } header nav { order: 3; flex-basis: 100%; justify-content: space-between; } header nav a { padding: var(--s1) var(--s2); } .wide { display: none; } ul.tiles > li > a:first-child { font-size: var(--body); } main { padding: var(--s3); } #outcome { padding: 0 var(--s3); } .stale { padding: var(--s2) var(--s3); }
+  button { min-height: 40px; } button.why, button.copy, dl.glossary dt button.term { min-height: 0; } input { min-width: 0; width: 100%; }
+  .card .actions > button, .request > .actions > button { flex: 1 1 0; }
+  th, td.nowrap { white-space: normal; } th, td { padding: var(--s2); } table:not(.queue):not(.modes):not(.projects) th:nth-child(n+4), table:not(.queue):not(.modes):not(.projects) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; }
+  .request dl { grid-template-columns: minmax(0, 1fr); } .request dt { margin-top: var(--s1); } }
 `
 
 export const APP_JS = `'use strict'
@@ -118,13 +183,39 @@ export const APP_JS = `'use strict'
   }
   // A decision's button (T191), one implementation for every page: its label the concept's one wording
   // (Approve / Deny on approvals, Accept / Send back on reviews, Confirm / Cancel on a confirmation, Stop run,
-  // Retry failed step, Propose), and what pressing it does its accessible description (aria-describedby),
-  // said beside it in words too, so no reader loses it. Returns [button, what it does].
+  // Retry failed step, Propose), and what pressing it does its accessible description (aria-describedby), shown
+  // as a tooltip on hover and on keyboard focus (T239), never as text beside every button; Escape hides it.
+  // Returns [button, what it does].
   let doesCount = 0
   const decision = (label, consequence, props) => {
     const id = 'does-' + (++doesCount)
-    return [el('button', Object.assign({ type: 'button' }, props, { 'aria-describedby': id }), label), el('span', { id, class: 'does' }, consequence)]
+    const button = el('button', Object.assign({ type: 'button' }, props, { 'aria-describedby': id }), label)
+    const tip = el('span', { id, class: 'does', role: 'tooltip' }, consequence)
+    tooltip(button, tip)
+    return [button, tip]
   }
+  // A tooltip beside its control, placed in the viewport (never wider than the screen, so a phone does not scroll sideways).
+  function tooltip(control, tip) {
+    const place = () => {
+      tip.classList.add('shown')
+      const box = control.getBoundingClientRect()
+      const width = tip.offsetWidth, height = tip.offsetHeight
+      tip.style.left = Math.max(8, Math.min(box.left, innerWidth - width - 8)) + 'px'
+      tip.style.top = (box.bottom + 4 + height > innerHeight ? Math.max(4, box.top - height - 4) : box.bottom + 4) + 'px'
+    }
+    const hide = () => tip.classList.remove('shown')
+    placers.set(tip, place)
+    control.addEventListener('mouseenter', place)
+    control.addEventListener('mouseleave', () => { if (document.activeElement !== control || !control.matches(':focus-visible')) hide() })
+    control.addEventListener('focus', () => { if (control.matches(':focus-visible')) place() })
+    control.addEventListener('blur', hide)
+    control.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide() })
+  }
+  // A shown tooltip follows its control as the page scrolls or resizes.
+  const placers = new WeakMap()
+  const replace = () => { for (const tip of document.querySelectorAll('.does.shown')) { const place = placers.get(tip); if (place) place() } }
+  window.addEventListener('scroll', replace, { passive: true })
+  window.addEventListener('resize', replace)
   // What Deny does to a start System proposes (ADR-0064), the same on its request's card and under Starts awaiting
   // approval: nothing starts, and that attempt is never asked about again (T197).
   const DISPATCH_DENY = 'does not start it, and this attempt is not asked again'
@@ -148,11 +239,17 @@ export const APP_JS = `'use strict'
   const fold = (summary, ...body) => el('details', { class: 'fold' }, el('summary', {}, summary), el('div', { class: 'fold-body' }, body))
   // A card's one fold (T186): closed by default, and, once the operator opens it, kept open through the 5-second refresh.
   const openFolds = new Set()
-  const cardFold = (key, ...body) => {
-    const details = fold('Details', ...body)
-    details.classList.add('card-details')
+  // A fold open by default that the operator closed stays closed through the refresh.
+  const closedFolds = new Set()
+  const keptFold = (key, summary, ...body) => {
+    const details = fold(summary, ...body)
     if (openFolds.has(key)) details.open = true
     details.addEventListener('toggle', () => { if (details.open) openFolds.add(key); else openFolds.delete(key) })
+    return details
+  }
+  const cardFold = (key, ...body) => {
+    const details = keptFold(key, 'Details', ...body)
+    details.classList.add('card-details')
     return details
   }
   // A list of at most LIST_SHOWN rows, and a "Show all N" that shows the rest and stays so through the refresh (T186).
@@ -260,13 +357,13 @@ export const APP_JS = `'use strict'
   document.addEventListener('pointercancel', release, true)
   document.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') press() }, true)
   document.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') release() }, true)
-  // Every page opens with its title and, in a few words, what it is for.
+  // Every page opens with its title; where the title alone does not say what the page is for, one short sentence (T239).
   const PAGES = {
-    home: ['Home', 'Your next actions and recent activity.'],
-    board: ['Board', 'Projects and tasks.'],
-    workers: ['Workers', 'Availability, quota, and current work.'],
+    home: ['Home'],
+    board: ['Board'],
+    workers: ['Workers'],
     policy: ['Autonomy policy', 'Control which actions need approval.'],
-    run: ['Run', 'Result and progress.'],
+    run: ['Run'],
     help: ['How System works', 'Find an answer or look up a term.'],
   }
   // The words a person meets on these pages, each in one plain sentence (T126): the Help page lists
@@ -284,6 +381,7 @@ export const APP_JS = `'use strict'
     project: ['project', 'A project groups tasks under a charter, what it is for, which you approve before any of its tasks starts.'],
     task: ['task', 'A task is one piece of a project\\'s work: what it should achieve, and how to tell that it did.'],
     run: ['run', 'A run is one go at some work: its steps, one after another, each on a Worker.'],
+    start: ['ready task', 'A ready task starts when you press Start on its card or the lead runs it: the run claims the task, and a Worker that can do it takes it.'],
     step: ['step', 'A step is one part of a run, done by one Worker, such as changing the code, reviewing it, or testing it.'],
     attempt: ['attempt', 'An attempt is one try at a task or a step; one that fails can be tried again, up to its limit.'],
     review: ['review', 'A review is a finished task\\'s result waiting for you: you accept it, or send it back for another try.'],
@@ -432,12 +530,11 @@ export const APP_JS = `'use strict'
     refresh()
   }
 
-  // Idle capacity in numbers; how a ready task gets a Worker is folded beside the Board's Start (startHelp).
+  // Idle capacity in numbers; how a ready task gets a Worker is behind the Board's Ready "?" (whatIs('start')).
   const capacityText = (free, ready) => (free === undefined ? 'Free Workers unknown' : qty(free, 'Worker') + ' free') + ' · ' + qty(ready, 'task') + ' ready'
-  const startHelp = () => fold('How a ready task starts', 'A ready task starts when you press Start on its card or the lead runs it: the run claims the task, and a Worker that can do it takes it.')
   // An error state with its one next action; the page also tries again by itself every 5 seconds.
   const errorState = (text) => el('div', { class: 'panel bad error-state' }, el('p', { class: 'state failed' }, text), el('button', { type: 'button', onclick: () => refresh() }, 'Try again'))
-  const pageHead = (page, title, runId) => [el('h2', { class: 'page', 'data-page': page === 'run' ? 'run:' + runId : page }, title || PAGES[page][0]), el('p', { class: 'lead' }, PAGES[page][1])]
+  const pageHead = (page, title, runId) => [el('h2', { class: 'page', 'data-page': page === 'run' ? 'run:' + runId : page }, title || PAGES[page][0]), PAGES[page][1] ? el('p', { class: 'lead' }, PAGES[page][1]) : null]
   // The page the address names now: what a render must be of to be shown.
   function shownPage() { return view === 'policy' || view === 'board' || view === 'workers' || view === 'help' ? view : current ? 'run:' + current : 'home' }
   const table = (head, rows, cls) => el('table', cls ? { class: cls } : {}, el('thead', {}, el('tr', {}, head.map((h) => el('th', {}, h)))), el('tbody', {}, rows))
@@ -460,7 +557,7 @@ export const APP_JS = `'use strict'
   const relative = (iso) => {
     const ms = Date.parse(iso) - Date.now()
     const past = ms < 0, m = Math.round(Math.abs(ms) / 60000)
-    const span = m < 1 ? 'less than a minute' : m < 60 ? m + ' min' : m < 48 * 60 ? Math.round(m / 60) + ' h' : Math.round(m / 1440) + ' days'
+    const span = m < 1 ? '<1 min' : m < 60 ? m + ' min' : m < 48 * 60 ? Math.round(m / 60) + ' h' : Math.round(m / 1440) + ' days'
     return past ? span + ' ago' : 'in ' + span
   }
   // A relative time (the shared building block): its exact time on hover (title) and on keyboard focus.
@@ -672,12 +769,12 @@ export const APP_JS = `'use strict'
       // An irreversible consequence stays in sight, as a chip on the line (T172: never folded).
       const undone = (text) => /Cannot be undone/.test(text || '')
       const irreversible = undone(d.deny) ? 'Deny cannot be undone' : undone(d.approve) ? 'Approve cannot be undone' : undone(r.action.consequences) ? 'Cannot be undone' : null
-      // One line, what is asked, for which task, and when it expires with what no response means; then the two buttons; every
-      // other fact (who asked, what it is about, its exact subject, what each verdict does, how it works, the ids) under one closed Details (T186).
+      // Its title and, as its one chip, an irreversible verdict; one line of context, when it expires; then the two buttons
+      // (T239); every other fact (for which task, who asked, what it is about, its exact subject, what each verdict and no
+      // response do, how it works, the ids) under one closed Details (T186).
       return el('article', { class: 'panel request', id: 'request-' + r.requestId, tabindex: '-1', 'aria-labelledby': 'title-' + r.requestId },
-        el('div', { class: 'line' }, el('h3', { id: 'title-' + r.requestId }, d.title),
-          el('span', { class: 'meta' }, d.for ? 'for ' + d.for + ' · ' : '', expires(r.expiresAt, 'denied')),
-          irreversible ? chip(irreversible, 'warn') : null),
+        el('div', { class: 'line' }, el('h3', { id: 'title-' + r.requestId }, d.title), irreversible ? chip(irreversible, 'warn') : null),
+        el('p', { class: 'meta' }, expires(r.expiresAt)),
         // A policy change's own diff stays one press away, beside the verdict buttons: never folded away (T186).
         // Show change has the policy page's wording, what it does its accessible description, as each verdict's (T191).
         el('div', { class: 'actions' }, yes, yesDoes, no, noDoes,
@@ -686,6 +783,8 @@ export const APP_JS = `'use strict'
         cardFold('request-' + r.requestId,
           el('p', {}, 'Asked by ' + d.by + ' · ', el('span', { class: 'tag' }, r.action.class), whatIs(r.action.class === 'policy-change' ? 'policy-change' : r.action.class === 'merge' ? 'merge' : 'action-class')),
           el('dl', {},
+            d.for ? [el('dt', {}, 'For'), el('dd', {}, d.for)] : null,
+            el('dt', {}, 'No response'), el('dd', {}, 'denied'),
             d.title === r.action.summary ? null : [el('dt', {}, 'Request'), el('dd', {}, folded(r.action.summary, 'details'))],
             el('dt', {}, 'About'), el('dd', {}, d.subject),
             el('dt', {}, 'Exact subject'), el('dd', {}, el('code', {}, subjectText(r.subject))),
@@ -710,9 +809,10 @@ export const APP_JS = `'use strict'
       el('p', { class: 'state failed' }, 'The approval queue could not be read: ' + q.error.message + '. Approvals unknown; retrying every 5 s.'))
     const { batches, requests, card, decide, noteFor, noteOf } = q
     const earliest = requests.reduce((min, r) => !min || r.expiresAt < min ? r.expiresAt : min, undefined)
+    // Its count is Home's tile; its next expiry, the first card's, or in sight when within the hour (T239).
     return el('section', { 'aria-label': 'Approval queue' }, el('h2', {}, 'Approvals', whatIs('approval')),
-      requests.length ? el('p', {}, qtyView(requests.length, 'approval'), ' · next expiry ', el('span', { class: Date.parse(earliest) - Date.now() < 3600000 ? 'soon' : '' }, relative(earliest)))
-        : el('p', { class: 'muted' }, 'No approvals needed.'),
+      !requests.length ? el('p', { class: 'muted' }, 'No approvals needed.')
+        : Date.parse(earliest) - Date.now() < 3600000 ? el('p', { class: 'soon' }, 'Next expiry ' + relative(earliest)) : null,
       batches.map((batch) => {
         if (!batch.batchId) return el('div', {}, batches.length > 1 ? el('h3', {}, 'Decided one by one') : null, batch.requests.map((r) => card(r)))
         const [yes, yesDoes] = decision('Approve all ' + batch.requests.length, 'approves each request below as shown', { class: 'primary' })
@@ -720,10 +820,12 @@ export const APP_JS = `'use strict'
         const all = (v, clicked) => () => decide(batch.requests.map((r) => ({ requestId: r.requestId, subject: r.subject, verdict: v, ...(noteOf(r.requestId) ? { note: noteOf(r.requestId) } : {}) })), noteOf(batch.batchId), batch.batchId, [yes, no], clicked)
         yes.addEventListener('click', all('approved', yes))
         no.addEventListener('click', all('rejected', no))
+        // The batch's two buttons in sight; its note for all and its id under its one Details (T239).
         return el('section', { class: 'panel', 'aria-label': 'Batch ' + batch.batchId },
-          el('h3', {}, qty(batch.requests.length, 'related request'), whatIs('batch')),
-          el('div', { class: 'batch-actions' }, noteFor(batch.batchId, 'Note for all (optional)'), yes, yesDoes, no, noDoes),
-          fold('Batch ID', el('code', {}, batch.batchId), copyId('Copy batch ID', batch.batchId)),
+          el('h3', {}, qtyView(batch.requests.length, 'related request'), whatIs('batch')),
+          el('div', { class: 'actions' }, yes, yesDoes, no, noDoes),
+          cardFold('batch-' + batch.batchId, el('div', { class: 'batch-actions' }, noteFor(batch.batchId, 'Note for all (optional)')),
+            el('div', { class: 'muted' }, 'batch ', el('code', {}, batch.batchId), copyId('Copy batch ID', batch.batchId))),
           batch.requests.map((r) => card(r)))
       }))
   }
@@ -905,12 +1007,13 @@ export const APP_JS = `'use strict'
       const key = 'review-' + r.taskId
       const input = el('input', { id: 'note-' + key, value: notes.get(key) || '', oninput: () => notes.set(key, input.value) })
       const evidenceRead = evidence && !evidence.error
-      // The title, its project, and when it expires with what no response means, in one line; then the change, the checks, and
-      // each reviewer's verdict as chips; the warnings that bear on the verdict; the two buttons; every long text under one Details (T186).
+      // The title; one line of context, its project and when it expires; then the change, the checks, and each reviewer's
+      // verdict as chips; the warnings that bear on the verdict; the two buttons; every long text, and what no response
+      // does, under one Details (T186, T239).
       return el('article', { class: 'panel request', id: 'review-' + r.taskId, tabindex: '-1', 'aria-labelledby': 'review-title-' + r.taskId },
-        el('div', { class: 'line' }, el('h3', { id: 'review-title-' + r.taskId }, r.title),
-          el('span', { class: 'meta' }, 'Project ' + (r.project.title || r.project.projectId) + ' · ',
-            !r.expiresAt ? 'no expiry known' : r.heldFor === 'operator' ? expires(r.expiresAt, 'it waits for input') : ['its reviewer\\'s until ', ago(r.expiresAt)])),
+        el('div', { class: 'line' }, el('h3', { id: 'review-title-' + r.taskId }, r.title)),
+        el('p', { class: 'meta' }, 'Project ' + (r.project.title || r.project.projectId) + ' · ',
+          !r.expiresAt ? 'no expiry known' : r.heldFor === 'operator' ? expires(r.expiresAt) : ['its reviewer\\'s until ', ago(r.expiresAt)]),
         el('div', { class: 'summary' }, evidenceRead ? changeSummary(evidence.change) : null, checkChips(r), evidenceRead ? verdictChips(evidence.assessments) : null),
         evidence && evidence.error ? evidenceView(evidence) : null,
         evidenceRead ? changeWarning(evidence.change, r.run && r.run.runId) : null,
@@ -918,7 +1021,8 @@ export const APP_JS = `'use strict'
         el('div', { class: 'actions' }, yes, yesDoes, no, noDoes),
         cardFold(key,
           r.goal ? el('p', {}, el('strong', {}, 'Asked: '), r.goal) : null,
-          el('p', {}, el('span', { class: 'tag' }, r.actionClass), ' task ' + r.taskId, r.expiresAt ? ' · expires ' + absolute(r.expiresAt) : ''),
+          el('p', {}, el('span', { class: 'tag' }, r.actionClass), ' task ' + r.taskId, r.expiresAt ? ' · expires ' + absolute(r.expiresAt) : '',
+            r.heldFor === 'operator' && r.expiresAt ? ' · No response: it waits for input' : ''),
           el('p', {}, r.run ? el('a', { href: '?run=' + encodeURIComponent(r.run.runId), onclick: (e) => { e.preventDefault(); go(r.run.runId) } }, 'open the run that made it') : 'no run is named'),
           el('dl', {}, el('dt', {}, 'Exact result'), el('dd', {}, el('div', {}, el('code', {}, subjectText(r.subject))), r.artifacts.map((a) => el('div', {}, el('code', {}, a))))),
           el('h4', {}, 'Required checks'), checksDetail(r),
@@ -929,8 +1033,12 @@ export const APP_JS = `'use strict'
     const mine = listed.filter((r) => r.heldFor === 'operator' && r.expiresAt)
     const first = mine.reduce((min, r) => !min || r.expiresAt < min ? r.expiresAt : min, undefined)
     const section = el('section', { id: 'reviews', 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews', whatIs('review')),
-      first ? el('p', {}, mine.length + (mine.length === 1 ? ' review is' : ' reviews are') + ' held for you; the first expires ',
-        el('span', { class: Date.parse(first) - Date.now() < 3600000 ? 'soon' : '' }, relative(first) + ' — ' + absolute(first)), '. Unanswered by then, its task waits for input, which nothing revives.') : null,
+      // When the first held for the operator expires, and what then: in sight within the hour, else folded (T239).
+      first ? (() => {
+        const said = [mine.length + (mine.length === 1 ? ' review is' : ' reviews are') + ' held for you; the first expires ',
+          el('span', { class: Date.parse(first) - Date.now() < 3600000 ? 'soon' : '' }, relative(first) + ' — ' + absolute(first)), '. Unanswered by then, its task waits for input, which nothing revives.']
+        return Date.parse(first) - Date.now() < 3600000 ? el('p', {}, said) : keptFold('reviews-expiry', 'When they expire', said)
+      })() : null,
       listed.length ? await Promise.all(listed.map(async (r) => card(r, r.run ? await reviewOf(r.run.runId, subjectText(r.subject)) : undefined))) : el('p', { class: 'muted' }, 'No review waits. When a Worker finishes a task, its result waits here for you to accept it or send it back.'),
       // A verdict's consequence stays in sight: each accepted result still on its way into the repository.
       accepted && accepted.length ? el('section', { 'aria-label': 'Accepted, on their way in' }, el('h3', {}, 'Accepted, on their way in', whatIs('landing')),
@@ -1060,7 +1168,7 @@ export const APP_JS = `'use strict'
       el('h3', {}, 'Since you last looked ', el('span', { class: 'muted' }, relative(seen.at) + ' (' + clockOf(seen.at) + ')')),
       // The latest 5, then "Show all N" for the rest (T186): every line read stays reachable.
       items.length ? capped('since', el('ul', { class: 'since', id: 'since-list' }), items, (i) => el('li', {}, i.line, i.link, ' ', el('span', { class: 'muted' }, relative(i.at)), i.fold || null))
-        : el('p', { class: 'muted' }, 'Nothing happened that needs you. Runs that end, tasks that move, and requests that expire appear here.'),
+        : el('p', { class: 'muted' }, 'Nothing happened that needs you.'),
       'value' in activity.runs ? null : el('p', { class: 'unknown' }, 'The runs that ended are unknown (' + activity.runs.unknown + ').'),
       'value' in activity.tasks ? null : el('p', { class: 'unknown' }, 'The tasks that moved are unknown (' + activity.tasks.unknown + ').'),
       'value' in activity.expired ? null : el('p', { class: 'unknown' }, 'The requests that expired are unknown (' + activity.expired.unknown + ').'),
@@ -1129,7 +1237,7 @@ export const APP_JS = `'use strict'
     const last = dispatch.lastPass
     const reasons = last && last.tasks.length ? fold('Why ready tasks did not start (' + relative(last.at) + ')',
       el('ul', {}, last.tasks.map((t) => el('li', {}, '"' + t.title + '": ' + t.reason))), last.more ? el('p', { class: 'muted' }, qty(last.more, 'more ready task') + ' not listed.') : null)
-      : last && last.reason ? el('p', { class: 'muted' }, 'Last look (' + relative(last.at) + '): ' + last.reason + '.') : null
+      : last && last.reason ? keptFold('dispatch-last', 'Last look, ' + relative(last.at), last.reason + '.') : null
     return panel(state,
       unread.length ? el('p', { class: 'state failed' }, 'Approvals unreadable, so these starts cannot be decided here now: ' + unread.map((a) => '"' + a.title + '" on ' + name(a.worker)).join(', ') + '.')
         : asked.length ? el('ul', { class: 'goes plain' }, asked.map(item))
@@ -1173,11 +1281,11 @@ export const APP_JS = `'use strict'
     const unread = ['requests', 'reviews', 'runs'].filter((name) => 'unknown' in part(name))
     const since = await sinceView(roster, titles)
     const jump = (id) => (e) => { e.preventDefault(); const target = document.getElementById(id); if (target) { target.scrollIntoView({ block: 'start' }); target.focus({ preventScroll: true }) } }
-    // Each thing that waits, by name under its count, one link from where it is decided (T141): the operator
-    // reads the names and acts, never counts first and searches after. At most WAITING_NAMED names a group.
+    // Each thing that waits, by name under its count, one link from where it is decided (T141); the count in sight, the
+    // names folded under it and kept open through the refresh (T239: Home's top shows only counts). At most WAITING_NAMED names a group.
     const expiry = (iso) => el('span', { class: Date.parse(iso) - Date.now() < 3600000 ? 'soon' : 'muted' }, ' · expires ' + relative(iso))
-    const nameList = (items, total, more) => items.length ? el('ul', { class: 'named' }, items.slice(0, WAITING_NAMED).map((line) => el('li', {}, line)),
-      total > Math.min(items.length, WAITING_NAMED) ? el('li', { class: 'muted' }, 'and ' + (total - Math.min(items.length, WAITING_NAMED)) + ' more: ', more) : null) : null
+    const nameList = (key, items, total, more) => items.length ? keptFold('names-' + key, 'Names',el('ul', { class: 'named' }, items.slice(0, WAITING_NAMED).map((line) => el('li', {}, line)),
+      total > Math.min(items.length, WAITING_NAMED) ? el('li', { class: 'muted' }, 'and ' + (total - Math.min(items.length, WAITING_NAMED)) + ' more: ', more) : null)) : null
     const requestNames = q && !q.error ? [...q.requests].sort((a, b) => (a.expiresAt < b.expiresAt ? -1 : 1)).map((r) => [el('a', { href: '#request-' + r.requestId, onclick: jump('request-' + r.requestId) }, q.described.get(r.requestId).title), expiry(r.expiresAt)]) : []
     const reviewNames = reviewed && reviewed.held ? reviewed.held.map((r) => [el('a', { href: '#review-' + r.taskId, onclick: jump('review-' + r.taskId) }, r.title), el('span', { class: 'muted' }, ' · project ' + (r.project.title || r.project.projectId)), expiry(r.expiresAt)]) : []
     // A run by its task's title, else its template.
@@ -1187,12 +1295,12 @@ export const APP_JS = `'use strict'
     const firstReview = part('reviews').firstExpires
     const waiting = [
       asked ? el('li', {}, el('a', { href: '#approvals', onclick: jump('approvals') }, 'Approvals · ' + asked),
-        nameList(requestNames, asked, el('a', { href: '#approvals', onclick: jump('approvals') }, 'See all'))) : null,
+        nameList('requests', requestNames, asked, el('a', { href: '#approvals', onclick: jump('approvals') }, 'See all'))) : null,
       toReview ? el('li', {}, el('a', { href: '#reviews', onclick: jump('reviews') }, 'Reviews · ' + toReview),
-        firstReview ? el('span', { class: Date.parse(firstReview) - Date.now() < 3600000 ? 'soon' : 'muted' }, ' · first expires ' + relative(firstReview)) : null,
-        nameList(reviewNames, toReview, el('a', { href: '#reviews', onclick: jump('reviews') }, 'See all'))) : null,
+        firstReview ? el('div', { class: Date.parse(firstReview) - Date.now() < 3600000 ? 'soon' : 'muted' }, 'first expires ' + relative(firstReview)) : null,
+        nameList('reviews', reviewNames, toReview, el('a', { href: '#reviews', onclick: jump('reviews') }, 'See all'))) : null,
       look.length ? el('li', {}, el('a', { href: '#needs-look', onclick: jump('needs-look') }, 'Runs needing attention · ' + look.length + (part('runs').more ? '+' : '')),
-        nameList(runNames, look.length, el('a', { href: '#needs-look', onclick: jump('needs-look') }, 'See all'))) : null,
+        nameList('runs', runNames, look.length, el('a', { href: '#needs-look', onclick: jump('needs-look') }, 'See all'))) : null,
       unread.length ? el('li', { class: 'unknown' }, 'What else needs you is unknown: ' + unread.map((name) => part(name).unknown).join('; ')) : null,
     ].filter(Boolean)
     const c = roster && roster.counts
@@ -1200,43 +1308,52 @@ export const APP_JS = `'use strict'
     const describing = roster && roster.sources && 'value' in roster.sources ? roster.sources.value.filter((s) => s.describing).map((s) => s.source) : []
     // The Worker a run is on now (the running step's, else the last that had one).
     const workerOf = (run) => { const n = run.nodes.find((x) => x.state === 'RUNNING' && x.worker) || [...run.nodes].reverse().find((x) => x.worker); return n ? names.get(n.worker) || n.worker : undefined }
+    const availability = c ? availabilityChips(roster, describing) : el('p', { class: 'unknown' }, 'Workers unknown: the roster could not be read.')
+    // Recent runs: the newest 5 rows, then "Show all N" (T239, as T186's lists).
+    const [recentBody, recentMore] = capped('recent', el('tbody', { id: 'recent-list' }), runs.slice(0, RECENT), (run) => el('tr', {},
+      el('td', {}, runLink(run, runTitle(run))),
+      el('td', { class: 'nowrap' }, runChip(run)),
+      el('td', {}, el('div', {}, stepsText(run), workerOf(run) ? el('span', { class: 'muted' }, ' · ' + workerOf(run)) : null),
+        fold('Steps', run.nodes.filter((n) => n.worker).map((n) => el('div', { class: 'muted' }, n.nodeId + ': ' + (names.get(n.worker) || n.worker))), el('div', { class: 'muted' }, 'template ' + run.template + ' · run ' + run.runId), copyId('Copy run ID', run.runId))),
+      el('td', { class: 'nowrap muted' }, ago(run.createdAt))))
+    // What needs the operator first, as count tiles beside the Workers' availability; then the decisions themselves;
+    // then what happened, the Workers in full, and the recent runs (T239).
+    // Right now by name, from the same capacity summary the Workers page renders (T152), by the same function (T160).
+    const rightNow = roster && roster.now && 'value' in roster.workers && roster.workers.value.length
+      ? glanceView(roster.now, readyNow(roster.now) !== undefined ? readyNow(roster.now) : ready, roster.workers.value) : null
+    // What needs the operator first, as count tiles beside the Workers' availability as chips (T239); then the decisions
+    // themselves; then what happened, the Workers in full (their counts said once, in the chips), and the recent runs.
     show(pageHead('home'),
-      el('section', { class: 'panel', 'aria-label': 'Needs your attention' }, el('h3', {}, 'Needs your attention'),
-        waiting.length ? el('ul', {}, waiting) : el('p', { class: 'muted' }, 'You’re all caught up.')),
-      goView(dispatch, q, names, jump),
-      startedView(dispatch, names),
-      since,
-      el('section', { class: 'panel', 'aria-label': 'Workers at a glance' }, el('h3', {}, 'Workers'),
-        c ? el('p', {}, c.busy + ' working · ' + c.ready + ' free · ' + c.resting + ' resting · ' + c.unavailable + ' unavailable' + (c.quarantined ? ' · ' + c.quarantined + ' quarantined' : '')
-          + (describing.length ? ' · counts incomplete: ' + describing.join(', ') + ' loading' : '') + ' ',
-          el('a', { href: '/ui/?view=workers', onclick: (e) => { e.preventDefault(); document.getElementById('workers-link').click() } }, 'Open Workers'))
-          : el('p', { class: 'unknown' }, 'Workers unknown: the roster could not be read.'),
-        // Each account's capacity in one line, its 5 h bar beside it (the CEO's view of what is left).
-        roster && 'value' in roster.workers && accountsOf(roster.workers.value).some((g) => g.account)
-          ? el('ul', { class: 'capacities', 'aria-label': 'Capacity of each account' }, accountsOf(roster.workers.value).filter((g) => g.account).map(capacityLine)) : null,
-        // Right now by name, from the same capacity summary the Workers page renders (T152), by the same function (T160).
-        roster && roster.now && 'value' in roster.workers && roster.workers.value.length
-          ? glanceView(roster.now, readyNow(roster.now) !== undefined ? readyNow(roster.now) : ready, roster.workers.value) : null,
-        ready !== undefined ? el('p', { 'aria-label': 'Capacity' }, capacityText(c ? c.ready : undefined, ready), ' ', el('a', { href: '/ui/?view=board', onclick: (e) => { e.preventDefault(); document.getElementById('board-link').click() } }, 'Open Board')) : null),
+      el('div', { class: 'overview' },
+        el('section', { class: 'panel', 'aria-label': 'Needs your attention' }, el('h3', {}, 'Needs your attention'),
+          waiting.length ? el('ul', { class: 'tiles' }, waiting) : el('p', { class: 'muted' }, 'You’re all caught up.')),
+        el('section', { class: 'panel', 'aria-label': 'Workers availability' },
+          el('div', { class: 'head' }, el('h3', {}, 'Workers'), pageLink('workers', 'Open Workers')), availability)),
       queued ? (queued.id = 'approvals', queued.setAttribute('tabindex', '-1'), queued) : null,
       reviewed ? (reviewed.setAttribute('tabindex', '-1'), reviewed) : null,
       // Task title first, the reason as a chip, one action; the run id behind its copy button (T171).
       // At most 5 runs, then "Show all N" for the rest (T186).
       look.length ? el('section', { id: 'needs-look', tabindex: '-1', 'aria-label': 'Runs needing attention' }, el('h2', {}, 'Runs needing attention'),
         capped('needs-look', el('div', { id: 'needs-look-list' }), look, (run) => el('article', { class: 'panel request', 'aria-label': runTitle(run) },
-          el('h3', {}, runTitle(run)),
-          el('p', {}, chip(lookOf(run)[0], run.status === 'failed' ? 'bad' : 'warn'), lookOf(run)[1] ? ' ' + lookOf(run)[1] : '', el('span', { class: 'muted' }, ' · started '), ago(run.createdAt)),
-          el('p', {}, runLink(run, 'Open run'), copyId('Copy run ID', run.runId))))) : null,
-      el('h2', {}, 'Recent runs'),
+          el('div', { class: 'line' }, el('h3', {}, runTitle(run)), chip(lookOf(run)[0], run.status === 'failed' ? 'bad' : 'warn')),
+          el('p', { class: 'meta' }, lookOf(run)[1] ? lookOf(run)[1] + ' · ' : '', 'started ', ago(run.createdAt)),
+          el('div', { class: 'actions' }, runLink(run, 'Open run'), copyId('Copy run ID', run.runId))))) : null,
+      goView(dispatch, q, names, jump),
+      since,
+      startedView(dispatch, names),
+      el('section', { class: 'panel', 'aria-label': 'Workers at a glance' }, el('h3', {}, 'Workers'),
+        c ? null : el('p', { class: 'unknown' }, 'Workers unknown: the roster could not be read.'),
+        // Each account's capacity in one line, its 5 h bar beside it (the CEO's view of what is left).
+        roster && 'value' in roster.workers && accountsOf(roster.workers.value).some((g) => g.account)
+          ? el('ul', { class: 'capacities', 'aria-label': 'Capacity of each account' }, accountsOf(roster.workers.value).filter((g) => g.account).map(capacityLine)) : null,
+        rightNow,
+        // Without Right now, the free Workers and the ready tasks in numbers.
+        !rightNow && ready !== undefined ? el('p', { 'aria-label': 'Capacity' }, capacityText(c ? c.ready : undefined, ready), ' ', pageLink('board', 'Open Board')) : null),
       // Each run by its task's title (else its template), its state, its progress and current Worker; every step's Worker, its template, and its id folded (T124, T171).
-      runs.length ? table(['Run', 'Status', 'Progress', 'Started'], runs.slice(0, RECENT).map((run) => el('tr', {},
-        el('td', {}, runLink(run, runTitle(run))),
-        el('td', { class: 'nowrap' }, runChip(run)),
-        el('td', {}, el('div', {}, stepsText(run), workerOf(run) ? el('span', { class: 'muted' }, ' · ' + workerOf(run)) : null),
-          fold('Steps', run.nodes.filter((n) => n.worker).map((n) => el('div', { class: 'muted' }, n.nodeId + ': ' + (names.get(n.worker) || n.worker))), el('div', { class: 'muted' }, 'template ' + run.template + ' · run ' + run.runId), copyId('Copy run ID', run.runId))),
-        el('td', { class: 'nowrap muted' }, ago(run.createdAt)),
-      ))) : el('p', { class: 'muted' }, 'No runs yet · ', pageLink('board', 'Open Board')),
-      runs.length > RECENT ? el('p', { class: 'muted' }, qty(runs.length - RECENT, 'older run') + ' not listed; open one by its link, or ask with system status.') : null)
+      el('section', { 'aria-label': 'Recent runs' }, el('h2', {}, 'Recent runs'),
+        runs.length ? [el('table', {}, el('thead', {}, el('tr', {}, ['Run', 'Status', 'Progress', 'Started'].map((h) => el('th', {}, h)))), recentBody), recentMore]
+          : el('p', { class: 'muted' }, 'No runs yet · ', pageLink('board', 'Open Board')),
+        runs.length > RECENT ? el('p', { class: 'muted' }, qty(runs.length - RECENT, 'older run') + ' not listed; open one by its link, or ask with system status.') : null))
     if (focusRequest) {
       const id = focusRequest
       focusRequest = null
@@ -1313,13 +1430,31 @@ export const APP_JS = `'use strict'
     ].filter(Boolean)
     // A step's readable name; its id is folded (T171).
     const stepName = (nodeId) => stepWords(nodeId) || nodeId
-    const blockedIds = (b) => fold('Details', el('div', {}, 'step ' + b.nodeId), b.approvalRequest ? el('div', {}, 'request ', el('code', {}, b.approvalRequest), copyId('Copy request ID', b.approvalRequest)) : null,
-      b.until ? el('div', {}, 'until ' + absolute(b.until)) : null)
+    const blockedIds = (b, ...more) => keptFold('blocked-' + runId, 'Details', el('div', {}, 'step ' + stepName(b.nodeId) + (stepWords(b.nodeId) ? ' (' + b.nodeId + ')' : '')), b.approvalRequest ? el('div', {}, 'request ', el('code', {}, b.approvalRequest), copyId('Copy request ID', b.approvalRequest)) : null,
+      b.until ? el('div', {}, 'until ' + absolute(b.until)) : null, more)
+    // A long answer shows its first lines, then "Show all", kept through the refresh (T239).
+    const answerView = (text) => {
+      const long = text.split('\\n').length > 6 || text.length > 480
+      const pre = el('pre', { class: 'answer' + (long && !expandedLists.has('answer-' + runId) ? ' clamped' : ''), id: 'answer-' + runId }, text)
+      if (!long) return [pre]
+      const all = el('button', { type: 'button', class: 'show-all', 'aria-controls': 'answer-' + runId, 'aria-expanded': String(expandedLists.has('answer-' + runId)) }, expandedLists.has('answer-' + runId) ? 'Show less' : 'Show all')
+      all.addEventListener('click', () => {
+        const open = !expandedLists.has('answer-' + runId)
+        if (open) expandedLists.add('answer-' + runId); else expandedLists.delete('answer-' + runId)
+        pre.classList.toggle('clamped', !open)
+        all.textContent = open ? 'Show less' : 'Show all'
+        all.setAttribute('aria-expanded', String(open))
+      })
+      return [pre, all]
+    }
     show(
-      // Headed by its task's title (else its template); its project and attempt below, its id behind a copy button (T171).
+      // Headed by its task's title (else its template); its project and attempt below, its id under Technical details (T171, T239).
       pageHead('run', served ? served.title : run.template + ' run', run.runId),
-      el('p', { class: 'muted' }, served ? served.project + (carry && carry.from ? ' · Attempt ' + (carry.from.attempt + 1) + ' of ' + served.attempts.max : '') : 'No board task', copyId('Copy run ID', run.runId)),
-      el('p', { class: 'status-line' }, runChip(run), ' ' + where, el('span', { class: 'muted' }, ' · started '), ago(run.createdAt)),
+      served ? el('p', { class: 'muted' }, served.project + (carry && carry.from ? ' · Attempt ' + (carry.from.attempt + 1) + ' of ' + served.attempts.max : '')) : null,
+      // Its state as a chip, where it is (unless a card below says what it waits on), when it started, and Stop run or Retry.
+      el('div', { class: 'status-line' }, runChip(run), run.blocked ? null : el('span', {}, where), el('span', { class: 'muted' }, 'started ', ago(run.createdAt)),
+        run.status === 'running' ? [stop, stopDoes, stopping] : null,
+        run.status === 'failed' ? [retry, retryDoes] : null),
       happened.length ? el('section', { class: 'panel', 'aria-label': 'What happened' }, el('h3', {}, 'What happened'), el('ul', {}, happened)) : null,
       tie ? el('div', { class: 'panel' },
         el('p', {}, chip('Team vote tied', 'warn'), ' · Decide within ' + relative(tie.until).replace(/^in /, ''), el('span', { class: 'muted' }, ' · No response: inconclusive')),
@@ -1335,47 +1470,49 @@ export const APP_JS = `'use strict'
       run.blocked && !tie && run.blocked.kind !== 'tool-call' && run.blocked.approvalRequest ? el('div', { class: 'panel' },
         el('p', {}, chip('Fix awaiting approval', 'warn'), run.blocked.until ? [' · ', expires(run.blocked.until)] : null, ' · ', decideLink(run.blocked.approvalRequest, 'Review request')),
         blockedIds(run.blocked)) : null,
-      run.blocked && !tie && !run.blocked.approvalRequest ? el('div', { class: 'panel' },
-        el('p', {}, chip('Plan awaiting approval', 'warn'), ' · ' + stepName(run.blocked.nodeId)),
-        fold('Plan id', el('code', {}, run.blocked.plan), copyId('Copy plan ID', run.blocked.plan)),
-        el('div', { class: 'actions' }, el('label', { for: 'plan-note' }, 'Note (optional)', note),
-          // Approve / Deny, as on every approval (T191).
+      // A card: what it waits on as its title, Approve / Deny (T191); its step, the plan id, and an optional note under Details (T239).
+      run.blocked && !tie && !run.blocked.approvalRequest ? el('section', { class: 'panel request', 'aria-label': 'Plan awaiting approval' },
+        el('h3', {}, 'Plan awaiting approval'),
+        el('div', { class: 'actions' },
           decision('Approve', 'the step goes on with this plan', { class: 'primary', onclick: act('approve', () => ({ verdict: 'approved', note: note.value, plan: run.blocked.plan })) }),
-          decision('Deny', 'this plan does not run', { onclick: act('approve', () => ({ verdict: 'rejected', note: note.value, plan: run.blocked.plan })) }))) : null,
-      run.status === 'running' || run.status === 'failed' ? el('div', { class: 'actions' },
-        run.status === 'running' ? [stop, stopDoes, stopping] : null,
-        run.status === 'failed' ? [retry, retryDoes] : null) : null,
+          decision('Deny', 'this plan does not run', { onclick: act('approve', () => ({ verdict: 'rejected', note: note.value, plan: run.blocked.plan })) })),
+        blockedIds(run.blocked, el('div', {}, 'plan ', el('code', {}, run.blocked.plan), copyId('Copy plan ID', run.blocked.plan)),
+          el('div', { class: 'actions' }, el('label', { for: 'plan-note' }, 'Note (optional)', note)))) : null,
       // Where it is now, refreshed with the page: each running step on its Worker and for how long, its last event, and a stall.
       now ? el('section', { class: 'panel', 'aria-label': 'Now' }, el('h3', {}, 'Now', whatIs('step')),
         now.steps.map((st) => el('div', {}, (stepWords(st.nodeId) ? 'T' + stepWords(st.nodeId).slice(1) : 'Step ' + st.nodeId) + (st.worker ? ' on ' + nameOf(st.worker) : '') + (st.since ? ', for ' + relative(st.since).replace(/ ago$/, '') : '') + (st.attempt > 1 ? ' (attempt ' + st.attempt + ')' : ''))),
-        el('div', { class: 'muted' }, lastText(now)), stalledOf(now) ? [stalledOf(now), whatIs('stalled')] : null) : null,
+        // Its last event; one that cannot be told says so, why folded (T239).
+        'value' in now.lastEvent ? el('div', { class: 'muted' }, lastText(now)) : el('div', { class: 'muted' }, 'Last event unknown', keptFold('last-event-' + runId, 'Why', now.lastEvent.unknown)),
+        stalledOf(now) ? [stalledOf(now), whatIs('stalled')] : null) : null,
       moving && moving.unknown ? el('p', { class: 'unknown' }, 'Where it is now is unknown (' + moving.unknown + ').') : null,
       // A check of its result that printed nothing for its bound: told now, long before its deadline (T235).
       explain && explain.stalledChecks && explain.stalledChecks.length ? el('section', { class: 'panel', 'aria-label': 'Checks' }, el('h3', {}, 'Checks'),
         explain.stalledChecks.map((c) => el('div', {}, chip('Check stalled', 'warn'), ' ' + c.check + ': no output since ', ago(c.quietSince),
           el('span', { class: 'muted' }, ' · it goes on until its deadline'),
           fold('Details', el('div', {}, 'command ', el('code', {}, c.command)), el('div', {}, 'stalled at ' + absolute(c.since) + ', after ' + c.stallSeconds + ' s with no output'))))) : null,
-      run.answer ? el('div', { class: 'panel' }, el('h3', {}, 'Answer'), el('pre', { class: 'answer' }, run.answer))
-        : el('p', { class: 'muted' }, run.status === 'completed' ? 'No answer text.' : 'No answer yet.'),
+      run.answer ? el('section', { class: 'panel', 'aria-label': 'Answer' }, el('h3', {}, 'Answer'), answerView(run.answer))
+        : run.status === 'completed' ? el('p', { class: 'muted' }, 'No answer text.') : null,
       evidence && (evidence.error || ('value' in evidence.change && (evidence.change.value.changes.length || evidence.change.value.unread.length)) || ('value' in evidence.assessments && evidence.assessments.value.length) || landing)
         ? el('section', { class: 'panel request', 'aria-label': 'Changes and reviews' }, el('h3', {}, 'Changes and reviews'), landing && !(run.task && run.task.landing) ? landingLine(landing) : null, evidenceView(evidence, false)) : null,
-      el('h3', {}, 'Steps'),
-      // Each step by its readable name, its state, and its Worker; its id and an earlier attempt's error folded, a current failure in sight (T171).
-      el('ol', { class: 'timeline' }, run.nodes.map((n) => {
-        const [word, cls] = STEP[n.state] || [n.state.toLowerCase(), 'unknown']
-        const made = decisions.get(n.nodeId) || []
-        return el('li', { class: 'step' },
-          el('div', {}, el('strong', {}, stepName(n.nodeId)), ' ', el('span', { class: 'state ' + cls }, word),
-            n.worker ? el('span', { class: 'muted' }, ' · ' + nameOf(n.worker) + (names.has(n.worker) ? '' : ' · ' + (n.tier || n.minTier) + ' tier') + (n.attempt > 1 ? ' · attempt ' + n.attempt : '')) : el('span', { class: 'muted' }, ' · needs ' + (/^[aeiou]/.test(n.minTier) ? 'an ' : 'a ') + n.minTier + ' tier Worker')),
-          // An earlier attempt's error on a step that goes on is history, never shown as its failure now.
-          n.error && n.state === 'FAILED' ? el('div', { class: 'state failed' }, failureText(n.error)) : null,
-          n.error && n.state !== 'FAILED' ? fold('Attempt history', el('div', { class: 'muted' }, 'An earlier attempt failed: ' + failureText(n.error))) : null,
-          stepWords(n.nodeId) ? fold('Step ID', el('code', {}, n.nodeId)) : null,
-          made.length ? el('details', {}, el('summary', {}, 'How it was decided (' + made.length + ')'),
-            made.map((d) => el('div', {}, el('strong', {}, d.type + ': '), d.outcome, el('span', { class: 'muted' }, ' — ' + d.reasons.join('; '))))) : null)
-      })),
-      fold('Technical details', el('p', { class: 'muted' }, 'Template ' + run.template + ' · last changed ', ago(run.updatedAt), ' · spec ', el('code', {}, run.specHash), run.sessionId ? ' · session ' + run.sessionId : ''),
-        el('p', { class: 'muted' }, 'run ', el('code', {}, run.runId))),
+      el('section', { 'aria-label': 'Steps' }, el('h2', {}, 'Steps'),
+        // Each step by its readable name, its state, and its Worker; what it needs, its id, how it was decided, and an earlier
+        // attempt's error folded, a current failure in sight (T171, T239).
+        el('ol', { class: 'timeline' }, run.nodes.map((n) => {
+          const [word, cls] = STEP[n.state] || [n.state.toLowerCase(), 'unknown']
+          const made = decisions.get(n.nodeId) || []
+          return el('li', { class: 'step' },
+            el('div', {}, el('strong', {}, stepName(n.nodeId)), ' ', el('span', { class: 'state ' + cls }, word),
+              n.worker ? el('span', { class: 'muted' }, ' · ' + nameOf(n.worker) + (n.attempt > 1 ? ' · attempt ' + n.attempt : '')) : null),
+            // An earlier attempt's error on a step that goes on is history, never shown as its failure now.
+            n.error && n.state === 'FAILED' ? el('div', { class: 'state failed' }, failureText(n.error)) : null,
+            n.error && n.state !== 'FAILED' ? fold('Attempt history', el('div', { class: 'muted' }, 'An earlier attempt failed: ' + failureText(n.error))) : null,
+            keptFold('step-' + runId + '-' + n.nodeId, 'Details', stepWords(n.nodeId) ? el('div', {}, 'step ', el('code', {}, n.nodeId)) : null,
+              el('div', { class: 'muted' }, n.worker ? (n.tier || n.minTier) + ' tier' : 'needs ' + (/^[aeiou]/.test(n.minTier) ? 'an ' : 'a ') + n.minTier + ' tier Worker'),
+              made.length ? [el('div', {}, 'How it was decided (' + made.length + ')'),
+                made.map((d) => el('div', {}, el('strong', {}, d.type + ': '), d.outcome, el('span', { class: 'muted' }, ' — ' + d.reasons.join('; '))))] : null))
+        }))),
+      keptFold('tech-' + runId, 'Technical details', el('p', { class: 'muted' }, 'Template ' + run.template + ' · last changed ', ago(run.updatedAt), ' · spec ', el('code', {}, run.specHash), run.sessionId ? ' · session ' + run.sessionId : ''),
+        el('p', { class: 'muted' }, 'run ', el('code', {}, run.runId), copyId('Copy run ID', run.runId))),
     )
   }
 
@@ -1483,15 +1620,16 @@ export const APP_JS = `'use strict'
       el('option', { value: 'all' }, 'All projects (' + projects.length + ')'), projects.map((p) => el('option', { value: p.projectId }, p.title)))
     pick.value = shownProjects.length === projects.length ? 'all' : boardProject
     const ready = shownProjects.reduce((n, p) => n + (p.open.ready || 0), 0)
+    // A project's card: its title and its state as a chip; its open tasks; its state as counts; what of it needs you; its
+    // moves; its id and charter version folded (T171, T239).
     const head = (p) => el('article', { class: 'panel request', 'aria-labelledby': 'project-' + p.projectId },
-      el('h3', { id: 'project-' + p.projectId }, p.title),
-      // Its state as a chip and its open tasks; its id and charter version folded (T171).
-      el('div', { class: 'meta' }, chip(p.closure ? 'closed (' + p.closure.outcome + ')' : p.state, p.state === 'active' ? 'ok' : p.state === 'paused' ? 'warn' : 'idle'), ' · ' + qty(count(p, OPEN), 'open task'),
-        p.amendment ? ' · Amendment awaiting approval' : '',
-        fold('Details', 'project ' + p.projectId + ' · charter version ' + p.charter.version + (p.amendment ? ' · amendment ' + p.amendment + ' awaiting approval' : ''), copyId('Copy project ID', p.projectId))),
+      el('div', { class: 'line' }, el('h3', { id: 'project-' + p.projectId }, p.title),
+        chip(p.closure ? 'closed (' + p.closure.outcome + ')' : p.state, p.state === 'active' ? 'ok' : p.state === 'paused' ? 'warn' : 'idle')),
+      el('p', { class: 'meta' }, qty(count(p, OPEN), 'open task'), p.amendment ? ' · Amendment awaiting approval' : ''),
       glanceOf(p),
       stateOf(p),
-      moves(p).length ? el('div', { class: 'actions' }, moves(p).map((m) => decision(label[m] + '…', MOVE_DOES[m], { onclick: confirm(p, m), 'aria-label': label[m] + ' ' + p.projectId }))) : null)
+      moves(p).length ? el('div', { class: 'actions' }, moves(p).map((m) => decision(label[m] + '…', MOVE_DOES[m], { onclick: confirm(p, m), 'aria-label': label[m] + ' ' + p.projectId }))) : null,
+      fold('Details', 'project ' + p.projectId + ' · charter version ' + p.charter.version + (p.amendment ? ' · amendment ' + p.amendment + ' awaiting approval' : ''), copyId('Copy project ID', p.projectId)))
     // What a waiting task needs, in the cross-page words (T171): Approval needed, Review needed, Input needed.
     const WAITS = {
       'approval-needed': 'Approval needed', 'budget-spent': 'Approval needed — budget spent', 'reconciliation-failed': 'Approval needed — run not settled',
@@ -1535,7 +1673,7 @@ export const APP_JS = `'use strict'
     }
     // A request the queue lists, decided on the card with its own buttons (approve by button, T141).
     const askOf = (requestId) => open.find((r) => r.requestId === requestId)
-    const decideHere = (r) => {
+    const decideHere = (r, ...more) => {
       const d = q.described.get(r.requestId)
       // Approve / Deny, as on its card on Home (T191); the card is named by its task.
       const [yes, yesDoes] = decision('Approve', d.yes, { class: 'primary' })
@@ -1543,7 +1681,7 @@ export const APP_JS = `'use strict'
       const verdict = (v, clicked) => () => q.decide([{ requestId: r.requestId, subject: r.subject, verdict: v }], undefined, undefined, [yes, no], clicked)
       yes.addEventListener('click', verdict('approved', yes))
       no.addEventListener('click', verdict('rejected', no))
-      return el('div', { class: 'actions decide' }, yes, yesDoes, no, noDoes)
+      return el('div', { class: 'actions decide' }, yes, yesDoes, no, noDoes, more)
     }
     const start = (t) => async () => {
       confirming = true
@@ -1586,36 +1724,47 @@ export const APP_JS = `'use strict'
       shown.scrollIntoView({ block: 'nearest' })
       yes.focus()
     }
+    // A card (T239): its title; one line of context, its project when several show and when it changed; what it needs as its
+    // one chip, or who works on it; its primary action (Start…, Approve / Deny, Review) and its run; every other fact (its
+    // action type, its template and likely Worker, its last event) under its Details.
     const cardOf = (p, t) => {
       const run = t.run ? working.get(t.run.runId) : undefined
       const since = t.updatedAt || t.createdAt
+      const live = (t.state === 'running' || t.state === 'claimed') && t.run && moving.runs ? moving.runs.get(t.run.runId) : undefined
+      const asked = t.waiting && t.waiting.approvalRequest && askOf(t.waiting.approvalRequest) ? askOf(t.waiting.approvalRequest)
+        : t.landing && t.landing.state === 'asked' && t.landing.requestId && askOf(t.landing.requestId) ? askOf(t.landing.requestId) : undefined
+      const openRun = t.run ? el('a', { href: '?run=' + encodeURIComponent(t.run.runId), onclick: (e) => { e.preventDefault(); go(t.run.runId) }, 'aria-label': 'Open the run of ' + t.title }, 'Open run') : null
       return el('article', { class: 'card', 'aria-label': t.title },
         el('strong', {}, t.title),
-        boardProject === 'all' && projects.length > 1 ? el('div', { class: 'muted' }, p.title) : null,
-        el('div', { class: 'muted' }, 'Changed ', ago(since), ' · ', el('span', { class: 'tag' }, t.actionClass)),
+        el('div', { class: 'muted' }, several ? p.title + ' · ' : '', ago(since)),
         // A label each, the lifecycle explained once in Help (T171).
         t.state === 'proposed' ? el('div', { class: 'muted' }, 'Pending prerequisites') : null,
-        t.state === 'ready' ? el('div', {}, t.template ? el('span', { class: 'tag' }, t.template + ' template') : el('span', { class: 'muted' }, 'No template: the lead starts it')) : null,
-        t.state === 'ready' && previews.has(t.taskId) ? goesTo(previews.get(t.taskId)) : null,
-        t.state === 'ready' ? el('div', { class: 'actions' }, el('button', { onclick: start(t), 'aria-label': 'Start ' + t.title }, 'Start…')) : null,
+        t.state === 'ready' && !t.template ? el('div', { class: 'muted' }, 'No template: the lead starts it') : null,
         t.state === 'claimed' || t.state === 'running' ? el('div', { class: 'taken' }, run ? run.name + ', ' + ('value' in run.since ? relative(run.since.value).replace(/ ago$/, '') : 'since an unknown time') : t.state === 'claimed' ? 'Claimed; no step runs yet' : 'Running; its Worker is not known now') : null,
-        (t.state === 'running' || t.state === 'claimed') && t.run && moving.runs && moving.runs.get(t.run.runId) ? [el('div', { class: 'muted' }, lastText(moving.runs.get(t.run.runId))), stalledOf(moving.runs.get(t.run.runId))] : null,
-        t.state === 'review' ? el('div', {}, chip('Review needed', 'warn'), ' ', el('a', { href: '/ui/', 'aria-label': 'Review ' + t.title, onclick: (e) => { e.preventDefault(); go(); setTimeout(() => { const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } }, 300) } }, 'Review')) : null,
-        t.waiting && t.state.startsWith('waiting') ? el('div', {}, chip(WAITS[t.waiting.reason] || t.waiting.reason, 'warn'), ' ', t.waiting.approvalRequest && !askOf(t.waiting.approvalRequest) ? decideLink(t.waiting.approvalRequest, 'Review request') : null, ' ', expires(t.waiting.expiresAt)) : null,
+        live ? stalledOf(live) : null,
+        t.waiting && t.state.startsWith('waiting') ? el('div', {}, chip(WAITS[t.waiting.reason] || t.waiting.reason, 'warn'), ' ', expires(t.waiting.expiresAt)) : null,
         t.landing ? (t.landing.state === 'asked' && t.landing.requestId && askOf(t.landing.requestId) ? el('div', {}, chip('Merge approval needed', 'warn'), ' · into ' + (t.landing.base || 'its base')) : landingLine(t.landing)) : null,
         // Approve by button where the operator sees it (T141): the request's own verdict buttons, on its exact subject.
-        t.waiting && t.waiting.approvalRequest && askOf(t.waiting.approvalRequest) ? decideHere(askOf(t.waiting.approvalRequest)) : null,
-        t.landing && t.landing.state === 'asked' && t.landing.requestId && askOf(t.landing.requestId) ? decideHere(askOf(t.landing.requestId)) : null,
-        t.run ? el('div', {}, el('a', { href: '?run=' + encodeURIComponent(t.run.runId), onclick: (e) => { e.preventDefault(); go(t.run.runId) }, 'aria-label': 'Open the run of ' + t.title }, 'Open run')) : null)
+        asked ? decideHere(asked, openRun)
+          : t.state === 'ready' ? el('div', { class: 'actions' }, el('button', { type: 'button', class: 'primary', onclick: start(t), 'aria-label': 'Start ' + t.title }, 'Start…'))
+            : t.state === 'review' ? el('div', { class: 'actions' }, el('a', { href: '/ui/', 'aria-label': 'Review ' + t.title, onclick: (e) => { e.preventDefault(); go(); setTimeout(() => { const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } }, 300) } }, 'Review'))
+              : t.waiting && t.waiting.approvalRequest ? el('div', { class: 'actions' }, decideLink(t.waiting.approvalRequest, 'Review request'), openRun)
+                : openRun ? el('div', { class: 'actions' }, openRun) : null,
+        keptFold('task-' + t.taskId, 'Details', el('div', {}, el('span', { class: 'tag' }, t.actionClass), t.template ? [' ', el('span', { class: 'tag' }, t.template + ' template')] : null),
+          t.state === 'review' ? el('div', {}, openRun) : null,
+          t.state === 'ready' && previews.has(t.taskId) ? goesTo(previews.get(t.taskId)) : null,
+          live ? el('div', { class: 'muted' }, lastText(live)) : null))
     }
     // A done task whose merge waits for the operator is also shown where the operator looks for what waits (ADR-0060).
     const waitsToMerge = (t) => t.state === 'done' && t.landing && t.landing.state === 'asked'
+    // A card names its project only when the cards shown come from more than one.
+    const several = new Set(shownProjects.filter((p) => (p.tasks || []).length).map((p) => p.projectId)).size > 1
     const tasksIn = (states) => shownProjects.flatMap((p) => (p.tasks || []).filter((t) => states.includes(t.state) || (states.includes('waiting-for-approval') && waitsToMerge(t))).map((t) => [p, t]))
     const moreIn = (states) => shownProjects.reduce((n, p) => n + states.reduce((m, s) => m + ((p.more || {})[s] || 0), 0), 0)
-    const column = (name, states, hint) => {
+    const column = (name, states, hint, help) => {
       const cards = tasksIn(states)
       return el('section', { class: 'column' + (states.includes('waiting-for-approval') ? ' waits' : ''), 'aria-label': name },
-        el('h3', {}, name + ' (' + (cards.length + moreIn(states)) + ')'),
+        el('h3', {}, name + ' (' + (cards.length + moreIn(states)) + ')', help || null),
         cards.length ? cards.map(([p, t]) => cardOf(p, t)) : el('p', { class: 'muted' }, hint),
         moreIn(states) ? el('p', { class: 'muted' }, moreIn(states) + ' older not shown') : null)
     }
@@ -1625,22 +1774,30 @@ export const APP_JS = `'use strict'
         cards.length ? el('div', { class: 'cards' }, cards.map(([p, t]) => cardOf(p, t))) : el('p', { class: 'muted' }, name === 'Done' ? 'None yet.' : 'None.'))
     }
     const idle = roster ? roster.counts.ready : undefined
-    // Each empty state one short line; how tasks move between columns is in Help's Task lifecycle (T171).
+    // The projects under one fold, kept open through the refresh once opened; its summary says what of them needs you (T239).
+    const charters = shownProjects.filter((p) => charterOf(p)).length
+    const projectsFold = () => {
+      const details = keptFold('projects', ['Projects (' + shownProjects.length + ')', charters ? [' ', chip(qty(charters, 'charter approval'), 'warn')] : null],
+        el('div', { class: 'projects' }, shownProjects.map(head)))
+      details.className = 'column'
+      return details
+    }
+    // Each empty state one short line; how tasks move between columns is in Help's Task lifecycle (T171), how a ready task
+    // starts behind its column's "?" (T239). The tasks first, Needs your attention leading on a phone; then, folded, the
+    // projects with their state and moves, and the done and cancelled tasks.
     show(
       pageHead('board'),
       projects.length ? null : el('p', { class: 'muted' }, 'No projects yet · ', pageLink('help', 'How projects start')),
-      projects.length ? el('p', {}, el('label', { for: 'board-project' }, 'Show ', pick)) : null,
-      projects.length ? el('p', { 'aria-label': 'Capacity' }, capacityText(idle, ready), whatIs('task')) : null,
-      projects.length && ready ? startHelp() : null,
-      shownProjects.map(head),
+      projects.length ? el('div', { class: 'toolbar' }, el('p', {}, el('label', { for: 'board-project' }, 'Show ', pick)),
+        el('p', { 'aria-label': 'Capacity' }, capacityText(idle, ready), whatIs('task'))) : null,
       shown,
       projects.length ? el('div', { class: 'kanban' },
-        column('Proposed', ['proposed'], 'No proposed tasks'),
-        column('Ready', ['ready'], 'No ready tasks'),
-        column('Working', ['claimed', 'running'], 'No active tasks'),
-        column('Review', ['review'], 'No reviews'),
+        column('Proposed', ['proposed'], 'None'),
+        column('Ready', ['ready'], 'None', whatIs('start')),
+        column('Working', ['claimed', 'running'], 'None'),
+        column('Review', ['review'], 'None'),
         column('Needs your attention', ['waiting-for-input', 'waiting-for-approval'], 'Nothing needs you')) : null,
-      projects.length ? el('div', { class: 'folded' }, folded('Done', ['done']), folded('Cancelled', ['cancelled'])) : null)
+      projects.length ? el('div', { class: 'folded' }, projectsFold(), folded('Done', ['done']), folded('Cancelled', ['cancelled'])) : null)
   }
 
   // A time as its clock time ("14:20"), with the day when it is not today.
@@ -1715,16 +1872,30 @@ export const APP_JS = `'use strict'
   const restingText = (until) => 'resting until ' + clockOf(until) + ' (' + relative(until) + ')'
   // An account's capacity in one line, as Home shows it: its shortest window (the 5 h one) with a small
   // bar, and, when it rests at a limit, until when; or that it has no reading yet.
+  // Its shortest window (the 5 h one) as a small bar and a few words, the same pick on Home and on its account's card.
+  const shortestOf = (g) => {
+    const pools = poolsOf(g) || []
+    const pick = pools.flatMap((p) => p.windows.filter((win) => win.seconds).map((win) => ({ p, win }))).sort((x, y) => x.win.seconds - y.win.seconds)[0]
+    const bar = pick && 'value' in pick.win.used ? el('meter', { min: '0', max: '100', low: '60', high: '85', optimum: '0', value: String(pick.win.used.value), 'aria-hidden': 'true' }) : el('span', { class: 'no-bar', 'aria-hidden': 'true' })
+    const text = pick ? span(pick.win.seconds) + ' ' + (pick.win.state === 'limited' ? 'at its limit, ' : '') + ('value' in pick.win.used ? 'used ' + pick.win.used.value + ' %' + ('value' in pick.win.resets ? ', resets ' + clockOf(pick.win.resets.value) : '') : /^no reading yet/.test(pick.win.used.unknown) ? 'no reading yet' : 'used unknown') : null
+    return { bar, text }
+  }
   const capacityLine = (g) => {
     const pools = poolsOf(g) || []
-    const windows = pools.flatMap((p) => p.windows.filter((win) => win.seconds).map((win) => ({ p, win })))
-    const pick = windows.sort((x, y) => x.win.seconds - y.win.seconds)[0]
+    const { bar, text } = shortestOf(g)
     const resting = g.account && g.account.limitUntil ? g.account.limitUntil : pools.filter((p) => !p.available && p.until).map((p) => p.until).sort().at(-1)
-    return el('li', { class: 'capacity', 'aria-label': 'Capacity of ' + g.name },
-      pick && 'value' in pick.win.used ? el('meter', { min: '0', max: '100', low: '60', high: '85', optimum: '0', value: String(pick.win.used.value), 'aria-hidden': 'true' }) : el('span', { class: 'no-bar', 'aria-hidden': 'true' }),
-      el('span', {}, g.name + ': ' + ([resting ? restingText(resting) : null,
-        pick ? span(pick.win.seconds) + ' ' + (pick.win.state === 'limited' ? 'at its limit, ' : '') + ('value' in pick.win.used ? 'used ' + pick.win.used.value + ' %' + ('value' in pick.win.resets ? ', resets ' + clockOf(pick.win.resets.value) : '') : /^no reading yet/.test(pick.win.used.unknown) ? 'no reading yet' : 'used unknown') : null,
-      ].filter(Boolean).join('; ') || (poolsOf(g) ? 'quota not tracked' : 'quota unknown'))))
+    return el('li', { class: 'capacity', 'aria-label': 'Capacity of ' + g.name }, bar,
+      el('span', {}, g.name + ': ' + ([resting ? restingText(resting) : null, text].filter(Boolean).join('; ') || (poolsOf(g) ? 'quota not tracked' : 'quota unknown'))))
+  }
+  // The Workers' availability as chips (T239), the same on Home and on Workers: a count and a word each, its tone and shape
+  // from what it means; free always, the others when there are any (until when each rests is on its account's card).
+  const AVAILABLE = [['ready', 'free', 'ok'], ['busy', 'working', 'info'], ['resting', 'resting', 'warn'], ['unavailable', 'unavailable', 'bad'], ['quarantined', 'quarantined', 'bad']]
+  const availabilityChips = (roster, describing) => {
+    const c = roster.counts
+    return el('ul', { class: 'chips availability', 'aria-label': 'Worker counts' },
+      AVAILABLE.filter(([k]) => k === 'ready' || c[k]).map(([k, word, tone]) => el('li', {}, chip(c[k] + ' ' + word, c[k] ? tone : 'idle'))),
+      roster.unlisted ? el('li', { class: 'muted' }, roster.unlisted + ' more not listed') : null,
+      describing.length ? el('li', { class: 'unknown' }, 'counts incomplete: ' + describing.join(', ') + ' loading') : null)
   }
   // A Worker's status in the cross-page words (T171): Free, Working · 1/2 slots, Resting until 14:20, Unavailable — why,
   // Quarantined — why; a reason that blocks work is never folded.
@@ -1760,7 +1931,7 @@ export const APP_JS = `'use strict'
     windowsView(p),
     isKnown(p.unknownUsage) && p.unknownUsage.value.runs ? el('div', { class: 'unknown' }, p.unknownUsage.value.runs + ' run(s) with usage it could not count') : null))
   // The facts of a Worker or an account a person rarely needs, folded: what could not be read stays here, with why.
-  const detailsOf = (rows) => el('details', { class: 'facts' }, el('summary', {}, 'details'), el('dl', {}, rows.filter(Boolean).flatMap(([term, value]) => [el('dt', {}, term), el('dd', {}, value)])))
+  const detailsOf = (rows) => el('details', { class: 'facts' }, el('summary', {}, 'Details'), el('dl', {}, rows.filter(Boolean).flatMap(([term, value]) => [el('dt', {}, term), el('dd', {}, value)])))
   const recordText = (a) => a.id + (isKnown(a.record) ? ' · ' + a.record.value.kind + ' account, ' + a.record.value.status + (a.record.value.slot !== undefined ? ', slot ' + a.record.value.slot : '') : ' · its record is unknown (' + a.record.unknown + ')')
   // Right now, by name (T141), rendered as the server made it (the roster's now, T152; docs/design/roster.md#capacity-now),
   // never computed again here: who is free, the quota that would be lost unused first; whose quota is unknown (never
@@ -1771,7 +1942,7 @@ export const APP_JS = `'use strict'
   const readyNow = (now) => (now && isKnown(now.ready) && !now.ready.value.unread ? now.ready.value.items.length + now.ready.value.more : undefined)
   // The Workers page and Home both render it (T160), from the same roster read, so they name the same Workers; a free
   // Worker the operator keeps out of teams (D58, the roster's \`teams\`) is said free for every other step, not for team work.
-  const glanceView = (now, ready, workers) => {
+  const glanceView = (now, ready, workers, folded = false, asOf) => {
     const keptOut = new Set((workers || []).filter((w) => w.teams && isKnown(w.teams)).map((w) => w.worker))
     const has = (k) => isKnown(k) && k.value.items.length > 0
     const SHOWN = 3
@@ -1787,15 +1958,30 @@ export const APP_JS = `'use strict'
     const quota = (q) => q ? q.left + ' % of ' + (q.seconds ? span(q.seconds) : q.window) + ' left' + (q.headroom !== undefined ? ' (headroom ' + q.headroom + ' above the reserve)' : '') + (q.resetsAt ? ', resets ' + clockOf(q.resetsAt) : ', reset unknown') : 'quota not tracked'
     const likely = (t) => isKnown(t.likely) ? (t.likely.value ? 'likely ' + t.likely.value.name : 'no Worker that takes work now can take it') : 'its Worker is unknown (' + t.likely.unknown + ')'
     const stalled = now.stalled
-    return el('section', { class: 'panel', 'aria-label': 'Right now' }, el('h3', {}, 'Right now'),
-      el('ul', {},
+    const rows = el('ul', {},
         row('Free', now.free, (f) => f.name + ' (' + quota(f.quota) + (keptOut.has(f.worker) ? '; excluded from teams: free for other steps, not team work' : '') + ')', has(now.free) && ready ? [' · ' + qty(ready, 'task') + ' ready: ', pageLink('board', 'Open Board')] : null),
-        has(now.quotaUnknown) ? row('Quota unknown, not counted free', now.quotaUnknown, (u) => u.name + ' (' + u.why + ')') : null,
+        // Who has no reading by name; why, and that they are not counted free, folded (T239).
+        has(now.quotaUnknown) ? row('Quota unknown', now.quotaUnknown, (u) => u.name, keptFold('quota-unknown', 'Why', 'Not counted free: ', now.quotaUnknown.value.items.map((u, i) => [i ? '; ' : '', u.name + ' (' + u.why + ')']))) : null,
         row('Stalled', stalled, (s) => [s.name + ' ', s.runId ? runOpen(s.runId) : null], [has(stalled) ? whatIs('stalled') : null,
           isKnown(stalled) && stalled.value.unread ? el('span', { class: 'unknown' }, ' ' + stalled.value.unread) : null]),
         row('No quota left', now.noQuota, (n) => n.name + (isKnown(n.until) ? ' until ' + clockOf(n.until.value) + ' (' + relative(n.until.value) + ')' : ', no reset known')),
         has(now.cannotWork) ? row('Cannot work', now.cannotWork, (w) => w.name + ' (' + w.reason + ')') : null,
-        has(now.ready) ? row('Ready', now.ready, (t) => '"' + t.title + '": ' + likely(t)) : null))
+        has(now.ready) ? row('Ready', now.ready, (t) => '"' + t.title + '": ' + likely(t)) : null)
+    if (!folded) return el('section', { class: 'right-now', 'aria-label': 'Right now' }, el('h3', {}, 'Right now'), rows)
+    // On the Workers page, beside the accounts that say the same by account (T239): folded under its heading, each row that
+    // names someone a chip there; open while someone is stalled or cannot work, which is never folded away.
+    const count = (k) => isKnown(k) ? k.value.items.length + (k.value.more || 0) : 0
+    // The rows the counts and the accounts' cards above and below do not already say: who is stalled, cannot work, or has no reading, and the ready tasks.
+    const chips = [[stalled, 'stalled', 'bad'], [now.cannotWork, 'cannot work', 'bad'], [now.quotaUnknown, 'quota unknown', 'warn'], [now.ready, 'ready', 'info']]
+      .filter(([k]) => k && count(k)).map(([k, word, tone]) => [' ', chip(count(k) + ' ' + word, tone)])
+    const details = el('details', { class: 'right-now' }, el('summary', {}, el('h3', {}, 'Right now'), chips), rows, asOf ? el('p', { class: 'muted' }, 'Roster read ', ago(asOf)) : null)
+    keepOpen(details, 'right-now', has(stalled) || has(now.cannotWork))
+    return el('section', { class: 'panel', 'aria-label': 'Right now' }, details)
+  }
+  // A fold the operator opens or closes stays so through the refresh; until they do, it is open while \`alarm\` holds.
+  const keepOpen = (details, key, alarm) => {
+    if (openFolds.has(key) || (!closedFolds.has(key) && alarm)) details.open = true
+    details.addEventListener('toggle', () => { if (details.open) { openFolds.add(key); closedFolds.delete(key) } else { openFolds.delete(key); closedFolds.add(key) } })
   }
   async function workersView() {
     const roster = await api('roster')
@@ -1807,7 +1993,7 @@ export const APP_JS = `'use strict'
     const card = (w, inAccount) => el('article', { class: 'panel request worker', 'aria-label': w.name + ' (' + w.worker + ')' },
       el('h4', {}, inAccount ? cut(w.name)[1] : w.name),
       isKnown(w.description) ? el('p', {}, w.description.value) : null,
-      el('p', { class: 'state ' + w.availability.state }, statusOf(w), w.availability.state === 'resting' ? whatIs('resting') : w.availability.state === 'quarantined' ? whatIs('quarantine') : null),
+      el('p', { class: 'status-line' }, chip(statusOf(w), (TONE[w.availability.state] || [w.availability.state, 'idle'])[1]), w.availability.state === 'resting' ? whatIs('resting') : w.availability.state === 'quarantined' ? whatIs('quarantine') : null),
       doingOf(w),
       w.limits.length ? el('div', {}, w.limits.map((l) => el('div', { class: 'state resting' }, l.capability + ' is held off until ' + clockOf(l.until) + ' (' + relative(l.until) + ')'))) : null,
       // The operator's own choice (D58): a chip where they look for the Worker, never folded; what it means is behind its "?".
@@ -1831,43 +2017,72 @@ export const APP_JS = `'use strict'
       const record = isKnown(a.record) ? a.record.value : undefined
       const pools = poolsOf(g)
       const unknownPools = g.workers.find((w) => !isKnown(w.pools))
-      return el('section', { class: 'account', 'aria-label': 'Account ' + g.name },
-        // Its name and how many Workers; their roles are their cards' headings, and listed under its details (T171).
-        el('h3', {}, g.name, el('span', { class: 'muted' }, ' · ' + qty(g.workers.length, 'Worker')), whatIs('account')),
-        a.limitUntil ? el('p', { class: 'state resting' }, 'Its account is ' + restingText(a.limitUntil)) : null,
+      // A card: its name and how many Workers; what stops it, in sight; its quota as one line, its shortest window, every
+      // window under Quota (T239); its facts and its Workers' cards folded.
+      const shortest = pools && pools.length ? shortestOf(g) : undefined
+      return el('section', { class: 'panel account', 'aria-label': 'Account ' + g.name },
+        // Its name and how many Workers; their roles are their cards' headings, and listed under its details (T171); its rest as its chip.
+        el('div', { class: 'line' }, el('h3', {}, g.name, el('span', { class: 'muted' }, ' · ' + qty(g.workers.length, 'Worker')), whatIs('account')),
+          a.limitUntil ? chip('Resting until ' + clockOf(a.limitUntil) + ' (' + relative(a.limitUntil) + ')', 'warn') : null),
         record && record.status !== 'ready' ? el('p', { class: 'state ' + (record.status === 'quarantined' || record.status === 'signed-out' ? 'unavailable' : 'unknown') }, 'Its account is ' + record.status.replace('-', ' ') + (record.quarantine ? ' (' + record.quarantine.reason + (record.quarantine.detail ? ': ' + record.quarantine.detail : '') + ')' : '')) : null,
         record && record.sameAs ? el('p', { class: 'state failed' }, 'Signed in as the same person as ' + record.sameAs.join(', ')) : null,
-        pools && pools.length ? el('div', { class: 'quota' }, el('div', { class: 'muted' }, 'Quota', whatIs('quota')), poolsView(pools, !!a.limitUntil)) : null,
+        shortest ? el('div', { class: 'quota-line' }, shortest.bar, shortest.text || 'quota not tracked', whatIs('quota')) : null,
         pools && !pools.length ? el('p', { class: 'muted' }, 'Quota not tracked') : null,
+        // Every window of its quota first under its details, the ones at their limit first.
         detailsOf([
+          pools && pools.length ? ['Quota', el('div', { class: 'quota' }, poolsView(pools, !!a.limitUntil))] : null,
           ['Account', recordText(a)],
           ['Roles', g.workers.map((w) => cut(w.name)[1]).join(', ')],
           pools ? (pools.length ? null : ['Quota', 'no pool on its account']) : ['Quota', el('span', { class: 'unknown' }, 'unknown (' + (unknownPools ? unknownPools.pools.unknown : 'not read') + ')')],
           pools && readTimes(pools) ? ['Quota read', readTimes(pools)] : null,
         ]),
-        g.workers.map((w) => card(w, true)))
+        alarmsOf(g.workers, true),
+        workersFold(g.key, g.workers, (w) => card(w, true)))
     }
-    const c = roster.counts
-    const resting = isKnown(roster.workers) ? roster.workers.value.filter((w) => w.availability.state === 'resting' && isKnown(w.availability.until)).map((w) => w.availability.until.value).sort()[0] : undefined
-    const counts = [c.busy + ' working', c.ready + ' free', c.resting + ' resting' + (resting ? ' (the first until ' + clockOf(resting) + ')' : ''), c.unavailable + ' unavailable'].concat(c.quarantined ? [c.quarantined + ' quarantined'] : [])
+    // An account's Worker cards under one fold (T239), its summary their availability as chips. What of them blocks work
+    // (unavailable, quarantined, a capability held off) and each run whose liveness needs a look are never folded (T172,
+    // PROP-0013): each is a line on the account's card, by its Worker's work, above the fold (alarmsOf).
+    const TONE = { ready: ['free', 'ok'], busy: ['working', 'info'], resting: ['resting', 'warn'], unavailable: ['unavailable', 'bad'], quarantined: ['quarantined', 'bad'] }
+    const LIVE = { stalled: 'Stalled', looking: 'Being looked at', unknown: 'Not known to be gone' }
+    const alarmsOf = (workers, inAccount) => {
+      const lines = workers.flatMap((w) => {
+        const who = el('strong', {}, (inAccount ? cut(w.name)[1] : w.name) + ': ')
+        const a = w.availability
+        return [
+          a.state === 'unavailable' || a.state === 'quarantined' ? el('li', {}, who, chip(statusOf(w), 'bad')) : null,
+          ...w.limits.map((l) => el('li', { class: 'state resting' }, who, l.capability + ' is held off until ' + clockOf(l.until) + ' (' + relative(l.until) + ')')),
+          ...(w.liveness && isKnown(w.liveness) ? w.liveness.value : []).map((r) => el('li', {}, who, chip(LIVE[r.state] || r.state, r.state === 'unknown' ? 'bad' : 'warn'),
+            r.runId ? [' ', runOpen(r.runId)] : null, whatIs(r.state === 'unknown' ? 'held' : 'stalled'), keptFold('live-' + r.execution, 'What to do', r.summary))),
+        ].filter(Boolean)
+      })
+      return lines.length ? el('ul', { class: 'plain alarms', 'aria-label': 'Needs a look' }, lines) : null
+    }
+    const workersFold = (key, workers, render) => {
+      const by = new Map()
+      for (const w of workers) by.set(w.availability.state, (by.get(w.availability.state) || 0) + 1)
+      const details = el('details', { class: 'workers-fold' },
+        el('summary', {}, workers.length === 1 ? 'Worker' : 'Workers', [...by].map(([state, n]) => [' ', chip(n + ' ' + (TONE[state] || [state])[0], (TONE[state] || [state, 'idle'])[1])])),
+        el('div', { class: 'workers-grid' }, workers.map(render)))
+      keepOpen(details, 'workers-' + key, false)
+      return details
+    }
     const unheard = isKnown(roster.sources) ? roster.sources.value.filter((s) => s.state !== 'described') : []
     show(
       pageHead('workers'),
-      el('p', { 'aria-label': 'Worker counts' }, counts.join(' · ') + (roster.unlisted ? ' · ' + roster.unlisted + ' more not listed' : '')),
-      now && isKnown(roster.workers) && roster.workers.value.length ? glanceView(now, ready, roster.workers.value) : null,
-      ready === undefined ? null : el('p', { 'aria-label': 'Capacity' }, capacityText(c.ready, ready)),
+      // The counts as Home's chips (T239); a source still loading is said below them.
+      availabilityChips(roster, []),
+      now && isKnown(roster.workers) && roster.workers.value.length ? glanceView(now, ready, roster.workers.value, true, roster.asOf) : fold('Roster read', ago(roster.asOf)),
       isKnown(roster.sources) ? null : el('p', { class: 'unknown' }, 'Worker sources: unknown (' + roster.sources.unknown + ')'),
       // A source that has not answered: its impact on the counts in sight, a blocking reason too; its times folded (T171).
       unheard.length ? el('div', {}, unheard.map((s) => s.describing
         ? el('div', { class: 'muted' }, s.source + ' loading — counts incomplete', fold('Details', 'Its first read since it started has not landed (' + relative(s.at) + '); its Workers are not listed yet.'))
         : el('div', { class: 'state failed' }, s.source + ' unavailable — counts incomplete' + (s.detail ? ': ' + s.detail : ''), fold('Details', 'It was ' + s.state + ' ' + relative(s.at) + '; its Workers are not listed.')))) : null,
-      // When the roster was read, beside the page's own "updated" line in the header.
-      fold('Roster read', ago(roster.asOf)),
       isKnown(roster.workers) ? (roster.workers.value.length ? (() => {
         const groups = accountsOf(roster.workers.value)
         const lone = groups.filter((g) => !g.account)
-        return el('div', {}, groups.filter((g) => g.account).map(accountView),
-          lone.length ? el('section', { class: 'account', 'aria-label': 'Workers of no account' }, el('h3', {}, 'Workers of no account'), lone.map((g) => card(g.workers[0], false))) : null)
+        return el('section', { 'aria-label': 'Accounts' }, el('h2', {}, 'Accounts'), groups.filter((g) => g.account).map(accountView),
+          lone.length ? el('section', { class: 'panel account', 'aria-label': 'Workers of no account' }, el('h3', {}, 'Workers of no account'),
+            alarmsOf(lone.map((g) => g.workers[0]), false), workersFold('lone', lone.map((g) => g.workers[0]), (w) => card(w, false))) : null)
       })() : el('p', { class: 'muted' }, 'No Workers set up yet · ', pageLink('help', 'How Workers work'))) : el('p', { class: 'unknown' }, 'The Workers are unknown (' + roster.workers.unknown + ').'))
   }
 

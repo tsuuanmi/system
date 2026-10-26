@@ -208,9 +208,9 @@ describe('web UI: since you last looked, who would take a step, and a run as it 
     const reason = /^Failed: a solo run — (.+?) open the run/.exec(await item.innerText())![1]!
     await page.goto(`${origin}/ui/?run=${encodeURIComponent(failed.runId)}#token=${OPERATOR}`)
     // Its status line (T172): the Failed chip, where it failed, then that reason and the raw text.
-    const status = page.locator('p.status-line')
+    const status = page.locator('.status-line')
     await expect.poll(() => status.count(), { timeout: 15_000 }).toBe(1)
-    expect(await status.innerText()).toMatch(/^■ Failed at solo: /)
+    expect(await status.innerText()).toMatch(/^■ Failed\s+at solo: /)
     expect(await status.innerText()).toContain(`: ${reason} — ${error.message}`)
   }, 90_000)
 
@@ -260,13 +260,14 @@ describe('web UI: since you last looked, who would take a step, and a run as it 
     await confirming.getByRole('button', { name: 'Cancel' }).click()
     stalls(ctx, run.runId, new Date().toISOString())
     const card = page.getByRole('region', { name: 'Working', exact: true }).getByRole('article', { name: 'Research the hosting options' })
-    await expect.poll(() => card.innerText(), { timeout: 15_000 }).toMatch(/last event: .+ ago/)
+    // Its last event under its Details (T239); a stall in sight.
+    await expect.poll(() => card.textContent(), { timeout: 15_000 }).toMatch(/last event: .+ ago/)
     await expect.poll(() => card.innerText(), { timeout: 15_000 }).toMatch(/Stalled since .+: no activity past its source's bound/)
     // Its run's page: the step on its Worker and for how long, its last event, and the stall.
     await card.getByRole('link', { name: 'Open the run of Research the hosting options' }).click()
     const now = page.getByRole('region', { name: 'Now' })
     await expect.poll(() => now.count()).toBe(1)
-    expect(await now.innerText()).toMatch(/^Now\b[^\n]*\nStep solo on Conformance · \w+ · \w+, for (less than a minute|\d+ min)/)
+    expect(await now.innerText()).toMatch(/^Now\b[^\n]*\nStep solo on Conformance · \w+ · \w+, for (<1 min|\d+ min)/)
     expect(await now.innerText()).toMatch(/last event: .+ ago/)
     expect(await now.getByRole('alert').innerText()).toMatch(/^Stalled since /)
     // A check of its result quiet past its bound (T235): the run's page says so under Checks.

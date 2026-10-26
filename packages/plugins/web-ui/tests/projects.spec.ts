@@ -1,7 +1,7 @@
 import type { ApprovalRequest } from '@tsuuanmi/system-approvals-core'
 import type { ArtifactRef, Project } from '@tsuuanmi/system-board-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
-import { chromium } from 'patchright-core'
+import { chromium, type Page } from 'patchright-core'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
@@ -32,6 +32,13 @@ function boardDecision(booted: Booted, ref: string): { candidates: Array<{ optio
   expect(body.decisionType).toBe('board')
   for (const candidate of body.candidates) expect(candidate.reasons.join('').trim(), candidate.option).not.toBe('')
   return body
+}
+
+/** The Board's projects, their state and moves, are under one fold below the columns (T239): open it. */
+async function openProjects(page: Page): Promise<void> {
+  const fold = page.locator('main details.column', { hasText: 'Projects (' })
+  await expect.poll(() => fold.count()).toBe(1)
+  if (await fold.getAttribute('open') === null) await fold.locator('summary').first().click()
 }
 
 const open = async (booted: Booted): Promise<ApprovalRequest[]> => ((await booted.call('approvals')).value.batches as Array<{ requests: ApprovalRequest[] }>).flatMap((b) => b.requests)
@@ -139,11 +146,12 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
     const card = page.getByRole('article', { name: 'Found project project p1 (charter version 1)' })
     await expect.poll(() => card.count()).toBe(1)
-    // In sight (T186): one line, for which project and until when with what no response does, an irreversible denial as a chip, and two
-    // short buttons, each with what it does said beside it (T191).
+    // In sight (T186, T239): its title, an irreversible denial as its chip, until when, and two short buttons, each with what it does as
+    // its tooltip (T191); for which project and what no response does under its Details.
     const text = await card.innerText()
-    for (const said of ['Found project project p1 (charter version 1)', 'for project project p1', 'Expires in', 'No response: denied', 'Deny cannot be undone',
-      'activates the project', 'abandons the project']) expect(text, said).toContain(said)
+    for (const said of ['Found project project p1 (charter version 1)', 'Expires in', 'Deny cannot be undone']) expect(text, said).toContain(said)
+    for (const folded of ['for project project p1', 'No response', 'activates the project', 'abandons the project']) expect(text, folded).not.toContain(folded)
+    expect(await card.locator('details.card-details').textContent()).toContain('Forproject project p1No responsedenied')
     expect(await card.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny'])
     // Who asked, what it is about, what each verdict does, the request's id, its exact expiry, and the board's sweep are under one closed Details, never dropped (T171, T186).
     for (const folded of ['Asked by', 'charter version 1 of project p1', 'Cannot be undone.', 'request ' + approvalRequest]) expect(text, folded).not.toContain(folded)
@@ -186,8 +194,9 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
     const waiting = page.getByRole('region', { name: 'Needs your attention', exact: true })
-    await expect.poll(() => waiting.innerText()).toMatch(/Reviews · 1 · first expires in \d+ (h|min|days)/)
-    expect(await page.getByRole('region', { name: 'Reviews' }).innerText()).toMatch(/1 review is held for you; the first expires in \d+ (h|min|days) — .+\. Unanswered by then, its task waits for input, which nothing revives\./)
+    await expect.poll(() => waiting.innerText()).toMatch(/Reviews · 1\s+first expires in \d+ (h|min|days)/)
+    // Above the Reviews, folded until within the hour (T239).
+    expect(await page.getByRole('region', { name: 'Reviews' }).textContent()).toMatch(/1 review is held for you; the first expires in \d+ (h|min|days) — .+\. Unanswered by then, its task waits for input, which nothing revives\./)
   }, 60_000)
 
   it.runIf(canRunBrowser)('shows the Board as a Kanban: a column per state with one card per task, who works on it, its run, a project filter, and the moves in each project\'s header (T97)', async () => {
@@ -220,21 +229,24 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await column('Needs your attention').innerText()).toContain('Merge the login fix')
     const card = column('Working').getByRole('article', { name: 'Research the hosting options' })
     // Which account and role took it, and for how long (T119).
-    expect(await card.innerText()).toMatch(/Conformance · standard · standard, less than a minute/)
+    expect(await card.innerText()).toMatch(/Conformance · standard · standard, <1 min/)
     await card.getByRole('link', { name: 'Open the run of Research the hosting options' }).click()
     // A task's run is headed by its task's title, its project below, its run id behind a copy button (T141, T171).
     await expect.poll(() => page.getByRole('heading', { name: 'Research the hosting options', exact: true }).count()).toBe(1)
     expect(await page.locator('main').innerText()).toContain('project p1')
     expect(await page.locator('main').innerText()).not.toContain(run.runId)
+    await page.getByText('Technical details', { exact: true }).click()
     expect(await page.getByRole('button', { name: 'Copy run ID' }).getAttribute('data-copy')).toBe(run.runId)
     await page.goBack()
     // Several projects: all by default, each card naming its project; the filter shows one.
     await expect.poll(() => column('Ready').innerText()).toContain('Handbook rewrite')
-    // Capacity in numbers; how a ready task starts is folded beside it (T171).
+    // Capacity in numbers; how a ready task starts behind the Ready column's "?" (T171, T239).
     expect(await page.getByLabel('Capacity').innerText()).toMatch(/Workers? free · 2 tasks ready/)
     expect(await page.getByLabel('Capacity').innerText()).not.toContain('A ready task starts')
-    expect(await page.locator('details', { hasText: 'How a ready task starts' }).textContent()).toContain('A ready task starts when you press Start on its card or the lead runs it')
-    // Each project's state as counts (T141, T171), what needs you by kind on demand.
+    const how = column('Ready').getByRole('button', { name: 'What is ready task?' })
+    expect(await how.getAttribute('title')).toContain('A ready task starts when you press Start on its card or the lead runs it')
+    // Each project's state as counts (T141, T171), what needs you by kind on demand, under the Projects fold (T239).
+    await openProjects(page)
     expect(await page.getByLabel('State of project p1').innerText()).toBe('Needs you 2 · Working 1 · Ready 1 · Proposed 0')
     expect(await page.getByLabel('State of Handbook rewrite').innerText()).toBe('Needs you 0 · Working 0 · Ready 1 · Proposed 0')
     expect(await page.getByRole('article', { name: 'project p1', exact: true }).locator('details', { hasText: 'What needs you' }).textContent()).toContain('1 review, 1 approval')
@@ -246,6 +258,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await expect.poll(() => column('Ready').innerText()).toContain('Outline the chapters')
     expect(await column('Ready').innerText()).not.toContain('Write the release notes')
     expect(await column('Ready').innerText()).toContain('Outline the chapters')
+    await openProjects(page)
     expect(await page.getByRole('button', { name: 'Pause p1' }).count()).toBe(0)
     expect(await page.getByRole('button', { name: 'Pause p2' }).count()).toBe(1)
     // Done and Cancelled are folded.
@@ -265,19 +278,24 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
+    // The Projects fold says a charter waits (T239); its project's card links it.
+    await expect.poll(() => page.locator('main').innerText()).toContain('1 charter approval')
+    await openProjects(page)
     await expect.poll(() => page.locator('main').innerText()).toContain('Charter approval needed')
     expect(await page.locator('main').innerText()).toContain('1 task approval')
     await page.getByRole('link', { name: 'Review request', exact: true }).click()
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${approvalRequest}`)
     expect(new URL(page.url()).search).toBe(`?request=${approvalRequest}`)
     await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
+    await openProjects(page)
     await expect.poll(() => page.locator('main').innerText()).toContain('1 task approval')
     await page.getByRole('link', { name: 'Allow a merge step: Merge the login fix' }).click()
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${waiting}`)
-    // The card names the task by its title, not its id: on its line, and who asked under its Details (T186).
+    // The card names the task by its title, not its id: as its title, and for which task and who asked under its Details (T186, T239).
     const asked = page.locator(`#request-${waiting}`)
-    expect(await asked.locator('.line').innerText()).toContain('for the task "Merge the login fix"')
+    expect(await asked.locator('.line').innerText()).toBe('Allow a merge step: Merge the login fix')
     await asked.getByText('Details', { exact: true }).click()
+    expect(await asked.innerText()).toContain('the task "Merge the login fix"')
     expect(await asked.innerText()).toContain('Asked by the board, for the task "Merge the login fix" of project project p1')
   }, 60_000)
 
@@ -316,8 +334,8 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await page.goto(`${origin}/ui/?request=${request.requestId}`)
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${request.requestId}`)
     const asked = page.locator(`#request-${request.requestId}`)
-    // One line names the task it is for (T186); the rest is under its closed Details.
-    expect(await asked.locator('.line').innerText()).toContain('for the task "Band the inner loop"')
+    // Its title names the task it is for (T186); the rest is under its closed Details.
+    expect(await asked.locator('.line').innerText()).toContain('task "Band the inner loop"')
     expect(await asked.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny'])
     expect(await asked.innerText()).not.toContain('bbbbbbbbbbbb')
     expect(await asked.textContent()).toContain('branch ' + branch + ' at bbbbbbbbbbbb, onto the base at aaaaaaaaaaaa')
@@ -350,6 +368,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
     await page.getByRole('link', { name: 'Board' }).click()
     await expect.poll(() => page.getByRole('heading', { name: 'Board' }).count()).toBe(1)
+    await openProjects(page)
     expect(await page.locator('main').innerText()).toContain('project p1')
     expect(await page.locator('main').innerText()).not.toContain('null')
 
@@ -481,10 +500,12 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     const column = (name: string) => page.getByRole('region', { name, exact: true })
     const notes = column('Ready').getByRole('article', { name: 'Write the release notes' })
     await expect.poll(() => notes.count()).toBe(1)
+    // Its template and likely Worker under its Details (T239), kept open through the refresh once opened.
+    await notes.locator('summary', { hasText: 'Details' }).click()
     expect(await notes.innerText()).toContain('solo template')
     // The card names who its first step would likely go to, before any press (T141); the alternatives folded (T171).
     await expect.poll(() => notes.innerText()).toMatch(/Likely Worker: Conformance · (frontier|standard) · (frontier|standard)\s*\+1 other/)
-    expect(await notes.locator('details', { hasText: '+1 other' }).textContent()).toMatch(/\+1 otherConformance · (frontier|standard) · (frontier|standard)/)
+    expect(await notes.locator('details.inline', { hasText: '+1 other' }).textContent()).toMatch(/\+1 otherConformance · (frontier|standard) · (frontier|standard)/)
 
     // No template: refused with why, and nothing moves.
     const pricing = column('Ready').getByRole('article', { name: 'Draft the pricing page copy' })
@@ -546,6 +567,9 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     // Workers of no account are listed under their own header, each card headed by its whole name (T119).
     await page.goto(`${origin}/ui/?view=workers`)
     const lone = page.getByRole('region', { name: 'Workers of no account' })
+    // Their cards are under one fold (T239), closed while nothing of them blocks work.
+    await expect.poll(() => lone.locator('details.workers-fold > summary').count()).toBe(1)
+    await lone.locator('details.workers-fold > summary').click()
     await expect.poll(() => lone.getByRole('article', { name: /^Conformance · standard · standard/ }).count()).toBe(1)
     expect(await lone.getByRole('heading', { level: 4, name: 'Conformance · standard · standard' }).count()).toBe(1)
     await page.goto(`${origin}/ui/?view=board`)

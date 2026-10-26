@@ -283,7 +283,10 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     expect(await card.getByRole('list', { name: 'Required checks' }).innerText()).toBe('tests: ▲ Pending\nlint: ▲ Pending')
     expect(await card.getByRole('list', { name: 'Reviewers\' verdicts' }).innerText()).toBe('● Approved · w:standard')
     expect(await card.locator(':scope > .actions').getByRole('button').allInnerTexts()).toEqual(['Accept', 'Send back'])
-    expect(await card.locator('.line').innerText()).toMatch(/^Keep the rate-limit header\s+Project project p1 · Expires in .+ · No response: it waits for input$/)
+    // Its title, then one line of context (T239); what no response does is under its Details.
+    expect(await card.locator('.line').innerText()).toBe('Keep the rate-limit header')
+    expect(await card.locator('.meta').innerText()).toMatch(/^Project project p1 · Expires in .+$/)
+    expect(await card.locator('details.card-details').textContent()).toContain('No response: it waits for input')
     // The long texts are under one Details, closed by default: the diff, the findings, the report, why each check is pending.
     expect(await card.locator('details.card-details').getAttribute('open')).toBeNull()
     for (const folded of ['The header name is matched case-sensitively', 'reported this, in its own words', 'the run recorded no result of it']) expect(await card.innerText(), folded).not.toContain(folded)
@@ -327,7 +330,8 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     expect(await decisionsIn(card)).toEqual([
       { label: 'Accept', description: 'marks it done' },
       { label: 'Send back', description: 'sends it back for another attempt, if it has one left' }])
-    expect(await card.locator('.actions').first().innerText()).toMatch(/Accept\s+marks it done\s+Send back\s+sends it back for another attempt, if it has one left/)
+    // Said as each button's tooltip (T239), on hover and on keyboard focus, not as text beside it.
+    expect(await card.locator('.actions').first().innerText()).toMatch(/^Accept\s+Send back$/)
     await card.getByRole('button', { name: 'Accept', exact: true }).click()
     await expect.poll(async () => (await ctx.board.task(task.taskId))?.state).toBe('done')
     // Where the accepted result stands (ADR-0060), as its landing moves: committed on its branch, then its merge asked, linked.
