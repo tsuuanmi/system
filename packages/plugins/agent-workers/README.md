@@ -430,6 +430,18 @@ The **`agents` Worker source**: agent runtimes as Workers
       4000 characters of its output with its length and SHA-256), at the run's
       classification, returned with the results. Nothing is retried; the engine's
       acceptance reports each `passed` or `failed`, and an `error` stays pending;
+    - **the setup owns installation** (T235, `src/dependencies.ts`, `refresh` in
+      `src/setup.ts`, [design](../../../docs/design/workflow-engine.md#a-result-that-changes-its-dependencies)):
+      a setup decision records the hashes of the worktree's `dependencyFiles`;
+      when the result's differ, the setup runs again on it before its checks
+      (commands allowed unasked only, confined, offline), a `gate` decision of
+      rule `agent-workers.worktree-setup-again`; an install that lacks a
+      package refuses the checks as `dependency_unavailable`, naming it. Setups
+      run with pnpm offline and checks with pnpm's verify-deps-before-run off and
+      offline, each under its `pnpm_config_` and `npm_config_` names (pnpm 11 and
+      later read only the first); a check quiet for `checkStallSeconds` (default
+      300) is told by `agent-workers.check` events (`stalled` with its deadline,
+      `resumed`, `ended`);
   - an agent can write the worktree's `.git` file, so git never follows it: a
     run whose worktree's `.git` file no longer points to the worktree's own
     directory fails as `reconciliation_failed`, and the worktree is left for

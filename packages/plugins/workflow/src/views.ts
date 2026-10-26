@@ -7,7 +7,7 @@ import type { Engine } from './engine.ts'
 import type { ResolvedNode } from './spec.ts'
 import { isSameFamily, waitingUntil } from './recovery.ts'
 import { tieOf, type TeamRound } from './teams.ts'
-import type { ExplainedDecision, Explanation, NodeRecord, NodeView, RunRow, RunView, UsageDraws, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
+import type { ExplainedDecision, Explanation, NodeRecord, NodeView, RunRow, RunView, StalledCheck, UsageDraws, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
 
 export function view(e: Engine, run: RunRow): RunView {
   const rows = e.nodeRows(run.run_id)
@@ -165,9 +165,11 @@ export function explain(e: Engine, runId: string): Explanation | undefined {
   // A run dispatch started: why it started and on what come first (ADR-0064).
   const chosen = (e.tasks.dispatchOf(runId)?.decisions ?? []).map((id) => decision(e, id)).filter((d): d is ExplainedDecision => !!d)
   const own = [...chosen, ...runDecisions(e, runId)]
+  const stalled = run.status === 'running' ? stalledChecks(e, runId) : []
   return {
     runId, template: run.template, status: run.status, specHash: run.spec_hash as ContentId,
     ...(own.length ? { decisions: own } : {}),
+    ...(stalled.length ? { stalledChecks: stalled } : {}),
     nodes: e.nodeRows(runId).map((node) => {
       const record = JSON.parse(node.record) as NodeRecord
       const kept = node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : []
@@ -186,6 +188,41 @@ export function explain(e: Engine, runId: string): Explanation | undefined {
       }
     }),
   }
+}
+
+/** The event a Worker source tells a check's stall by (agent-workers `CHECK_EVENT`, T235): `stalled`, `resumed`, `ended`. */
+export const CHECK_EVENT = 'agent-workers.check'
+/** The check events of a run explain reads at most, the latest first (INV-9). */
+const CHECK_EVENTS_READ = 200
+
+/**
+ * The run's checks stalled now (T235): per check, its latest `agent-workers.check` event, when that
+ * says `stalled` and its check's deadline has not passed (past it the check no longer runs: a restart
+ * that cut it never tells its `ended`). An entry that is not one is skipped; a log that cannot be read
+ * shows none, logged.
+ */
+function stalledChecks(e: Engine, runId: string): StalledCheck[] {
+  let entries: Array<{ at: string; data?: unknown }>
+  try {
+    entries = e.ctx.eventLog.query({ type: CHECK_EVENT, runId, order: 'desc', limit: CHECK_EVENTS_READ })
+  } catch (error) {
+    e.ctx.logger.warn(`workflow: the check events of run ${runId} could not be read: ${(error as Error).message}`)
+    return []
+  }
+  const seen = new Set<string>()
+  const stalled: StalledCheck[] = []
+  const now = Date.now()
+  for (const entry of entries) {
+    const d = entry.data as { check?: unknown; command?: unknown; state?: unknown; quietSince?: unknown; stallSeconds?: unknown; deadline?: unknown } | undefined
+    if (typeof d?.check !== 'string' || seen.has(d.check)) continue
+    seen.add(d.check)
+    if (d.state !== 'stalled' || (typeof d.deadline === 'string' && Date.parse(d.deadline) <= now)) continue
+    stalled.push({
+      check: d.check, command: typeof d.command === 'string' ? d.command : '', since: entry.at,
+      quietSince: typeof d.quietSince === 'string' ? d.quietSince : entry.at, stallSeconds: typeof d.stallSeconds === 'number' ? d.stallSeconds : 0,
+    })
+  }
+  return stalled.reverse()
 }
 
 /** The decision types the engine records for a run as a whole, under no step. */

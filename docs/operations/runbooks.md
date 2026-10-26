@@ -3144,14 +3144,22 @@ every such result waits for you in **Reviews** with `tests, lint` pending.
              tests: corepack pnpm test:affected
              lint: corepack pnpm lint
            checkTimeoutSeconds: 1800    # each check's deadline; at most 3600
+           checkStallSeconds: 300       # no output this long: told as stalled in explain and the web UI
            checkScratch: [node_modules/.vite]   # vitest's cache: the rest of the worktree is read-only to a check
+           # dependencyFiles: [package.json, pnpm-lock.yaml, pnpm-workspace.yaml, .npmrc, .pnpmfile.cjs]   # the default
    ```
 
    Each is a command line as the policy matches it: words split on single spaces, no shell
    metacharacter, at most 200 characters. Only `tests`, `typecheck`, and `lint` can be named. The
    checks are not part of the setup's hash: adding them sets no worktree up again. A check sees the
    worktree read-only; `checkScratch` names the git-ignored paths it writes (a cache), each a fresh
-   private directory for it, discarded after it.
+   private directory for it, discarded after it. A check never installs: it runs with pnpm's
+   verify-deps-before-run off (`pnpm_config_verify_deps_before_run=false`; pnpm 11 and later ignore
+   the `npm_config_` name, also set), offline. When a result changes a file `dependencyFiles`
+   names (a workspace package's `package.json`, the lockfile), the setup runs again on the result's
+   tree, offline and confined, before its checks: its commands must be on the policy's `commands`
+   list too, since nothing is asked then
+   ([a result that changes its dependencies](../design/workflow-engine.md#a-result-that-changes-its-dependencies), T235).
 3. **The policy.** A check runs only when the policy lets its exact argv run unasked: list each
    line in the studio policy's `commands` ([change the autonomy policy](#change-the-autonomy-policy));
    a line already listed for the validation step is enough. A check whose command would ask is not
@@ -3169,7 +3177,9 @@ What a check that did not pass means:
 | `its tests check did not run to an exit code on the result (no command for the tests check is configured …)` | add the command (step 2); until then the check stays pending and the result waits for you |
 | `… (the autonomy policy asks the operator about its command …)` | list the command (step 3) |
 | `… (the worktree … was not set up under … setup as loaded now …)` | the setup changed after the worktree was made, or never ran there: the next attempt's worktree is set up again |
-| `… did not finish within 1800 s` | raise `checkTimeoutSeconds`, or find what hangs |
+| `… did not finish within 1800 s` | raise `checkTimeoutSeconds`, or find what hangs; `…, having printed nothing since <time>` says it went quiet then. While it runs, `system explain <runId>` lists it under `checks` as `stalled` (and the run's page under **Checks**) once it printed nothing for `checkStallSeconds` |
+| `… did not run: source agents refused (dependency_unavailable): … the packages <name> are not in the store it installs from …` (each `name` or `name@version`, as pnpm said) | the result changed its dependencies and needs a package the host's store lacks; the setup ran again offline and failed at once. Fetch it into the store on the host (`corepack pnpm install` in the repository's main working tree, or `pnpm fetch`), then decide the held result, or let the next attempt run its checks. `system artifact <decision>` (the `agent-workers.worktree-setup-again` decision named in the reason) shows the files that changed and the packages missing |
+| `… did not run: source agents refused (failed): … its setup run again on the result did not complete …` | the setup run again for the result's changed dependencies failed another way (`ERR_PNPM_OUTDATED_LOCKFILE`: the result changed a manifest without its lockfile), or its command is not on the policy's `commands` list: the result waits for you |
 | `the run's own tests check failed …`, its output naming `EROFS` (a read-only file system) | the command writes into the worktree, which a check sees read-only: name the git-ignored path it writes (a cache under `node_modules/`) in `checkScratch` |
 | `… its check scratch … is not ignored by git, or holds a tracked file` | a scratch path must be ignored by git: add it to `.gitignore`, or name another |
 | `… was not started by the confinement (an infrastructure failure …)` | bubblewrap refused, or the command is not installed for the daemon: the result waits for you; fix the host, then accept by hand |

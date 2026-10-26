@@ -1350,6 +1350,11 @@ export const APP_JS = `'use strict'
         now.steps.map((st) => el('div', {}, (stepWords(st.nodeId) ? 'T' + stepWords(st.nodeId).slice(1) : 'Step ' + st.nodeId) + (st.worker ? ' on ' + nameOf(st.worker) : '') + (st.since ? ', for ' + relative(st.since).replace(/ ago$/, '') : '') + (st.attempt > 1 ? ' (attempt ' + st.attempt + ')' : ''))),
         el('div', { class: 'muted' }, lastText(now)), stalledOf(now) ? [stalledOf(now), whatIs('stalled')] : null) : null,
       moving && moving.unknown ? el('p', { class: 'unknown' }, 'Where it is now is unknown (' + moving.unknown + ').') : null,
+      // A check of its result that printed nothing for its bound: told now, long before its deadline (T235).
+      explain && explain.stalledChecks && explain.stalledChecks.length ? el('section', { class: 'panel', 'aria-label': 'Checks' }, el('h3', {}, 'Checks'),
+        explain.stalledChecks.map((c) => el('div', {}, chip('Check stalled', 'warn'), ' ' + c.check + ': no output since ', ago(c.quietSince),
+          el('span', { class: 'muted' }, ' · it goes on until its deadline'),
+          fold('Details', el('div', {}, 'command ', el('code', {}, c.command)), el('div', {}, 'stalled at ' + absolute(c.since) + ', after ' + c.stallSeconds + ' s with no output'))))) : null,
       run.answer ? el('div', { class: 'panel' }, el('h3', {}, 'Answer'), el('pre', { class: 'answer' }, run.answer))
         : el('p', { class: 'muted' }, run.status === 'completed' ? 'No answer text.' : 'No answer yet.'),
       evidence && (evidence.error || ('value' in evidence.change && (evidence.change.value.changes.length || evidence.change.value.unread.length)) || ('value' in evidence.assessments && evidence.assessments.value.length) || landing)

@@ -522,8 +522,13 @@ export interface CheckResult {
   reason: string
 }
 
-/** Why a run's checks did not run at all: the worktree moved off the subject, was removed, may still be written, or anything else. */
-export type CheckRefusal = 'moved' | 'gone' | 'busy' | 'failed'
+/**
+ * Why a run's checks did not run at all: the worktree moved off the subject, was removed, may still be
+ * written, the result changed its dependencies and the setup run again for them needed a package it
+ * cannot get without the network (`dependency_unavailable`, the packages named in the reason, T235),
+ * or anything else.
+ */
+export type CheckRefusal = 'moved' | 'gone' | 'busy' | 'dependency_unavailable' | 'failed'
 
 /**
  * What a run's checks came to (T151):

@@ -1165,6 +1165,8 @@ interface Explained {
   nodes: Array<{ nodeId: string; state: string; worker?: string; quotaClass?: string; turnId?: string; decisions: ExplainedDecision[] }>
   liveness?: ExplainedLiveness[]
   livenessUnread?: Array<{ source: string; detail: string }>
+  /** The run's checks stalled now: no output for their bound, still running to their deadline (T235). */
+  stalledChecks?: Array<{ check: string; command: string; since: string; quietSince: string; stallSeconds: number }>
 }
 
 /** The words of each liveness state, as an operator reads them. */
@@ -1186,10 +1188,13 @@ export function formatLiveness(runs: readonly ExplainedLiveness[], unread: Reado
 /**
  * `system explain <runId>`: the run's own decisions (a board task's admission, subject, acceptance,
  * report), then each step's (egress, tier, route, acceptance) with their reasons, then its
- * executions whose liveness needs a look.
+ * executions whose liveness needs a look, and its checks stalled now.
  */
 export function formatExplanation(explained: Explained): string[] {
   const liveness = explained.liveness?.length || explained.livenessUnread?.length ? ['liveness', ...formatLiveness(explained.liveness ?? [], explained.livenessUnread)] : []
+  const stalled = explained.stalledChecks?.length
+    ? ['checks', ...explained.stalledChecks.map((c) => `  ${c.check}  stalled since ${c.since}: no output since ${c.quietSince} (bound ${c.stallSeconds} s)  ${c.command}`)]
+    : []
   const line = (d: ExplainedDecision): string => `    ${d.type}  ${d.outcome}  ${d.reasons.join('; ')}  (${d.id})${d.result ? `  result ${d.result}` : ''}`
   return [
     `${explained.runId}  ${explained.template}  ${explained.status}  spec ${explained.specHash}`,
@@ -1199,6 +1204,7 @@ export function formatExplanation(explained: Explained): string[] {
       ...n.decisions.map(line),
     ]),
     ...liveness,
+    ...stalled,
   ]
 }
 

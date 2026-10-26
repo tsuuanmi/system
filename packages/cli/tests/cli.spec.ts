@@ -404,6 +404,15 @@ describe('system usage and explain output', () => {
     ])
     const { verdict: _v, looks: _l, decision: _d, ...stalled } = held
     expect(formatLiveness([{ ...stalled, state: 'stalled', holds: [] }])[0]).toBe('  arun_00000000000000aa  agent:dev  stalled since 2026-10-24T01:00:00.000Z')
+    // A check of the run's result quiet past its bound (T235).
+    expect(formatExplanation({
+      runId: 'run_1', template: 'develop', status: 'running', specHash: 'sha256:ab', nodes: [],
+      stalledChecks: [{ check: 'lint', command: 'corepack pnpm lint', since: '2026-10-26T01:05:00.000Z', quietSince: '2026-10-26T01:00:00.000Z', stallSeconds: 300 }],
+    })).toEqual([
+      'run_1  develop  running  spec sha256:ab',
+      'checks',
+      '  lint  stalled since 2026-10-26T01:05:00.000Z: no output since 2026-10-26T01:00:00.000Z (bound 300 s)  corepack pnpm lint',
+    ])
   })
 
   it('asks to free a run only on the operator\'s word that its agent is gone, and prints what was freed and each worktree (PROP-0013)', () => {

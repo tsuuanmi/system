@@ -562,8 +562,20 @@ worktreeSetup:
       tests: corepack pnpm test:affected
       lint: corepack pnpm lint
     checkTimeoutSeconds: 1800             # each check's deadline (1 to 3600)
+    checkStallSeconds: 300                # no output this long: told as stalled (T235)
     checkScratch: [node_modules/.vite]    # git-ignored paths a check may write: fresh, private, discarded
+    dependencyFiles: [package.json, pnpm-lock.yaml]   # a result changing one sets the worktree up again (default: pnpm's)
 ```
+
+- **Set up again for the result's dependencies** (T235,
+  [the workflow's side](workflow-engine.md#a-result-that-changes-its-dependencies)): when the result's
+  `dependencyFiles` differ from those the worktree's setup decision recorded, the setup runs again on
+  the result's tree first (its commands allowed unasked, confined as the setup, offline), recorded as
+  a `gate` decision of rule `agent-workers.worktree-setup-again`; an install that lacks a package
+  refuses the checks as `dependency_unavailable`, naming it. A check itself runs with pnpm's
+  verify-deps-before-run off (`pnpm_config_verify_deps_before_run=false`, and its `npm_config_` name),
+  offline, so it never installs; one quiet for
+  `checkStallSeconds` is told by an `agent-workers.check` event.
 
 - **Only on the result's tree:** the worktree is still there (`gone`), no agent run of its
   workflow run is unfinished or not known to be gone (`busy`, INV-15), it is intact and on its

@@ -299,6 +299,26 @@ function fields(field: (value: string) => boolean): (text: string) => boolean {
   }
 }
 
+/** Dependency files {@link dependencyPaths} lists at most: past it, the listing is refused, never cut (INV-2, INV-9). */
+export const DEPENDENCY_PATHS_MAX = 2000
+
+/**
+ * The paths of the worktree at `path` whose file name is one of `names` (a dependency manifest, the
+ * lockfile), at any depth: tracked (in its index, there or not) or untracked and not ignored, as git
+ * lists them with the worktree's own administrative directory `gitdir`, never through what its `.git`
+ * file says. Sorted. Throws past {@link DEPENDENCY_PATHS_MAX}, or when git fails.
+ */
+export async function dependencyPaths(path: string, gitdir: string, names: readonly string[]): Promise<string[]> {
+  const wanted = new Set(names)
+  const found = new Set<string>()
+  const { stopped } = await gitRead(path, [`--git-dir=${gitdir}`, `--work-tree=${path}`, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], fields((p) => {
+    if (wanted.has(basename(p))) found.add(p)
+    return found.size > DEPENDENCY_PATHS_MAX
+  }))
+  if (stopped) throw new WorktreeError(`${path} holds more than ${DEPENDENCY_PATHS_MAX} dependency files (${names.join(', ')})`)
+  return [...found].sort()
+}
+
 const DIFF_HEADER = 'diff --git '
 
 /**

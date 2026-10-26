@@ -104,6 +104,8 @@
 | `worktreeSetup[].checks.typecheck` | string |  | The command of the typecheck check |
 | `worktreeSetup[].checks.lint` | string |  | The command of the lint check |
 | `worktreeSetup[].checkTimeoutSeconds` | number (1…3600) | `1800` | Each check's deadline |
+| `worktreeSetup[].checkStallSeconds` | number (1…3600) | `300` | Seconds a check may print nothing before it is reported as stalled in the run's explain and the web UI; it goes on to its deadline (T235) |
+| `worktreeSetup[].dependencyFiles` | string[] | `[]` | File names (at any depth) that say what the setup installs, default package.json, pnpm-lock.yaml, pnpm-workspace.yaml, .npmrc, .pnpmfile.cjs: when a result changes any of them, the setup runs again, offline and confined, on the result's tree before its checks (T235) |
 | `worktreeSetup[].checkScratch` | string[] | `[]` | Paths inside the worktree (relative, each ignored by git and holding nothing tracked) its checks see as fresh private writable directories, such as a test runner's cache (node_modules/.vite); the checks see the rest of the worktree read-only |
 | `worktreeSetup[].generated` | object | `{}` | The repository's generated files: a landing whose merge conflicts only in them takes either side, runs the commands in the run's worktree in this setup's confinement, and merges only when they exit 0, change no other file, and change nothing on a repeat (T166) |
 | `worktreeSetup[].generated.paths` | string[] | `[]` | 1 to 32 repository-relative paths of generated files; a * stands for any characters within one path segment, for example packages/*/plugin-manifest.json |

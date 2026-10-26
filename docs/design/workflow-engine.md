@@ -1283,7 +1283,7 @@ acceptance is decided; a model's account of a command, such as `validate:1`'s re
 | Step | Records | On failure |
 |---|---|---|
 | asked | once every step of a run that wrote has completed (`algorithm-development`: after `validate:1`), for a board task's run whose task writes a `git-head` subject or writes none (the tree is then its latest agent result's, as a plain run's: T165), or a plain run with a completed `develop` step, whose result is an agent's on a git working tree: `ctx.approvals.check` on the class its acceptance is judged under (the task's action class and project; `workspace-write` for a plain run), with the checks the run judged itself (`schema`, `review`); under `auto` or `notify`, its `failedChecks` that are commands are asked for | a check the run judged itself failed (the acceptance rejects), no queue, a policy that cannot be read, another mode, or none required: nothing is asked, and the checks stay as the policy says |
-| run | `ctx.workers.check` with the run, the worktree, the exact subject, the checks, and the run's classification: the source that holds the worktree runs them ([a run's checks](agent-runtimes.md#a-runs-checks)) and records a `check-run@1.0` evidence artifact | no `check` on the seam, no source holding the worktree, or a refusal (`moved`, `gone`, `busy`, `failed`): none ran, and each stays pending, the reason recorded |
+| run | `ctx.workers.check` with the run, the worktree, the exact subject, the checks, and the run's classification: the source that holds the worktree runs them ([a run's checks](agent-runtimes.md#a-runs-checks)) and records a `check-run@1.0` evidence artifact; first, when the result changed a dependency file against the tree the worktree's setup last ran on, it runs the setup again on the result's tree ([below](#a-result-that-changes-its-dependencies)) | no `check` on the seam, no source holding the worktree, or a refusal (`moved`, `gone`, `busy`, `dependency_unavailable`, `failed`): none ran, and each stays pending, the reason recorded |
 | reported | the acceptance decision ([board tasks](#board-tasks), or [a plain run's](#a-plain-runs-acceptance)) reports each check that ran to an exit code on that very subject, `passed` or `failed`, in `outcome.detail.checks`; names the evidence among its inputs; gives each `error` as a reason; and records what was asked and answered in `outcome.detail.checkRun` (rule version 2) | a check the source answered `error` is not reported: it stays pending (INV-2) |
 
 - **What the board does** with them is unchanged ([required checks](board.md#required-checks-bind-at-acceptance)):
@@ -1311,6 +1311,47 @@ acceptance is decided; a model's account of a command, such as `validate:1`'s re
 - **Configuration**: the commands are the operator's, per repository
   ([runbook](../operations/runbooks.md#let-a-run-pass-the-required-checks)); with none configured,
   each check is an `error` and stays pending, as before this section.
+
+### A result that changes its dependencies
+
+> T235 (found 2026-10-26 on T228: a result that added a workspace package changed `package.json` and
+> `pnpm-lock.yaml`; its `lint` check ran `corepack pnpm lint`, pnpm's verify-deps-before-run started
+> `pnpm install` with no network, and the check hung to its 30-minute deadline). Implemented in
+> [`agent-workers`](../../packages/plugins/agent-workers/README.md) (`src/setup.ts` `refresh`,
+> `src/dependencies.ts`, `src/checks.ts`).
+
+The worktree's setup owns installation ([a worktree's setup](agent-runtimes.md#a-worktrees-setup)); a
+check never installs.
+
+- **Set up again.** The setup's decision records the dependency files of the tree it ran on: every
+  file, tracked or untracked and not ignored, whose name is one of the setup's `dependencyFiles`
+  (default `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.npmrc`, `.pnpmfile.cjs`), at any
+  depth, each by its hash. Before a result's checks run, the source reads them again on the result's
+  tree; when any differs, the setup's commands run again there, each judged by the autonomy policy
+  and run only when it allows them unasked (no one is asked while checks run), confined as the setup
+  is (the host read-only but the worktree, no network). What it came to is a `gate` decision (rule
+  `agent-workers.worktree-setup-again`: `run` or `refuse`, the files that changed, the subject), named
+  among the `check-run@1.0` evidence's inputs; once it ran, it is the worktree's setup decision, with
+  the files it installed for, so the next result is compared with them. The worktree must still be the
+  result's tree afterwards (INV-5), or the checks are refused (`moved`).
+- **Never waits on a network.** A setup's commands run with pnpm's `offline` setting on
+  (`pnpm_config_offline=true`, the name pnpm 11 and later read, and `npm_config_offline=true` for npm
+  and earlier pnpm); an install that needs a package its store lacks fails at once. Its output naming the packages (pnpm's
+  `ERR_PNPM_NO_OFFLINE_TARBALL`, `ERR_PNPM_NO_OFFLINE_META`, a registry it could not reach) refuses
+  the checks as `dependency_unavailable`, the packages named in the reason and the decision's
+  `missing`; any other failure refuses them as `failed`. Either way no check runs, and each stays
+  pending (INV-2).
+- **No install inside a check.** A check's command runs with pnpm's verify-deps-before-run off
+  (`pnpm_config_verify_deps_before_run=false`, and the `npm_config_` name too) and offline: pnpm never
+  starts an install before a script. pnpm 11 and later ignore an `npm_config_` setting, so the
+  `pnpm_config_` name is the one that holds for this repository's pnpm.
+- **A stalled check is told.** A check that printed nothing for the setup's `checkStallSeconds`
+  (default 300) is told by an `agent-workers.check` event (`stalled`, then `resumed` when it prints
+  again, or `ended`; `stalled` names the check's deadline). While the run is running, its `explain`
+  lists each check stalled now (`stalledChecks`: the check, its command, when it was found stalled,
+  when it last printed); a stall past its check's deadline is over, so one a restart cut, which never
+  told its `ended`, is not shown after it. The web UI's run page shows it under **Checks**. The check
+  goes on to its deadline; one stopped there says since when it printed nothing.
 
 ## Dispatch: starting ready work by itself
 

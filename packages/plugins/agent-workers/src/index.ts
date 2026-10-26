@@ -505,6 +505,8 @@ export class AgentWorkers extends Service {
         lint: z.string().description('The command of the lint check'),
       }).description('The command of each check a policy can require, run by a workflow run on its result\'s exact tree in this setup\'s confinement, only when the autonomy policy allows it unasked (T151)'),
       checkTimeoutSeconds: z.natural().min(1).max(3600).default(1800).description('Each check\'s deadline'),
+      checkStallSeconds: z.natural().min(1).max(3600).default(300).description('Seconds a check may print nothing before it is reported as stalled in the run\'s explain and the web UI; it goes on to its deadline (T235)'),
+      dependencyFiles: z.array(z.string()).description('File names (at any depth) that say what the setup installs, default package.json, pnpm-lock.yaml, pnpm-workspace.yaml, .npmrc, .pnpmfile.cjs: when a result changes any of them, the setup runs again, offline and confined, on the result\'s tree before its checks (T235)'),
       checkScratch: z.array(z.string()).description('Paths inside the worktree (relative, each ignored by git and holding nothing tracked) its checks see as fresh private writable directories, such as a test runner\'s cache (node_modules/.vite); the checks see the rest of the worktree read-only'),
       // An omitted object comes back as {}: read as none declared when loaded (src/setup.ts).
       generated: z.object({
@@ -577,7 +579,7 @@ export class AgentWorkers extends Service {
     this.setups = loadSetups(config.worktreeSetup, [...this.workers.values()].filter((w) => w.worktreePerRun).map((w) => w.workspace))
     // Its private views are made beside the worktrees (a name no repository's directory there takes).
     this.worktreeSetups = new WorktreeSetups(ctx, join(worktreeRoot, '.setup'))
-    this.runChecks = new RunChecks(ctx, this.worktrees, this.setups, join(worktreeRoot, '.setup'))
+    this.runChecks = new RunChecks(ctx, this.worktrees, this.setups, join(worktreeRoot, '.setup'), { setups: this.worktreeSetups })
     if (config.accountHomes !== undefined && !isAbsolute(config.accountHomes)) throw new ProviderError('config_error', 'agent Workers: accountHomes must be an absolute path')
     this.readBounds = readBoundsOf(config.workspaceReads)
     const slots = new Map<string, number>()

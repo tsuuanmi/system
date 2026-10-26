@@ -57,6 +57,21 @@ describe('the algorithm-development template with the repository\'s checks confi
     expect(JSON.stringify(ctx.workflow.explain(run.runId))).toContain('tests passed, lint passed')
   })
 
+  it('shows a check that printed nothing for its bound as stalled in the run\'s explain while it lasts, and no longer once the run moved on (T235)', async () => {
+    const pilot = await boot({ checks: { tests: 'node tests.mjs', lint: 'node lint-quiet.mjs' }, checkStallSeconds: 1 })
+    const { ctx } = pilot
+    await charter(ctx, 'p1')
+    const task = await propose(pilot, 'p1', 'make add() add')
+    const run = await attempt(ctx, task.taskId)
+    const stalled = await until(() => ctx.workflow.explain(run.runId)?.stalledChecks?.find((c) => c.check === 'lint'), 'the lint check told stalled', 60_000)
+    expect(stalled).toMatchObject({ check: 'lint', command: 'node lint-quiet.mjs', stallSeconds: 1, quietSince: expect.any(String), since: expect.any(String) })
+    const done = await reported(ctx, run.runId)
+    expect(done.status).toBe('completed')
+    expect(ctx.workflow.explain(run.runId)!.stalledChecks).toBeUndefined()
+    const acceptance = ctx.artifacts.get(done.task!.outcome!.decision!)!.body as Acceptance
+    expect(acceptance.outcome.detail.checks).toMatchObject({ tests: true, lint: true })
+  })
+
   it('sends the result back as another attempt when lint fails on it, naming the check and its exit code; the operator is not asked (REQ-WF-15, INV-2)', async () => {
     const pilot = await boot({ checks: { tests: 'node tests.mjs', lint: 'node lint-strict.mjs' } })
     const { ctx } = pilot

@@ -6,7 +6,7 @@
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRuntimeRegistry, { type AgentRuntimeProvider, type RunSpec } from '@tsuuanmi/system-agent-runtimes'
 import StoreApprovals from '@tsuuanmi/system-approvals'
@@ -19,11 +19,12 @@ import { captureGitSubject, SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type RunCheck, type WorkRequirement } from '@tsuuanmi/system-workers'
 import type { Checked } from '@tsuuanmi/system-workers-core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
-import { RunChecks, type RunChecksOptions } from '../src/checks.ts'
+import { checkEnvironment, RunChecks, type RunChecksOptions } from '../src/checks.ts'
+import { missingPackages } from '../src/dependencies.ts'
 import AgentWorkers, { type Config } from '../src/index.ts'
-import { loadSetups } from '../src/setup.ts'
+import { loadSetups, setupEnvironment } from '../src/setup.ts'
 import { Worktrees } from '../src/worktrees.ts'
 
 const cleanups: Array<() => unknown> = []
@@ -65,9 +66,86 @@ class WritingAgent implements AgentRuntimeProvider {
   async run(spec: RunSpec, _signal: AbortSignal, onHandle?: (handle: string) => void) {
     this.runs.push(spec)
     onHandle?.(`h-${this.runs.length}`)
-    writeFileSync(join(spec.workspace, spec.prompt.includes('unused') ? 'unused.js' : 'used.js'), 'const kept = 1\n')
+    // `files {…}`: it writes exactly these files (a change to the repository's dependencies, say). The
+    // JSON is the prompt's first line: what the source appends to a turn (the note of the calls that
+    // run unasked) follows it.
+    if (spec.prompt.startsWith('files ')) {
+      for (const [path, text] of Object.entries(JSON.parse(spec.prompt.slice(6).split('\n', 1)[0]!) as Record<string, string>)) {
+        mkdirSync(dirname(join(spec.workspace, path)), { recursive: true })
+        writeFileSync(join(spec.workspace, path), text)
+      }
+    } else writeFileSync(join(spec.workspace, spec.prompt.includes('unused') ? 'unused.js' : 'used.js'), 'const kept = 1\n')
     return { text: 'done', nativeHandle: `h-${this.runs.length}`, turns: 1 }
   }
+}
+
+/**
+ * A pnpm-like install, offline from the repository's own `store/`: it links each workspace package a
+ * manifest depends on (`workspace:*`) and copies each other one from the store. A package the store
+ * lacks fails it as pnpm's offline install does (ERR_PNPM_NO_OFFLINE_TARBALL); without
+ * `pnpm_config_offline=true` (the name pnpm 11 and later read) it first waits, as an install would on a
+ * network the confinement does not give.
+ */
+const INSTALLER = [
+  "import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'",
+  "import { join } from 'node:path'",
+  "const manifests = ['package.json', ...(existsSync('packages') ? readdirSync('packages').map((d) => join('packages', d, 'package.json')).filter((p) => existsSync(p)) : [])]",
+  'const missing = []',
+  'for (const manifest of manifests) {',
+  "  for (const [name, spec] of Object.entries(JSON.parse(readFileSync(manifest, 'utf8')).dependencies ?? {})) {",
+  "    const dir = join('node_modules', name)",
+  "    if (spec.startsWith('workspace:')) {",
+  '      mkdirSync(dir, { recursive: true })',
+  "      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, main: 'index.mjs' }))",
+  "      writeFileSync(join(dir, 'index.mjs'), `export * from '../../packages/${name}/index.mjs'\\n`)",
+  "    } else if (existsSync(join('store', `${name}.mjs`))) {",
+  '      mkdirSync(dir, { recursive: true })',
+  "      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, main: 'index.mjs' }))",
+  "      writeFileSync(join(dir, 'index.mjs'), readFileSync(join('store', `${name}.mjs`)))",
+  '    } else missing.push([name, spec])',
+  '  }',
+  '}',
+  'if (missing.length) {',
+  "  if (process.env.pnpm_config_offline !== 'true') await new Promise((resolve) => setTimeout(resolve, 60_000))",
+  "  const [name, version] = missing[0]",
+  "  console.error(` ERR_PNPM_NO_OFFLINE_TARBALL  A package is missing from the store but cannot download it in offline mode. The missing package may be downloaded from https://registry.npmjs.org/${name}/-/${name}-${version}.tgz.`)",
+  '  process.exit(1)',
+  '}',
+  "console.log('install: done')",
+  '',
+].join('\n')
+
+/** The application's tests: every dependency its manifest names loads, and nothing told pnpm to install before a script. */
+const APP_TESTS = [
+  "import { readFileSync } from 'node:fs'",
+  "if (process.env.pnpm_config_verify_deps_before_run !== 'false') { console.error('app: pnpm would install before this check'); process.exit(4) }",
+  "const deps = Object.keys(JSON.parse(readFileSync('package.json', 'utf8')).dependencies ?? {})",
+  'for (const dep of deps) await import(dep)',
+  'console.log(`app: ${deps.length} dependencies loaded`)',
+  '',
+].join('\n')
+
+const INSTALL = 'node install.mjs'
+const APP = 'node app.mjs'
+
+/** A repository with a pnpm-like workspace: a manifest that depends on one stored package, its installer, and its store. */
+function dependentRepository(): string {
+  const dir = repository()
+  mkdirSync(join(dir, 'store'))
+  writeFileSync(join(dir, 'store', 'stored.mjs'), "export const stored = 'stored ok'\n")
+  writeFileSync(join(dir, 'package.json'), `${JSON.stringify({ name: 'app', private: true, dependencies: { stored: '1.0.0' } }, null, 2)}\n`)
+  writeFileSync(join(dir, 'install.mjs'), INSTALLER)
+  writeFileSync(join(dir, 'app.mjs'), APP_TESTS)
+  git(dir, 'add', '.')
+  git(dir, 'commit', '-q', '-m', 'workspace')
+  return dir
+}
+
+/** The result of T228's kind: a new workspace package, and the root manifest depending on it. */
+const WORKSPACE_PACKAGE = {
+  'packages/greet/package.json': `${JSON.stringify({ name: 'greet', version: '0.0.0' })}\n`,
+  'packages/greet/index.mjs': "export const greet = 'hello'\n",
+  'package.json': `${JSON.stringify({ name: 'app', private: true, dependencies: { stored: '1.0.0', greet: 'workspace:*' } }, null, 2)}\n`,
 }
 
 const SETUP = ['mkdir -p node_modules/dep', 'cp dep.js node_modules/dep/index.js']
@@ -187,6 +265,63 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
       // A clean change passes both.
       const clean = await write('run_clean')
       expect(await check('run_clean', clean)).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed' }, { check: 'lint', outcome: 'passed', exitCode: 0 }] })
+    })
+
+    it('sets the worktree up again, offline and confined, for a result that adds a workspace package, before its checks, which pass and never start an install; recorded as a decision (T235)', async () => {
+      const repo = dependentRepository()
+      const { ctx, write, check } = await boot(repo, { commands: [INSTALL], checks: { tests: APP } }, [INSTALL, APP])
+      const at = await write('run_package', `files ${JSON.stringify(WORKSPACE_PACKAGE)}`)
+      const checked = await check('run_package', at, ['tests'])
+      expect(checked).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed', exitCode: 0 }] })
+      expect(evidenceOf(ctx, checked).checks[0]!.output!.tail).toBe('app: 2 dependencies loaded\n')
+      // The setup run again is a gate decision the check-run evidence names, with the files the result changed.
+      if (checked?.outcome !== 'checked') throw new Error('not checked')
+      const evidence = ctx.artifacts.get(checked.evidence as `sha256:${string}`)!
+      const again = evidence.inputs.map((id) => ctx.artifacts.get(id as `sha256:${string}`)!.body as { decisionType?: string; decider?: { id: string }; outcome?: { option: string; detail: Record<string, unknown> } })
+        .find((body) => body.decider?.id === 'agent-workers.worktree-setup-again')
+      expect(again).toMatchObject({ decisionType: 'gate', outcome: { option: 'run', detail: { changed: ['package.json', 'packages/greet/package.json'], subject: `git:${at.subject.ref}:${at.subject.version}` } } })
+      // It installed into ignored paths only: the tree is still the result's.
+      expect(captureGitSubject(at.workspace)!.subject).toMatchObject(at.subject)
+      const ranAgain = (runId: string) => ctx.eventLog.query({ type: 'agent-workers.worktree.setup', runId }).filter((e) => (e.data as { for?: string }).for === 'checks')
+      expect(ranAgain('run_package').map((e) => (e.data as { outcome: string }).outcome)).toEqual(['ran'])
+      // A result that leaves the dependencies as they were is checked without setting anything up again.
+      const plain = await write('run_plain')
+      expect(await check('run_plain', plain, ['tests'])).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed' }] })
+      expect(ranAgain('run_plain')).toEqual([])
+    })
+
+    it('fails a result whose dependencies need a package not in the store at once, as dependency_unavailable naming it, never waiting on a network; no check runs (T235, INV-2)', async () => {
+      const repo = dependentRepository()
+      const { ctx, write, check } = await boot(repo, { commands: [INSTALL], checks: { tests: APP } }, [INSTALL, APP])
+      const at = await write('run_pad', `files ${JSON.stringify({ 'package.json': JSON.stringify({ name: 'app', dependencies: { stored: '1.0.0', 'left-pad': '1.3.0' } }) })}`)
+      const started = Date.now()
+      const checked = await check('run_pad', at, ['tests'])
+      // The installer waits a minute unless it is told it is offline.
+      expect(Date.now() - started).toBeLessThan(30_000)
+      expect(checked).toMatchObject({ outcome: 'refused', cause: 'dependency_unavailable', reason: expect.stringContaining('the packages left-pad@1.3.0 are not in the store it installs from') })
+      const refused = ctx.eventLog.query({ type: 'agent-workers.worktree.setup', runId: 'run_pad' }).find((e) => (e.data as { for?: string }).for === 'checks')!
+      expect(refused.data).toMatchObject({ outcome: 'refused' })
+      expect(ctx.artifacts.get(refused.decision as `sha256:${string}`)!.body).toMatchObject({
+        decisionType: 'gate', decider: { id: 'agent-workers.worktree-setup-again' }, outcome: { option: 'refuse', detail: { cause: 'dependency_unavailable', missing: ['left-pad@1.3.0'], changed: ['package.json'] } },
+      })
+      // Nothing of the checks ran: none is stored on the subject.
+      expect(ctx.store.db.prepare('SELECT 1 FROM agent_check_runs WHERE workflow_run_id = ?').get('run_pad')).toBeUndefined()
+    })
+
+    it('reports a check that prints nothing for its bound as stalled, and its end, while it goes on to its deadline (T235)', async () => {
+      const repo = repository()
+      commit(repo, { 'quiet.mjs': "console.log('quiet: started')\nsetTimeout(() => process.exit(0), 3000)\n" })
+      const quiet = 'node quiet.mjs'
+      const { ctx, write, check } = await boot(repo, { checks: { tests: quiet }, checkStallSeconds: 1 }, [...SETUP, quiet])
+      const at = await write('run_quiet')
+      const running = check('run_quiet', at, ['tests'])
+      const told = () => ctx.eventLog.query({ type: 'agent-workers.check', runId: 'run_quiet' }).map((e) => e.data as { check: string; state: string; command: string; quietSince?: string; stallSeconds: number; deadline?: string })
+      await vi.waitFor(() => expect(told().map((d) => d.state)).toContain('stalled'), { timeout: 20_000, interval: 50 })
+      expect(told().find((d) => d.state === 'stalled')).toMatchObject({ check: 'tests', command: quiet, stallSeconds: 1, quietSince: expect.any(String), deadline: expect.any(String) })
+      // Its deadline: the setup's checkTimeoutSeconds (1800) after it started, so a stall a restart cut is not shown past it.
+      expect(Date.parse(told().find((d) => d.state === 'stalled')!.deadline!) - Date.now()).toBeGreaterThan(1_700_000)
+      expect(await running).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed', exitCode: 0 }] })
+      expect(told().at(-1)!.state).toBe('ended')
     })
 
     it('never lets a check change the tree it checks: the worktree is read-only to it, so a write fails it and the tree stays the subject; stops one at its deadline (INV-5, INV-9)', async () => {
@@ -448,5 +583,35 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
     const checked = loadSetups([{ repository: repo, commands: ['true'], checks: { tests: 'corepack pnpm test:affected' }, checkTimeoutSeconds: 3600 }], [repo]).get(repo)!
     expect(checked).toMatchObject({ checks: { tests: { line: 'corepack pnpm test:affected', argv: ['corepack', 'pnpm', 'test:affected'] } }, checkTimeoutSeconds: 3600, hash: plain.hash })
     expect(plain).toMatchObject({ checks: {}, checkTimeoutSeconds: 1800, checkScratch: [] })
+    // T235: the stall bound and the dependency files, neither in the hash.
+    expect(load({ checkStallSeconds: 0 })).toThrow(/checkStallSeconds is 1 to 3600/)
+    expect(load({ dependencyFiles: ['packages/package.json'] })).toThrow(/dependencyFiles names up to 32 file names, each a plain name/)
+    expect(load({ dependencyFiles: ['package.json', 'package.json'] })).toThrow(/dependencyFiles names a file twice/)
+    expect(plain).toMatchObject({ checkStallSeconds: 300, dependencyFiles: ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', '.pnpmfile.cjs'] })
+    const watched = loadSetups([{ repository: repo, commands: ['true'], checkStallSeconds: 60, dependencyFiles: ['Cargo.toml', 'Cargo.lock'] }], [repo]).get(repo)!
+    expect(watched).toMatchObject({ checkStallSeconds: 60, dependencyFiles: ['Cargo.toml', 'Cargo.lock'], hash: plain.hash })
+  })
+
+  it('runs a check with pnpm\'s verify-deps-before-run off and offline, and a setup offline, so neither starts an install or waits on a network (T235)', () => {
+    // pnpm 11 and later read only the pnpm_config_ names; npm and earlier pnpm the npm_config_ ones.
+    expect(checkEnvironment()).toMatchObject({ pnpm_config_verify_deps_before_run: 'false', pnpm_config_offline: 'true', npm_config_verify_deps_before_run: 'false', npm_config_offline: 'true' })
+    expect(setupEnvironment()).toMatchObject({ pnpm_config_offline: 'true', npm_config_offline: 'true' })
+  })
+
+  // The pnpm that runs this suite (`pnpm test`), when one does: it reads the check environment as
+  // verify-deps-before-run off and offline (an npm_config_ name alone, pnpm 12 ignores).
+  const pnpm = process.env.npm_execpath && basename(process.env.npm_execpath).startsWith('pnpm') ? process.env.npm_execpath : undefined
+  it.skipIf(!pnpm)('a check\'s environment is read by the pnpm that runs this suite as verify-deps-before-run off and offline (T235)', () => {
+    const get = (key: string): string => execFileSync(pnpm!, ['config', 'get', key], { env: checkEnvironment(), encoding: 'utf8', timeout: 30_000 }).trim()
+    expect(get('verify-deps-before-run')).toBe('false')
+    expect(get('offline')).toBe('true')
+  })
+
+  it('reads the packages an offline install lacked from what pnpm said, and tells another failure apart (T235)', () => {
+    expect(missingPackages(' ERR_PNPM_NO_OFFLINE_TARBALL  A package is missing from the store but cannot download it in offline mode. The missing package may be downloaded from https://registry.npmjs.org/@scope/is-2-odd/-/is-2-odd-3.0.1.tgz.')).toEqual(['@scope/is-2-odd@3.0.1'])
+    expect(missingPackages(' ERR_PNPM_NO_OFFLINE_META  Failed to resolve left-pad@^1.3.0 in package mirror /store/metadata/registry.npmjs.org/left-pad.json')).toEqual(['left-pad@^1.3.0'])
+    expect(missingPackages(' ERR_PNPM_META_FETCH_FAIL  GET https://registry.npmjs.org/@types%2Fnode: request to https://registry.npmjs.org/@types%2Fnode failed, reason: getaddrinfo EAI_AGAIN registry.npmjs.org')).toEqual(['@types/node'])
+    expect(missingPackages('request to https://registry.npmjs.org failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org')).toEqual([])
+    expect(missingPackages(' ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with "frozen-lockfile" because pnpm-lock.yaml is not up to date with packages/greet/package.json')).toBeUndefined()
   })
 })

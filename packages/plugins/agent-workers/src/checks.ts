@@ -15,6 +15,10 @@
  * a stop interrupted is an `error`, and one that ended before a stop keeps what it came to: neither is
  * run again to replace it (INV-4). What ran is recorded as one `check-run@1.0` evidence
  * artifact before the outcome is returned (INV-13: the workflow engine's acceptance decision names it).
+ * The setup owns installation (T235): a result that changed the setup's dependency files has its
+ * worktree set up again first (./setup.ts `refresh`), refused as `dependency_unavailable` when that
+ * needs a package the store lacks; a check runs with pnpm's verify-deps-before-run off, offline, so it
+ * never installs; and one quiet for `checkStallSeconds` is told as stalled ({@link CHECK_EVENT}).
  * @module @tsuuanmi/system-agent-workers/checks
  */
 import { realpathSync } from 'node:fs'
@@ -27,8 +31,25 @@ import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type { Checked, CheckResult, CheckStep, RunCheck } from '@tsuuanmi/system-workers-core'
 import { CHECKS } from './gate.ts'
-import { confineIn, type Confined, NESTED_REFUSED, runBounded, type Setup } from './setup.ts'
+import { confineIn, type Confined, NESTED_REFUSED, packageManagerSettings, runBounded, type Setup, WorktreeSetups } from './setup.ts'
 import type { Worktrees } from './worktrees.ts'
+
+/**
+ * The environment a check's command runs in (T235): the child environment, with pnpm's
+ * verify-deps-before-run off, so a check never starts an install (the setup owns installation, and
+ * runs again for a result that changed its dependencies), and pnpm (and npm) offline, so nothing in a
+ * check waits on a network the confinement does not give.
+ */
+export function checkEnvironment(): Record<string, string> {
+  return childEnvironment([], packageManagerSettings({ verify_deps_before_run: 'false', offline: 'true' }))
+}
+
+/**
+ * The event a check's stall is told by (T235): `stalled` once it printed nothing for its setup's
+ * `checkStallSeconds` (with the check's `deadline`, past which it no longer runs, even when a restart
+ * cut it before its `ended`), `resumed` when it prints again, `ended` when a stalled check ended.
+ */
+export const CHECK_EVENT = 'agent-workers.check'
 
 /** How much of what a check printed its record keeps, from the end (INV-9). */
 export const CHECK_OUTPUT_TAIL = 4000
@@ -66,6 +87,8 @@ export interface RunChecksOptions {
    * where a stop may come: what the command came to is stored all the same, INV-4).
    */
   commandEnded?: (check: RunCheck) => void
+  /** The source's worktree setups, so a setup run again for a result waits for one in flight in its worktree (one at a time per worktree). */
+  setups?: WorktreeSetups
 }
 
 /** What the run of one check came to. */
@@ -92,8 +115,13 @@ export class RunChecks {
   /** Keys of checks running in this process now: one is never started twice at once. */
   private readonly running = new Set<string>()
 
+  /** What sets a worktree up again for a result that changed its dependencies (T235). */
+  private readonly worktreeSetups: WorktreeSetups
+
   /** `runDir`: the owner-only directory where the setups' private views are made (`<worktreeRoot>/.setup`). */
-  constructor(private readonly ctx: Context, private readonly worktrees: Worktrees, private readonly setups: ReadonlyMap<string, Setup>, private readonly runDir: string, private readonly options: RunChecksOptions = {}) {}
+  constructor(private readonly ctx: Context, private readonly worktrees: Worktrees, private readonly setups: ReadonlyMap<string, Setup>, private readonly runDir: string, private readonly options: RunChecksOptions = {}) {
+    this.worktreeSetups = options.setups ?? new WorktreeSetups(ctx, runDir)
+  }
 
   /**
    * Run `step.checks` on the worktree `step.workspace` of workflow run `step.runId`; undefined when
@@ -138,6 +166,22 @@ export class RunChecks {
           : `the autonomy policy gave its command (${command.line}) ${verdict.mode === 'auto' || verdict.mode === 'notify' ? `checks pending that no rule can require (${pending.join(', ')})` : `a mode this source does not know (${String(verdict.mode)})`}`,
       { argv: command.argv, autonomy: verdict.decision })
     }
+    let again: ArtifactRef | undefined
+    // The setup owns installation: a result that changed what it installs has it run again before any check runs (T235).
+    if (allowed.length && allowed.some((a) => !this.has(this.keyOf(step, found.path, setup!, a)))) {
+      const refreshed = await this.worktreeSetups.refresh({
+        workflowRunId: step.runId, classification: step.classification, worktree: found.path, repository: found.repository, subject: subjectId({ type: 'git-head', ...step.subject }),
+      }, setup!, signal ?? new AbortController().signal)
+      if (refreshed.outcome === 'refused') return { outcome: 'refused', cause: refreshed.cause, reason: refreshed.reason }
+      if (refreshed.outcome === 'ran') {
+        again = refreshed.decision as ArtifactRef
+        // INV-5: the setup could write the worktree; its checks run only while it is still the result's tree.
+        const still = await this.worktrees.checkable(step.runId, step.workspace, step.subject)
+        if (!still || 'cause' in still) {
+          return { outcome: 'refused', cause: still ? still.cause : 'gone', reason: `after its setup ran again for the result's dependencies (decision ${again}): ${still ? still.reason : `the worktree ${found.path} is no longer this source's`}` }
+        }
+      }
+    }
     if (allowed.length) await this.execute(found, setup!, step, allowed, records, signal)
     const results: CheckResult[] = names.map((check) => {
       const r = records.get(check)!
@@ -151,7 +195,7 @@ export class RunChecks {
         subject: { type: 'git-head', ref: step.subject.ref, version: step.subject.version }, setup: setup!.hash,
         checks: names.map((check) => ({ ...records.get(check)!, reason: records.get(check)!.reason.slice(0, CHECK_REASON_CHARS) })),
       },
-      inputs: [...new Set(allowed.map((a) => a.autonomy))],
+      inputs: [...new Set([...allowed.map((a) => a.autonomy), ...(again ? [again] : [])])],
       classification: step.classification, producer: { type: 'system', ref: 'agent-workers' }, runId: step.runId,
     }).id as string
     this.ctx.logger.info(`agent Workers: the checks of run ${step.runId} on ${subjectId({ type: 'git-head', ...step.subject })}: ${results.map((r) => `${r.check} ${r.outcome}`).join(', ')} (evidence ${evidence})`)
@@ -161,6 +205,11 @@ export class RunChecks {
   /** The key a check's stored outcome is bound to: the run, its worktree, the subject, the check, its argv, and the setup. */
   private keyOf(step: CheckStep, workspace: string, setup: Setup, a: Allowed): [string, string, string, string, string, string] {
     return [step.runId, workspace, subjectId({ type: 'git-head', ...step.subject }), a.check, JSON.stringify(a.argv), setup.hash]
+  }
+
+  /** Whether a check ran (or started) on this key before: its stored outcome stands, and nothing of it runs again. */
+  private has(key: string[]): boolean {
+    return !!this.ctx.store.db.prepare('SELECT 1 FROM agent_check_runs WHERE workflow_run_id = ? AND workspace = ? AND subject = ? AND check_name = ? AND argv = ? AND setup_hash = ?').get(...key)
   }
 
   /**
@@ -204,7 +253,7 @@ export class RunChecks {
     const worktree = real(found.path)
     const tree = subjectId({ type: 'git-head', ...step.subject })
     const stopped = (): unknown => signal?.reason ?? new ProviderError('aborted', 'stopped')
-    const env = childEnvironment()
+    const env = checkEnvironment()
     let moved: string | undefined
     for (const a of todo) {
       const base = { check: a.check, argv: a.argv, autonomy: a.autonomy }
@@ -232,7 +281,7 @@ export class RunChecks {
         this.ctx.store.transaction((db) => {
           db.prepare('INSERT INTO agent_check_runs (workflow_run_id, workspace, subject, check_name, argv, setup_hash, state, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(...key, 'started', now())
         })
-        const ran = await this.runOne(confined, setup, a, base, tree, found.path, env, signal)
+        const ran = await this.runOne(confined, setup, a, base, tree, found.path, env, signal, step.runId)
         if ('unstarted' in ran) {
           // Its command was never executed: nothing of the check ran, so a later call may run it.
           this.forget(key)
@@ -269,15 +318,18 @@ export class RunChecks {
    */
   private async runOne(
     confined: Confined, setup: Setup, a: Allowed, base: Pick<CheckRecord, 'check' | 'argv' | 'autonomy'>, tree: string, path: string,
-    env: Record<string, string>, signal: AbortSignal | undefined,
+    env: Record<string, string>, signal: AbortSignal | undefined, runId: string,
   ): Promise<Ran> {
     const deadline = AbortSignal.timeout(setup.checkTimeoutSeconds * 1000)
     const started = Date.now()
+    const watch = new StallWatch(this.ctx, { runId, check: a.check, line: a.line, workspace: path, subject: tree, deadline: new Date(started + setup.checkTimeoutSeconds * 1000).toISOString() }, setup.checkStallSeconds)
     let ended
     try {
-      ended = await runBounded(confined.command(a.argv), env, signal ? AbortSignal.any([signal, deadline]) : deadline, true)
+      ended = await runBounded(confined.command(a.argv), env, signal ? AbortSignal.any([signal, deadline]) : deadline, true, () => watch.heard())
     } catch (error) {
       return { record: { ...base, outcome: 'error', reason: `its command (${a.line}) ${(error as Error).message.replace(/^its commands /, '')}` }, unstarted: true }
+    } finally {
+      watch.end()
     }
     this.options.commandEnded?.(a.check)
     const output = { tail: ended.output.length > CHECK_OUTPUT_TAIL ? ended.output.slice(-CHECK_OUTPUT_TAIL) : ended.output, bytes: ended.bytes, sha256: `sha256:${ended.sha256}` }
@@ -301,7 +353,7 @@ export class RunChecks {
       const moved = `the ${a.check} check (${a.line}) left the worktree ${after ? `as ${after}` : 'unreadable'}, no longer ${tree}`
       return { record: { ...ran, outcome: 'error', reason: `${moved}: a check changes nothing it checks, so its exit code is not the subject's` }, moved }
     }
-    if (deadline.aborted) return { record: { ...ran, outcome: 'error', reason: `its command (${a.line}) did not finish within ${setup.checkTimeoutSeconds} s; it was stopped` } }
+    if (deadline.aborted) return { record: { ...ran, outcome: 'error', reason: `its command (${a.line}) did not finish within ${setup.checkTimeoutSeconds} s; it was stopped${watch.quietFrom ? `, having printed nothing since ${watch.quietFrom}` : ''}` } }
     if (ended.code === null) return { record: { ...ran, outcome: 'error', reason: `its command (${a.line}) ended on signal ${ended.signal ?? 'unknown'}` } }
     if (ended.code === 0) return { record: { ...ran, outcome: 'passed', reason: `its command (${a.line}) exited 0 on ${tree}` } }
     // Only the command's own report says a nonzero exit is the host's: any other is the check's failure.
@@ -310,6 +362,82 @@ export class RunChecks {
       return { record: { ...ran, outcome: 'error', reason: `its command (${a.line}) exited with code ${ended.code} on ${tree} and reported a nested bubblewrap refused${refused ? ` (${refused})` : ''}: an infrastructure failure, neither passed nor failed` } }
     }
     return { record: { ...ran, outcome: 'failed', reason: `its command (${a.line}) exited with code ${ended.code} on ${tree}` } }
+  }
+}
+
+/** What a check's stall event names: the workflow run, the check and its command, the worktree, the tree it checks, and when its deadline stops it. */
+interface Watched { runId: string; check: RunCheck; line: string; workspace: string; subject: string; deadline: string }
+
+/**
+ * A check's stall watch (T235): once its command printed nothing for `seconds`, an
+ * {@link CHECK_EVENT} `stalled` event says so, with when it last printed, so the run's explain and the
+ * web UI show it while it lasts, long before its deadline; `resumed` when it prints again, `ended` when
+ * a check that stalled ended. Nothing about it stops the check: the deadline does.
+ */
+class StallWatch {
+  private timer: NodeJS.Timeout | undefined
+  /** When the timer was last set. */
+  private armedAt = 0
+  private last = Date.now()
+  private stalled = false
+  private over = false
+  /** When it last printed, once it was reported stalled and has not printed since. */
+  quietFrom: string | undefined
+
+  constructor(private readonly ctx: Context, private readonly watched: Watched, private readonly seconds: number) {
+    this.arm()
+  }
+
+  /** The command printed: the watch starts over, and a stall reported is over. */
+  heard(): void {
+    if (this.over) return
+    this.last = Date.now()
+    if (this.stalled) {
+      this.stalled = false
+      this.quietFrom = undefined
+      this.tell('resumed')
+    }
+    // Re-armed at most once a second: a command that prints a lot costs no timer per piece.
+    if (!this.timer || this.armedAt + 1000 <= this.last) this.arm()
+  }
+
+  /** The command ended: no stall is reported after it, and one reported is over. */
+  end(): void {
+    if (this.over) return
+    this.over = true
+    clearTimeout(this.timer)
+    if (this.stalled) this.tell('ended')
+  }
+
+  private arm(): void {
+    clearTimeout(this.timer)
+    this.armedAt = Date.now()
+    const due = Math.max(0, this.last + this.seconds * 1000 - this.armedAt)
+    this.timer = setTimeout(() => this.due(), due)
+    this.timer.unref()
+  }
+
+  private due(): void {
+    if (this.over || this.stalled) return
+    const quiet = Date.now() - this.last
+    // Heard meanwhile (the timer is re-armed at most once a second): wait the rest of the bound.
+    if (quiet < this.seconds * 1000) return this.arm()
+    this.stalled = true
+    this.quietFrom = new Date(this.last).toISOString()
+    this.tell('stalled')
+  }
+
+  private tell(state: 'stalled' | 'resumed' | 'ended'): void {
+    const { runId, check, line, workspace, subject, deadline } = this.watched
+    try {
+      this.ctx.get('eventLog')?.append({
+        type: CHECK_EVENT, runId,
+        data: { check, command: line, state, workspace, subject, stallSeconds: this.seconds, ...(state === 'stalled' ? { quietSince: this.quietFrom, deadline } : {}) },
+      })
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: the ${state} event of the ${check} check of run ${runId} was not appended: ${(error as Error).message}`)
+    }
+    if (state === 'stalled') this.ctx.logger.warn(`agent Workers: the ${check} check of run ${runId} (${line}) printed nothing for ${this.seconds} s; it goes on to its deadline`)
   }
 }
 

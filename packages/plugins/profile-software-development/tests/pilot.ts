@@ -86,6 +86,8 @@ export interface Script {
    * worktree setup and lists them in the studio policy. The repository then holds {@link CHECK_FILES}.
    */
   checks?: { tests?: string; lint?: string }
+  /** Seconds a check may print nothing before it is reported as stalled (the setup's `checkStallSeconds`, T235). */
+  checkStallSeconds?: number
 }
 
 /**
@@ -97,6 +99,8 @@ export const CHECK_FILES: Record<string, string> = {
   'tests.mjs': "import { readFileSync } from 'node:fs'\nconst ok = readFileSync('calc.py', 'utf8').includes('a + b')\nconsole.log(ok ? 'tests: 3 passed' : 'tests: add() does not add')\nprocess.exit(ok ? 0 : 1)\n",
   'lint.mjs': "console.log('lint: clean')\n",
   'lint-strict.mjs': "import { readFileSync } from 'node:fs'\nif (!readFileSync('calc.py', 'utf8').startsWith('#')) { console.error('lint-strict: calc.py has no header comment'); process.exit(2) }\n",
+  // A lint that prints, then nothing for 4 s, then passes: a check stalled for a while (T235).
+  'lint-quiet.mjs': "console.log('lint-quiet: started')\nsetTimeout(() => process.exit(0), 4000)\n",
 }
 /** The worktree setup a pilot with checks configures: one command, listed in the policy. */
 export const SETUP_COMMAND = 'true'
@@ -220,7 +224,7 @@ export async function bootPilot(script: Script = {}, extra: Plugin[] = []): Prom
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}), ctx.plugin(AgentRuntimeRegistry),
     ctx.plugin(AgentWorkers, {
       workers: [...writers, worker('reviewer', 'read-only', 'standard'), worker('digester', 'read-only', 'economy')], worktreeRoot: join(dir, 'worktrees'),
-      ...(script.checks ? { worktreeSetup: [{ repository: repo, commands: [SETUP_COMMAND], checks: script.checks }] } : {}),
+      ...(script.checks ? { worktreeSetup: [{ repository: repo, commands: [SETUP_COMMAND], checks: script.checks, ...(script.checkStallSeconds ? { checkStallSeconds: script.checkStallSeconds } : {}) }] } : {}),
     }),
     ctx.plugin(StoreBoard, { sweepSeconds: 0 }), ctx.plugin(StoreDigests, {}),
     // The landing seam's provider, as the bundle's `landing-local` row mounts it (PROP-0017 L0).

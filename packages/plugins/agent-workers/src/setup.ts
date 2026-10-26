@@ -26,8 +26,27 @@ import { type ContentId, contentId, ensurePrivateDir, ignoredPath } from '@tsuua
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import { RUN_CHECKS, type RunCheck } from '@tsuuanmi/system-workers-core'
+import { changedFiles, DEFAULT_DEPENDENCY_FILES, type Dependencies, dependenciesOf, KEPT_FILES, missingPackages } from './dependencies.ts'
 import { CHECKS } from './gate.ts'
 import { repositoryKey } from './worktrees.ts'
+
+/**
+ * Package manager settings as environment variables, each under both prefixes: pnpm 11 and later
+ * read only `pnpm_config_<name>` (an `npm_config_<name>` is ignored there), and npm and earlier
+ * pnpm read `npm_config_<name>` (T235).
+ */
+export function packageManagerSettings(settings: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(Object.entries(settings).flatMap(([name, value]) => [[`pnpm_config_${name}`, value], [`npm_config_${name}`, value]]))
+}
+
+/**
+ * The environment a setup's commands run in: the child environment, with pnpm (and npm) told to stay
+ * offline, so an install that lacks a package fails at once naming it, never waits on a network the
+ * confinement does not give (T235).
+ */
+export function setupEnvironment(): Record<string, string> {
+  return childEnvironment([], packageManagerSettings({ offline: 'true' }))
+}
 
 /** A host directory the setup sees as a private, writable one of its own (a package store's index, say). */
 export interface WorktreeSetupView {
@@ -56,6 +75,18 @@ export interface WorktreeSetupConfig {
   checks?: Partial<Record<RunCheck, string>>
   /** Each check's deadline, in seconds (default 1800). */
   checkTimeoutSeconds?: number
+  /**
+   * Seconds a check may print nothing before it is reported as stalled (default 300): an
+   * `agent-workers.check` event the run's explain and the web UI show while it lasts (T235). The
+   * check goes on to its deadline; this only says so, early.
+   */
+  checkStallSeconds?: number
+  /**
+   * The names of the files that say what the setup installs (default {@link DEFAULT_DEPENDENCY_FILES}):
+   * when a result changes any of them, at any depth, against the tree the setup last ran on, the
+   * setup runs again on the result's tree before its checks run (T235).
+   */
+  dependencyFiles?: string[]
   /**
    * Paths inside the worktree (relative) that its checks see as fresh, private, writable directories
    * (a build or test cache such as `node_modules/.vite`): the checks see the rest of the worktree
@@ -98,6 +129,10 @@ export interface Setup {
   /** Each check's command line and argv; not part of the setup's hash, since the setup does not run them. */
   checks: Partial<Record<RunCheck, { line: string; argv: string[] }>>
   checkTimeoutSeconds: number
+  /** Seconds a check may print nothing before it is reported as stalled; not part of the hash. */
+  checkStallSeconds: number
+  /** The file names whose change on a result sets the worktree up again before its checks; not part of the hash. */
+  dependencyFiles: string[]
   /** The worktree's paths its checks see as fresh private writable directories (relative); not part of the hash either. */
   checkScratch: string[]
   /** The repository's generated files, when declared; not part of the setup's hash, since the setup does not run their commands. */
@@ -128,7 +163,7 @@ function patternProblem(pattern: unknown): string | undefined {
 }
 
 /** `commandChars` is the policy's own bound on a commands-list line (`autonomy-policy@1.0`): every setup command can be listed there. */
-export const SETUP_LIMITS = { commands: 16, commandChars: 200, views: 8, entries: 32, defaultTimeoutSeconds: 600, maxTimeoutSeconds: 3600, copyBytes: 1024 ** 3, defaultCheckTimeoutSeconds: 1800, generatedPaths: 32 } as const
+export const SETUP_LIMITS = { commands: 16, commandChars: 200, views: 8, entries: 32, defaultTimeoutSeconds: 600, maxTimeoutSeconds: 3600, copyBytes: 1024 ** 3, defaultCheckTimeoutSeconds: 1800, generatedPaths: 32, defaultCheckStallSeconds: 300, dependencyFiles: 32 } as const
 /** How much of a failed command's output its run's error keeps (INV-9). */
 const OUTPUT_TAIL = 1500
 const RULE = { type: 'rule', id: 'agent-workers.worktree-setup', version: '1' } as const
@@ -206,6 +241,14 @@ export function loadSetups(setups: readonly WorktreeSetupConfig[] | undefined, w
     }
     const checkTimeoutSeconds = entry.checkTimeoutSeconds ?? SETUP_LIMITS.defaultCheckTimeoutSeconds
     if (!Number.isInteger(checkTimeoutSeconds) || checkTimeoutSeconds < 1 || checkTimeoutSeconds > SETUP_LIMITS.maxTimeoutSeconds) fail(`${repository}: checkTimeoutSeconds is 1 to ${SETUP_LIMITS.maxTimeoutSeconds}`)
+    const checkStallSeconds = entry.checkStallSeconds ?? SETUP_LIMITS.defaultCheckStallSeconds
+    if (!Number.isInteger(checkStallSeconds) || checkStallSeconds < 1 || checkStallSeconds > SETUP_LIMITS.maxTimeoutSeconds) fail(`${repository}: checkStallSeconds is 1 to ${SETUP_LIMITS.maxTimeoutSeconds}`)
+    // The config schema gives an omitted list as empty: the default then.
+    const dependencyFiles = entry.dependencyFiles?.length ? entry.dependencyFiles : [...DEFAULT_DEPENDENCY_FILES]
+    if (!Array.isArray(dependencyFiles) || dependencyFiles.length > SETUP_LIMITS.dependencyFiles || dependencyFiles.some((name) => !RELATIVE(name) || name.includes('/') || name === '.git' || name.length > 255)) {
+      fail(`${repository}: dependencyFiles names up to ${SETUP_LIMITS.dependencyFiles} file names, each a plain name (no /, not . or ..)`)
+    }
+    if (new Set(dependencyFiles).size !== dependencyFiles.length) fail(`${repository}: dependencyFiles names a file twice`)
     const checkScratch = entry.checkScratch ?? []
     if (!Array.isArray(checkScratch) || checkScratch.length > SETUP_LIMITS.entries || checkScratch.some((path) => !RELATIVE(path) || path.split('/')[0] === '.git')) {
       fail(`${repository}: checkScratch names up to ${SETUP_LIMITS.entries} relative paths inside the worktree, none with . or .., none in .git`)
@@ -214,7 +257,7 @@ export function loadSetups(setups: readonly WorktreeSetupConfig[] | undefined, w
     if (overlapping) fail(`${repository}: checkScratch names ${overlapping} and another that holds it, or names it twice`)
     const generated = loadGenerated(repository, entry.generated)
     const definition = { repository, commands: [...lines], views, timeoutSeconds }
-    loaded.set(repository, { ...definition, lines: [...lines], commands: lines.map((line) => line.split(' ')), hash: contentId(definition), checks, checkTimeoutSeconds, checkScratch: [...checkScratch], ...(generated ? { generated } : {}) })
+    loaded.set(repository, { ...definition, lines: [...lines], commands: lines.map((line) => line.split(' ')), hash: contentId(definition), checks, checkTimeoutSeconds, checkStallSeconds, dependencyFiles: [...dependencyFiles], checkScratch: [...checkScratch], ...(generated ? { generated } : {}) })
   }
   return loaded
 }
@@ -275,10 +318,48 @@ const within = (path: string, root: string): boolean => path === root || path.st
 
 /** Refused before anything ran: the reason, and the decisions it rests on. */
 class Refusal extends Error {
-  constructor(message: string, readonly inputs: ArtifactRef[] = [], readonly detail: Record<string, unknown> = {}) {
+  constructor(message: string, readonly inputs: ArtifactRef[] = [], readonly detail: Record<string, unknown> = {}, readonly output?: string) {
     super(message)
   }
 }
+
+/** A workflow run whose result's checks need its worktree set up for the result's dependencies. */
+export interface RefreshRun {
+  workflowRunId: string
+  sessionId?: string | undefined
+  classification: 'public' | 'operator-shared' | 'local-private'
+  /** The worktree (its stored path) and the repository it belongs to (real path). */
+  worktree: string
+  repository: string
+  /** The result's subject id (`git:<ref>:<version>`): the tree the checks are for. */
+  subject: string
+}
+
+/**
+ * What setting a worktree up for a result's checks came to: `current` when its dependency files are
+ * as its setup last installed them (nothing ran); `ran` when the setup ran again on the result's tree;
+ * `refused` when it could not, with the `gate` decision that records why, unless nothing was judged.
+ */
+export type Refreshed =
+  | { outcome: 'current' }
+  | { outcome: 'ran'; decision: ContentId; changed: string[] | undefined }
+  | { outcome: 'refused'; decision?: ContentId; cause: 'dependency_unavailable' | 'failed'; reason: string; missing?: string[] }
+
+/** The rule of the decision a setup run again for a result's checks records (T235). */
+const AGAIN_RULE = { type: 'rule', id: 'agent-workers.worktree-setup-again', version: '1' } as const
+
+/** The dependency files a setup decision recorded, when it recorded them. */
+function recordedDependencies(body: unknown): { digest: string; files?: Record<string, string> } | undefined {
+  const deps = (body as { outcome?: { detail?: { dependencies?: { digest?: unknown; files?: unknown } } } } | undefined)?.outcome?.detail?.dependencies
+  if (typeof deps?.digest !== 'string') return undefined
+  return { digest: deps.digest, ...(deps.files && typeof deps.files === 'object' ? { files: deps.files as Record<string, string> } : {}) }
+}
+
+/** The dependency files as a decision keeps them: the digest, and each file's hash while they are few. */
+const keptDependencies = (deps: Dependencies): Record<string, unknown> => ({ digest: deps.digest, count: Object.keys(deps.files).length, ...(Object.keys(deps.files).length <= KEPT_FILES ? { files: deps.files } : {}) })
+
+/** Paths as a reason names them: the first ten, and how many more. */
+const listed = (paths: readonly string[]): string => `${paths.slice(0, 10).join(', ')}${paths.length > 10 ? ` and ${paths.length - 10} more` : ''}`
 
 export class WorktreeSetups {
   private readonly queues = new Map<string, Promise<unknown>>()
@@ -295,7 +376,7 @@ export class WorktreeSetups {
    */
   ensure(run: SetupRun, setup: Setup, signal: AbortSignal): Promise<SetupOutcome> {
     return this.exclusive(run.worktree, async () => {
-      const row = this.ctx.store.db.prepare('SELECT setup_hash, setup_decision FROM agent_worktrees WHERE path = ? AND removed_at IS NULL').get(run.worktree) as { setup_hash: string | null; setup_decision: string | null } | undefined
+      const row = this.ctx.store.db.prepare('SELECT setup_hash, setup_decision, gitdir FROM agent_worktrees WHERE path = ? AND removed_at IS NULL').get(run.worktree) as { setup_hash: string | null; setup_decision: string | null; gitdir: string } | undefined
       if (row?.setup_hash === setup.hash && row.setup_decision) return { decision: row.setup_decision as ContentId }
       if (!row) return this.refused(run, setup, new Refusal(`${run.worktree} is not a worktree of a run`))
       let allowed: Allowed[]
@@ -322,12 +403,16 @@ export class WorktreeSetups {
       }
       const pending = [...new Set(allowed.flatMap((a) => a.verdict.failedChecks ?? []))]
       try {
-        await this.execute(run, setup, signal)
+        await this.execute(run.worktree, setup, signal)
       } catch (error) {
         if (signal.aborted) throw error
         return this.refused(run, setup, error instanceof Refusal ? new Refusal(error.message, inputs, error.detail) : new Refusal((error as Error).message, inputs))
       }
-      const decision = this.decide(run, setup, 'start', [`its setup ${setup.hash} ran: ${setup.commands.length} command(s), each allowed by the autonomy policy and exited 0, confined (the host read-only but the worktree, no network)${pending.length ? `; the checks ${pending.join(', ')} stay pending, bound when the run's result is accepted` : ''}`], inputs, pending.length ? { pendingChecks: pending } : {})
+      // What it installed for: a result that changes any of these has the setup run again before its checks (T235).
+      const dependencies = await this.dependencies(run.worktree, row.gitdir, setup)
+      const decision = this.decide(run, setup, 'start', [`its setup ${setup.hash} ran: ${setup.commands.length} command(s), each allowed by the autonomy policy and exited 0, confined (the host read-only but the worktree, no network)${pending.length ? `; the checks ${pending.join(', ')} stay pending, bound when the run's result is accepted` : ''}`], inputs, {
+        ...(pending.length ? { pendingChecks: pending } : {}), ...(dependencies ? { dependencies: keptDependencies(dependencies) } : {}),
+      })
       this.ctx.store.transaction((db) => {
         db.prepare('UPDATE agent_worktrees SET setup_hash = ?, setup_decision = ? WHERE path = ? AND removed_at IS NULL').run(setup.hash, decision, run.worktree)
       })
@@ -412,20 +497,118 @@ export class WorktreeSetups {
     return { waits: created.requestId }
   }
 
-  /** Run the commands in order, confined, within the setup's deadline. Throws a {@link Refusal} naming the cause. */
-  private async execute(run: SetupRun, setup: Setup, signal: AbortSignal): Promise<void> {
-    const worktree = real(run.worktree)
-    if (!worktree) throw new Refusal(`its worktree ${run.worktree} cannot be read`)
+  /**
+   * Set the worktree up again for a result's checks (T235), when its dependency files (the setup's
+   * `dependencyFiles`, at any depth) are not what the setup last installed for: the setup's commands,
+   * each judged by the autonomy policy and run only when it allows them unasked (no one is there to
+   * ask while checks run), in the setup's confinement (the worktree writable, no network) and offline
+   * environment, on the result's tree. What it came to is a `gate` decision (rule
+   * `agent-workers.worktree-setup-again`); once it ran, that decision is the worktree's setup decision,
+   * with the dependency files it installed for. An install that needed the network is refused as
+   * `dependency_unavailable`, naming the packages it lacked. One setup at a time per worktree. Throws
+   * only when `signal` stopped it.
+   */
+  refresh(run: RefreshRun, setup: Setup, signal: AbortSignal): Promise<Refreshed> {
+    return this.exclusive(run.worktree, async () => {
+      const row = this.ctx.store.db.prepare('SELECT setup_hash, setup_decision, gitdir FROM agent_worktrees WHERE path = ? AND removed_at IS NULL').get(run.worktree) as { setup_hash: string | null; setup_decision: string | null; gitdir: string } | undefined
+      if (!row || row.setup_hash !== setup.hash || !row.setup_decision) return { outcome: 'refused', cause: 'failed', reason: `the worktree ${run.worktree} was not set up under its repository's setup as loaded now (${setup.hash})` }
+      const now = await this.dependencies(run.worktree, row.gitdir, setup)
+      if (!now) return { outcome: 'refused', cause: 'failed', reason: `the dependency files of the worktree ${run.worktree} cannot be read, so whether its setup still holds for the result is not known` }
+      const before = recordedDependencies(this.ctx.artifacts.get(row.setup_decision as ContentId)?.body)
+      if (before?.digest === now.digest) return { outcome: 'current' }
+      const changed = before?.files ? changedFiles(before.files, now.files) : undefined
+      const why = before ? `its dependency files changed since its setup ran${changed ? ` (${listed(changed)})` : ''}` : 'its setup recorded no dependency files to compare with'
+      const detail = { dependencies: keptDependencies(now), ...(changed ? { changed: changed.slice(0, 50) } : {}) }
+      const inputs: ArtifactRef[] = [row.setup_decision as ArtifactRef]
+      const refuse = (cause: 'dependency_unavailable' | 'failed', reason: string, more: Record<string, unknown> = {}, missing?: string[]): Refreshed => {
+        const decision = this.decideAgain(run, setup, 'refuse', [`${why}, and its setup could not run again on the result: ${reason}`], inputs, { ...detail, cause, ...more })
+        this.eventAgain(run, setup, 'refused', decision)
+        return { outcome: 'refused', decision, cause, reason: `${why}; its setup run again on the result ${cause === 'dependency_unavailable' ? 'needs the network' : 'did not complete'}: ${reason} (decision ${decision})`, ...(missing ? { missing } : {}) }
+      }
+      const approvals = this.ctx.get('approvals')
+      if (!approvals) return refuse('failed', 'no approval queue (ctx.approvals) is loaded, and no setup command runs without its autonomy decision')
+      for (const [i, argv] of setup.commands.entries()) {
+        const verdict = await approvals.check({ class: 'command', command: argv })
+        inputs.push(verdict.decision)
+        const pending = verdict.failedChecks ?? []
+        if ((verdict.mode !== 'auto' && verdict.mode !== 'notify') || pending.some((c) => !CHECKS.includes(c))) {
+          return refuse('failed', `the autonomy policy does not let its command ${i + 1} (${setup.lines[i]}) run unasked (${String(verdict.mode)}); a setup run again for a result's checks runs only commands the policy allows unasked, such as lines on the studio policy's commands list`)
+        }
+      }
+      try {
+        await this.execute(run.worktree, setup, signal)
+      } catch (error) {
+        if (signal.aborted) throw error
+        const message = (error as Error).message
+        const missing = error instanceof Refusal && error.output !== undefined ? missingPackages(error.output) : undefined
+        if (missing) {
+          return refuse('dependency_unavailable', `${missing.length ? `the packages ${missing.join(', ')} are not in the store it installs from` : 'it could not reach a registry'}, and it runs with no network: ${message}`, { missing }, missing)
+        }
+        return refuse('failed', message, error instanceof Refusal ? error.detail : {})
+      }
+      const after = await this.dependencies(run.worktree, row.gitdir, setup) ?? now
+      const decision = this.decideAgain(run, setup, 'run', [`${why}: its setup ${setup.hash} ran again on the result, ${setup.commands.length} command(s), each allowed by the autonomy policy unasked and exited 0, confined (the host read-only but the worktree, no network)`], inputs, { ...detail, dependencies: keptDependencies(after) })
+      this.ctx.store.transaction((db) => {
+        db.prepare('UPDATE agent_worktrees SET setup_decision = ? WHERE path = ? AND removed_at IS NULL AND setup_hash = ?').run(decision, run.worktree, setup.hash)
+      })
+      this.eventAgain(run, setup, 'ran', decision)
+      this.ctx.logger.info(`agent Workers: the setup ${setup.hash} of ${run.worktree} ran again for the dependencies of ${run.subject} (decision ${decision})`)
+      return { outcome: 'ran', decision, changed }
+    })
+  }
+
+  /** The worktree's dependency files now, or undefined when they cannot be read. */
+  private async dependencies(worktree: string, gitdir: string, setup: Setup): Promise<Dependencies | undefined> {
+    const path = real(worktree)
+    if (!path) return undefined
+    try {
+      return await dependenciesOf(path, gitdir, setup.dependencyFiles)
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: the dependency files of ${worktree} could not be read: ${(error as Error).message}`)
+      return undefined
+    }
+  }
+
+  /** The `gate` decision of rule `agent-workers.worktree-setup-again` (INV-13): may the result's checks run, its worktree set up again for its dependencies? */
+  private decideAgain(run: RefreshRun, setup: Setup, option: 'run' | 'refuse', reasons: string[], inputs: ArtifactRef[], detail: Record<string, unknown>): ContentId {
+    return this.ctx.artifacts.recordDecision({
+      decisionType: 'gate', question: `May the checks of workflow run ${run.workflowRunId} run on its result ${run.subject} in the worktree ${run.worktree}, its setup run again for the dependency files the result changed?`.slice(0, 500),
+      inputs: [...new Set(inputs)],
+      candidates: [
+        { option: 'run', selected: option === 'run', reasons: option === 'run' ? reasons : [`not run: ${reasons[0]}`] },
+        { option: 'refuse', selected: option === 'refuse', reasons: option === 'refuse' ? reasons : ['not refuse: the setup ran again and every command exited 0'] },
+      ],
+      decider: AGAIN_RULE,
+      outcome: { option, detail: { worktree: run.worktree, repository: run.repository, subject: run.subject, setup: setup.hash, commands: setup.commands.length, ...detail } },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'agent-workers' }, runId: run.workflowRunId, classification: run.classification }).id as ContentId
+  }
+
+  private eventAgain(run: RefreshRun, setup: Setup, outcome: 'ran' | 'refused', decision: ContentId): void {
+    try {
+      this.ctx.get('eventLog')?.append({
+        type: 'agent-workers.worktree.setup', runId: run.workflowRunId, ...(run.sessionId ? { sessionId: run.sessionId } : {}), decision,
+        data: { worktree: run.worktree, setup: setup.hash, outcome, for: 'checks', subject: run.subject },
+      })
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: the setup event of ${run.worktree} was not appended: ${(error as Error).message}`)
+    }
+  }
+
+  /** Run the commands in order, confined and offline, within the setup's deadline. Throws a {@link Refusal} naming the cause. */
+  private async execute(stored: string, setup: Setup, signal: AbortSignal): Promise<void> {
+    const worktree = real(stored)
+    if (!worktree) throw new Refusal(`its worktree ${stored} cannot be read`)
     const confined = await confineIn(this.ctx, setup, worktree, this.runDir)
     try {
       const deadline = AbortSignal.timeout(setup.timeoutSeconds * 1000)
-      const env = childEnvironment()
+      const env = setupEnvironment()
       for (const [i, argv] of setup.commands.entries()) {
         const ended = await runBounded(confined.command(argv), env, AbortSignal.any([signal, deadline]))
         if (signal.aborted) throw signal.reason ?? new ProviderError('aborted', 'stopped')
-        if (deadline.aborted) throw new Refusal(`its command ${i + 1} (${setup.lines[i]}) did not finish within the setup's ${setup.timeoutSeconds} s; it was stopped${tail(ended.output)}`, [], { command: i + 1, timedOut: true })
+        if (deadline.aborted) throw new Refusal(`its command ${i + 1} (${setup.lines[i]}) did not finish within the setup's ${setup.timeoutSeconds} s; it was stopped${tail(ended.output)}`, [], { command: i + 1, timedOut: true }, ended.output)
         if (ended.code !== 0) {
-          throw new Refusal(`its command ${i + 1} (${setup.lines[i]}) ${ended.code === null ? `ended on signal ${ended.signal ?? 'unknown'}` : `exited with code ${ended.code}`}${tail(ended.output)}`, [], { command: i + 1, ...(ended.code !== null ? { exitCode: ended.code } : {}) })
+          throw new Refusal(`its command ${i + 1} (${setup.lines[i]}) ${ended.code === null ? `ended on signal ${ended.signal ?? 'unknown'}` : `exited with code ${ended.code}`}${tail(ended.output)}`, [], { command: i + 1, ...(ended.code !== null ? { exitCode: ended.code } : {}) }, ended.output)
         }
       }
     } finally {
@@ -718,8 +901,9 @@ function launched(said: string): boolean {
  * Run a confined command to its end, or until `signal` stops it (SIGKILL; bubblewrap takes its
  * namespace with it). `acknowledged`: a check's launcher says on fd 3 whether its command was executed
  * ({@link confineIn}), and its end says whether it was ({@link launched}); it may report on {@link REPORT_FD}.
+ * `onOutput` is called on each piece the command prints (a check's stall watch, ./checks.ts).
  */
-export function runBounded(command: { command: string; args: string[] }, env: Record<string, string>, signal: AbortSignal, acknowledged = false): Promise<Ended> {
+export function runBounded(command: { command: string; args: string[] }, env: Record<string, string>, signal: AbortSignal, acknowledged = false, onOutput?: () => void): Promise<Ended> {
   return new Promise((resolvePromise, reject) => {
     let output = ''
     let bytes = 0
@@ -728,6 +912,7 @@ export function runBounded(command: { command: string; args: string[] }, env: Re
     let stopped = false
     const hash = createHash('sha256')
     const keep = (chunk: Buffer): void => {
+      onOutput?.()
       bytes += chunk.length
       hash.update(chunk)
       output = (output + chunk.toString('utf8')).slice(-64 * 1024)

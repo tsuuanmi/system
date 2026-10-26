@@ -465,6 +465,24 @@ export interface Explanation {
   liveness?: Array<RunLiveness & { source: string }>
   /** Each source that could not tell, with why: such a source is never read as having none (INV-2). */
   livenessUnread?: Array<{ source: string; detail: string }>
+  /**
+   * Each check of the run's result that is stalled now (T235): its command printed nothing for its
+   * bound (`worktreeSetup[].checkStallSeconds`) and goes on to its deadline, as the Worker source that
+   * runs it told (`agent-workers.check` events): the check, its command, when it was found stalled,
+   * and when it last printed. Only while the run is running and there are any.
+   */
+  stalledChecks?: StalledCheck[]
+}
+
+/** A check of a run's result that printed nothing for its bound, and still runs (T235). */
+export interface StalledCheck {
+  check: string
+  command: string
+  /** When it was found stalled. */
+  since: string
+  /** When it last printed. */
+  quietSince: string
+  stallSeconds: number
 }
 
 export interface Config {
