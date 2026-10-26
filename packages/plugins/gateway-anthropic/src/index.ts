@@ -39,7 +39,7 @@ export const Config: z<Config> = z.object({
   path: z.string().default('/anthropic').description('Route prefix; Claude Code sets ANTHROPIC_BASE_URL to it'),
   tokenDir: z.string().description('Directory of the scope token files (default <DSH_HOME>/system); the gateway takes model.token'),
   allowedHosts: z.array(z.string()).default([...LOOPBACK_HOSTS]),
-  models: z.dict(z.union(['economy', 'standard', 'frontier'])).default({ haiku: 'economy' }).description('Model-name patterns → tier'),
+  models: z.dict(z.union(['economy', 'standard', 'frontier'])).default({}).description('Model-name patterns → tier, as the operator configures them (model names are configuration only, ADR-0073); none by default'),
   classification: z.union(['public', 'operator-shared', 'local-private']).default('operator-shared').description('Classification of what the client sends'),
   timeoutMs: z.natural().min(1000).default(15 * 60_000),
   pingMs: z.natural().min(100).default(10_000),
@@ -50,7 +50,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   const refuse = guard(config)
   // Agent Workers never read the model token, wherever tokenDir puts it (ADR-0024).
   ctx.effect(() => registerSecretPath(modelTokenPath(config)))
-  const models = config.models ?? { haiku: 'economy' }
+  const models = config.models ?? {}
   const threads = new Threads(ctx, { scope: 'anthropic', ...(config.classification ? { classification: config.classification } : {}), ...(config.timeoutMs ? { timeoutMs: config.timeoutMs } : {}) })
 
   const error = (res: ServerResponse, status: number, type: string, message: string): void => {

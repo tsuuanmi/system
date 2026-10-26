@@ -8,8 +8,10 @@
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
 import type { MapOf, RiskTierMap } from './risk-tiers.ts'
+import type { TierByRisk, TierByRiskOf } from './tier-by-risk.ts'
 
 export * from './risk-tiers.ts'
+export * from './tier-by-risk.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -88,9 +90,9 @@ export function waitSeconds(policies: readonly AutonomyPolicy[], actionClass: Ac
   return Math.min(seconds, ...policies.map((p) => p.expiry.maxSeconds))
 }
 
-/** `autonomy-policy@1.x`: `@1.1` adds the optional path map `riskTiers` (ADR-0071). */
+/** `autonomy-policy@1.x`: `@1.1` adds the optional path map `riskTiers` (ADR-0071); `@1.2` the tier a step takes at its task's risk tier, `tierByRisk` (ADR-0073). */
 export interface AutonomyPolicy {
-  schema: 'autonomy-policy@1.0' | 'autonomy-policy@1.1'
+  schema: 'autonomy-policy@1.0' | 'autonomy-policy@1.1' | 'autonomy-policy@1.2'
   id: string
   version: number
   scope: 'studio' | 'project'
@@ -106,11 +108,21 @@ export interface AutonomyPolicy {
    * (./risk-tiers.ts, ADR-0071). With no applying policy carrying one, tiering is off.
    */
   riskTiers?: RiskTierMap
+  /**
+   * `@1.2`, optional: the intelligence tier a board task's step takes at its task's risk tier
+   * (./tier-by-risk.ts, ADR-0073). With no applying policy carrying one, steps keep their templates' tiers.
+   */
+  tierByRisk?: TierByRisk
 }
 
 /** The path maps of a policy set (the studio's, then the project's), each with the policy that carries it. */
 export function riskTierMaps(policies: readonly AutonomyPolicy[]): MapOf[] {
   return policies.filter((p) => p.riskTiers !== undefined).map((p) => ({ policy: { id: p.id, version: p.version }, map: p.riskTiers! }))
+}
+
+/** The tier-by-risk maps of a policy set (the studio's, then the project's), each with the policy that carries it. */
+export function tierByRiskMaps(policies: readonly AutonomyPolicy[]): TierByRiskOf[] {
+  return policies.filter((p) => p.tierByRisk !== undefined).map((p) => ({ policy: { id: p.id, version: p.version }, map: p.tierByRisk! }))
 }
 
 /** An action a core component wants to take, as the policy classifies it. */

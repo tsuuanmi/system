@@ -90,7 +90,7 @@
         runtime: antigravity-cli
         workspace: /home/tan/workspaces/system
         sandbox: read-only
-        model: gemini-3.8-flash-high
+        model: "<standard model>"                # its model's name, in the live profile only (ADR-0073)
         tier: standard
         worktreePerRun: true   # was off
       # T99 D5: the digests of a task's results. A digest asks for a read-only Worker on the digest

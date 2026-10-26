@@ -1,0 +1,36 @@
+{
+  "schema": "capability-descriptor@1.10",
+  "worker": "agent:runtime-a:0123456789abcdef/develop",
+  "provider": "runtime-a",
+  "family": "runtime-a",
+  "account": {
+    "id": "runtime-a:0123456789abcdef",
+    "group": "runtime-a",
+    "mode": "assigned"
+  },
+  "load": {
+    "running": 0,
+    "queued": 0,
+    "pending": 0,
+    "slots": 1
+  },
+  "tier": "economy",
+  "tiers": [
+    { "tier": "economy", "pools": ["plan/runtime-a:0123456789abcdef"] },
+    { "tier": "standard", "pools": ["plan/runtime-a:0123456789abcdef", "model-standard/runtime-a:0123456789abcdef"] },
+    { "tier": "frontier", "pools": ["plan/runtime-a:0123456789abcdef", "model-frontier/runtime-a:0123456789abcdef"], "closed": true, "until": "2026-10-29T09:00:00Z" }
+  ],
+  "quotaClass": "agent-plan",
+  "locality": "local",
+  "capabilities": [
+    {
+      "capability": "develop",
+      "evidence": {
+        "kind": "probe",
+        "at": "2026-10-26T00:00:00Z"
+      }
+    }
+  ],
+  "state": "ready",
+  "observedAt": "2026-10-26T10:00:00Z"
+}

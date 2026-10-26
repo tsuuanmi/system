@@ -4,7 +4,7 @@
  * policy set gives an action. Pure: no store, no clock. Code decides, never a model.
  */
 import type { Action, ActionClass, AutonomyPolicy, Check, ContentHash, Mode, ModeChange } from '@tsuuanmi/system-approvals-core'
-import { ALWAYS_ASK, applyingPolicies as applying, MODES, riskMapProblems, SHELL_METACHARACTER, waitSeconds as expiryOf } from '@tsuuanmi/system-approvals-core'
+import { ALWAYS_ASK, applyingPolicies as applying, MODES, riskMapProblems, SHELL_METACHARACTER, tierByRiskProblems, waitSeconds as expiryOf } from '@tsuuanmi/system-approvals-core'
 import { contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
 
 /** Every action class (`common@1`'s `actionClass`), in the order `policy()` reports them. */
@@ -122,6 +122,8 @@ export function policyProblems(policies: unknown, schemas: SchemaRegistry = new 
     for (const line of policy.commands ?? []) for (const problem of commandProblems(line)) problems.push(`${name}: ${problem}`)
     // The path map's patterns are read by code the schema's pattern cannot state in full (a `..` segment, `**` inside a segment).
     if (policy.riskTiers !== undefined) for (const problem of riskMapProblems(policy.riskTiers)) problems.push(`${name}: ${problem}`)
+    // The tier-by-risk map's keys and tiers, read by code as the schema states them (ADR-0073).
+    if (policy.tierByRisk !== undefined) for (const problem of tierByRiskProblems(policy.tierByRisk)) problems.push(`${name}: ${problem}`)
     if (policy.scope === 'project') {
       if (projects.has(policy.projectId!)) problems.push(`${name}: project ${policy.projectId} already has a policy`)
       projects.add(policy.projectId!)

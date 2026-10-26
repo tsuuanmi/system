@@ -48,8 +48,14 @@ export interface NodeView {
   /** The Worker source that runs it. */
   source?: string
   worker?: string
-  /** The tier of the Worker that served the node. */
+  /** The tier the node was served at: of a Worker that offers several, the one routing chose (ADR-0073). */
   tier?: Tier
+  /**
+   * The model its result ran on, as its result records it (ADR-0073): the model the operator's
+   * configuration gives its Worker at that tier (`agent-result@1.4` `configuredModel`), else the one
+   * its runtime reports answering with. Configuration, shown only.
+   */
+  model?: string
   quotaClass?: string
   result?: ArtifactRef
   /** The brief its latest execution was started with (docs/design/workflow-engine.md#briefs). */
@@ -462,7 +468,8 @@ export interface Explanation {
    * run's project has a path map.
    */
   risk?: { tier: 'light' | 'normal' | 'heavy'; reasons: string[]; decision: ArtifactRef; at?: string }
-  nodes: Array<{ nodeId: string; state: NodeState; executionId?: string; worker?: string; quotaClass?: string; decisions: ExplainedDecision[] }>
+  /** `tier` and `model`: the tier a tiered Worker's step ran at and the model it ran on (ADR-0073), only when its result names them. */
+  nodes: Array<{ nodeId: string; state: NodeState; executionId?: string; worker?: string; quotaClass?: string; tier?: Tier; model?: string; decisions: ExplainedDecision[] }>
   /**
    * The run's executions whose liveness needs a look, as their Worker sources tell it
    * (`ctx.workers.liveness`, PROP-0013): stalled, looked at, or ended not known to be gone, with the

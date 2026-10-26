@@ -71,6 +71,8 @@ export interface RosterDescriptor {
   load?: { running: number; queued: number; pending: number; slots: number } | undefined
   cooldowns?: Array<{ capability: string; until: string }> | undefined
   tier: 'economy' | 'standard' | 'frontier'
+  /** `@1.10`: every tier it offers (ADR-0073), each closed while its model is at its limit. */
+  tiers?: ReadonlyArray<{ tier: 'economy' | 'standard' | 'frontier'; closed?: true | undefined; until?: string | undefined }> | undefined
   quotaClass: 'subscription-chat' | 'agent-plan' | 'metered' | 'local'
   locality: 'local' | 'remote'
   state: 'ready' | 'busy' | 'quota-exhausted' | 'reauth-required' | 'unavailable'
@@ -575,7 +577,11 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
 
 /** A Worker's line made from what its source says: provider, role, tier, quota class, and locality (shown, marked as derived, when it has no description). */
 function derivedOf(d: RosterDescriptor, role: Known<string | null>): string {
-  return clip(`${d.provider} Worker${isKnown(role) && role.value ? `, role ${role.value}` : ''}, ${d.tier} tier, ${d.quotaClass}, ${d.locality}`)
+  // A Worker that offers several tiers (ADR-0073) names them, and each its model's limit closes now.
+  const tiers = d.tiers && d.tiers.length > 1
+    ? `${d.tiers.map((t) => `${t.tier}${t.closed ? ` (at its model's limit${t.until ? ` until ${t.until}` : ''})` : ''}`).join(', ')} tiers`
+    : `${d.tier} tier`
+  return clip(`${d.provider} Worker${isKnown(role) && role.value ? `, role ${role.value}` : ''}, ${tiers}, ${d.quotaClass}, ${d.locality}`)
 }
 
 /**

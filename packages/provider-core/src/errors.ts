@@ -5,6 +5,7 @@ export type ProviderErrorKind =
   | 'network' | 'timeout' | 'provider_stalled' | 'session_broken' | 'conversation_lost' | 'input_dropped'
   | 'reauth_required' | 'challenge' | 'quota_exhausted' | 'reconciliation_failed'
   | 'ui_drift' | 'config_error' | 'aborted' | 'invalid_input' | 'internal' | 'overloaded' | 'egress_denied'
+  | 'worker_changed'
 
 const DISPOSITIONS: Record<ProviderErrorKind, Disposition> = {
   network: 'BACKOFF',
@@ -24,6 +25,9 @@ const DISPOSITIONS: Record<ProviderErrorKind, Disposition> = {
   internal: 'CODE_FIX',
   overloaded: 'BACKOFF',
   egress_denied: 'USER_ACTION',
+  // The Worker's configuration changed while the work waited, and no longer offers what it was routed
+  // to (its tier, or that tier's model; ADR-0073): nothing was sent, and routing serves it again at once.
+  worker_changed: 'IMMEDIATE',
   aborted: 'NONE',
   invalid_input: 'NONE',
 }

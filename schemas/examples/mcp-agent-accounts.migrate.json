@@ -12,7 +12,7 @@
         { "from": "agent:codex-writer", "runtime": "codex-sdk", "role": "develop-2", "to": "agent:codex-sdk:d50b2d1fa5532a21/develop-2", "account": "codex-sdk:d50b2d1fa5532a21", "why": "codex-sdk's home is slot 1, signed in as codex-sdk:d50b2d1fa5532a21" }
       ],
       "roles": [
-        { "id": "review", "workspace": "/home/operator/src/system", "sandbox": "read-only", "tier": "standard", "worktreePerRun": true, "description": "Reviews a change before it lands", "runtimes": { "antigravity-cli": { "model": "gemini-3.8-flash-high" } } },
+        { "id": "review", "workspace": "/home/operator/src/system", "sandbox": "read-only", "tier": "standard", "worktreePerRun": true, "description": "Reviews a change before it lands", "runtimes": { "antigravity-cli": { "model": "model-c-1" } } },
         { "id": "develop", "workspace": "/home/operator/src/system", "sandbox": "workspace-write", "tier": "standard", "worktreePerRun": true, "kinds": ["code"], "description": "Writes the code" },
         { "id": "develop-2", "workspace": "/home/operator/src/system", "sandbox": "workspace-write", "tier": "standard", "worktreePerRun": true, "kinds": ["docs", "tests"], "description": "Writes the docs and the tests" }
       ],
@@ -35,7 +35,7 @@
         { "provider": "codex-sdk", "maxConcurrentRunsPerAccount": 2 }
       ],
       "roles": [
-        { "id": "review", "workspace": "/home/operator/src/system", "sandbox": "read-only", "tier": "standard", "worktreePerRun": true, "description": "Reviews a change before it lands", "runtimes": { "antigravity-cli": { "model": "gemini-3.8-flash-high" } } },
+        { "id": "review", "workspace": "/home/operator/src/system", "sandbox": "read-only", "tier": "standard", "worktreePerRun": true, "description": "Reviews a change before it lands", "runtimes": { "antigravity-cli": { "model": "model-c-1" } } },
         { "id": "develop", "workspace": "/home/operator/src/system", "sandbox": "workspace-write", "tier": "standard", "worktreePerRun": true, "kinds": ["code"], "description": "Writes the code" },
         { "id": "develop-2", "workspace": "/home/operator/src/system", "sandbox": "workspace-write", "tier": "standard", "worktreePerRun": true, "kinds": ["docs", "tests"], "description": "Writes the docs and the tests" }
       ],

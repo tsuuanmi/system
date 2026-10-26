@@ -18,7 +18,7 @@
 | a `system`-role message after the user's turn (environment, skills) | rendered as a `[system]` turn |
 | `tools` | listed compactly; calls come back as `tool_use` |
 | `tool_result` blocks | `TOOL_RESULT <tool> (<id>)` lines in the next turn of the same provider conversation |
-| model names | `system-<tier>`, else `models` patterns (default `haiku` → economy), else standard |
+| model names | `system-<tier>`, else the operator's `models` patterns (none by default: model names are configuration only, ADR-0073), else standard |
 | thinking requests | not answered with `thinking` blocks |
 
 ## OpenAI Responses (`/openai/v1`, Codex)

@@ -62,7 +62,7 @@ const KIND = 'antigravity-cli'
  * probe can prove the bridge's half on the host, never agy's (that takes a model turn), so without
  * the installed version here the hook layer is not proven, no sandbox is offered, no tool call is
  * reported gated, and no run starts (docs/operations/runbooks.md#antigravity-cli-workers).
- * - 1.4.6 (2026-10-23, `gemini-3.8-flash-low`, a scratch workspace): the hook ran before each of
+ * - 1.4.6 (2026-10-23, its economy model, a scratch workspace): the hook ran before each of
  *   the session's tool steps with agy's environment, in the config directory; its deny held (the
  *   file was not written); a hook that exits non-zero, prints what agy cannot read, or times out
  *   blocked the step, and one that exits 0 printing nothing let it run, which `HOOK_COMMAND`

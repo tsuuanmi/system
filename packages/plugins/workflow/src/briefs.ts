@@ -11,7 +11,7 @@
 import type { Lease } from '@tsuuanmi/system-leases'
 import { type Brief, type BriefBudgetLine, type BriefCheck, type BriefFile, BRIEF_LIMITS, type BriefPointer, NO_LOCAL_SANDBOX, QUESTION_LIMITS, renderBrief } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
-import type { ArtifactRef, WorkerSandbox, WorkRequirement } from '@tsuuanmi/system-workers-core'
+import type { ArtifactRef, Tier, WorkerSandbox, WorkRequirement } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { type Wording, wordingOf } from './review.ts'
 import { clampText, type Instructions, literal, type PlaceholderScope, type ResolvedNode, unfilledPlaceholders } from './spec.ts'
@@ -106,7 +106,7 @@ export function renderedChars(e: Engine, draft: Draft): number {
  * applies, INV-12), with the sandbox the routed Worker's source declares (none: a Worker that runs
  * nothing on this machine).
  */
-export function recordBrief(e: Engine, run: RunRow, node: NodeRow, draft: Draft, sandbox: WorkerSandbox | undefined): ArtifactRef {
+export function recordBrief(e: Engine, run: RunRow, node: NodeRow, draft: Draft, sandbox: WorkerSandbox | undefined, tier?: Tier, model?: string): ArtifactRef {
   // At least as strict as what it points at, in its body as in its envelope (INV-12).
   let classification = draft.classification
   const refs = [...new Set([...draft.artifacts.map((p) => p.ref), ...(draft.files ?? []).map((f) => f.ref)])]
@@ -114,7 +114,11 @@ export function recordBrief(e: Engine, run: RunRow, node: NodeRow, draft: Draft,
     const stricter = e.ctx.artifacts.get(ref)?.classification
     if (stricter && RANK[stricter] > RANK[classification]) classification = stricter
   }
-  const body: Brief = { ...draft, sandbox: sandbox ?? NO_LOCAL_SANDBOX, classification }
+  // The tier the run was routed at, when its Worker offers several, and the model its source's
+  // configuration runs there (ADR-0073): `brief@1.4` with the tier, `@1.5` with its model too.
+  const named = model !== undefined && model.length && model.length <= 200 ? model : undefined
+  const tiered = tier ? (named ? { schema: 'brief@1.5' as const, tier, model: named } : { schema: 'brief@1.4' as const, tier }) : {}
+  const body: Brief = { ...draft, ...tiered, sandbox: sandbox ?? NO_LOCAL_SANDBOX, classification }
   return e.ctx.artifacts.put({
     kind: 'objective', bodySchema: body.schema, body, inputs: refs,
     classification: body.classification, producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id,

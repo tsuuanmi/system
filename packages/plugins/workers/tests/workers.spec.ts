@@ -6,7 +6,7 @@ import Artifacts from '@tsuuanmi/system-artifacts'
 import Store from '@tsuuanmi/system-store'
 import { describe, expect, it, vi } from 'vitest'
 import { requirement, source, worker, workersConformance } from '../../../workers-core/conformance/workers.ts'
-import WorkerRouter, { type Config } from '../src/index.ts'
+import WorkerRouter, { AdmissionFailure, type Config } from '../src/index.ts'
 
 // The router's describe deadline waits on node:timers/promises, which fake timers do not reach:
 // here it waits on the global setTimeout, which they replace, so a test can pass the 5 s deadline
@@ -92,7 +92,8 @@ describe('ctx.workers: quota in every route (PROP-0014 D3, quota-score@2)', () =
       expect(admitted.worker.worker).toBe('w:b')
       admitted.release()
       const route = routeBody(ctx, admitted.decisions.route)
-      expect(route.decider.version).toBe('2')
+      // Version 3 (ADR-0073): a Worker that offers several tiers is served and scored at one of them.
+      expect(route.decider.version).toBe('3')
       const [a, b] = route.candidates
       expect(b).toMatchObject({ option: 'w:b', selected: true })
       expect(b!.reasons.at(-1)).toMatch(/^quota \(quota-score@2\): known, 5 h: used 10 %, resets in 3 h 5\d min, headroom 70$/)
@@ -157,6 +158,100 @@ describe('ctx.workers: quota in every route (PROP-0014 D3, quota-score@2)', () =
       const admitted = await ctx.workers.route(requirement())
       expect(admitted.worker.worker).toBe('w:a')
       expect(routeBody(ctx, admitted.decisions.route).candidates.flatMap((c) => c.reasons).some((r) => r.startsWith('quota ('))).toBe(false)
+    } finally {
+      await dispose()
+    }
+  })
+})
+
+describe('ctx.workers: one Worker, several tiers (ADR-0073)', () => {
+  const NOW = new Date('2026-10-26T10:00:00.000Z')
+  const BACK = '2026-10-29T09:00:00.000Z'
+  const body = (ctx: Context, ref: string) => ctx.artifacts.get(ref)?.body as { outcome: { option: string }; candidates: Array<{ option: string; selected: boolean; reasons: string[] }> }
+  /** A Worker on account `acct-t` that offers every tier; `closed` tiers are at their model's limit until {@link BACK}. */
+  const tiered = (closed: string[] = [], pools?: Record<string, string[]>) => onAccount('w:t', 'acct-t', {
+    schema: 'capability-descriptor@1.10', tier: 'economy',
+    tiers: (['economy', 'standard', 'frontier'] as const).map((tier) => ({ tier, ...(pools?.[tier] ? { pools: pools[tier] } : {}), ...(closed.includes(tier) ? { closed: true as const, until: BACK } : {}) })),
+  })
+
+  it('serves a Worker that offers three tiers at the lowest one the work admits, and says so in the tier and route decisions', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: NOW })
+    const { ctx, dispose } = await boot()
+    try {
+      ctx.workers.register(source('test', [tiered(), onAccount('w:s', 'acct-s', { tier: 'standard' })]))
+      const cheap = await ctx.workers.route(requirement())
+      expect([cheap.worker.worker, cheap.tier]).toEqual(['w:t', 'economy'])
+      cheap.release()
+      const top = await ctx.workers.route(requirement({ tier: { min: 'frontier', source: 'caller' } }))
+      expect([top.worker.worker, top.tier]).toEqual(['w:t', 'frontier'])
+      expect(body(ctx, top.decisions.tier).outcome.option).toBe('frontier')
+      const chosen = body(ctx, top.decisions.route).candidates.find((c) => c.selected)!
+      expect(chosen.reasons).toContain('lowest admissible tier frontier')
+      // No tier of it has a pool of its model's own (as on Codex, which reports no window per model): explain says its tiers share its account's windows.
+      expect(chosen.reasons).toContain('serves tier frontier of the tiers it offers (economy, standard, frontier); tier frontier has no window of its model\'s own: its tiers share its account\'s windows')
+      expect(body(ctx, top.decisions.route).candidates.find((c) => c.option === 'w:s')!.reasons).toEqual(['tier standard is below the minimum frontier'])
+      top.release()
+      // The candidates' look says the tier each admitted Worker would serve at.
+      const look = await ctx.workers.candidates!(requirement({ tier: { min: 'standard', source: 'caller' } }))
+      expect(look.workers.map((c) => [c.worker.worker, c.tier])).toEqual([['w:s', 'standard'], ['w:t', 'standard']])
+      // With none of its tiers within the bounds, it is refused for its tier.
+      ctx.workers.register(source('gap', [onAccount('w:g', 'acct-g', { schema: 'capability-descriptor@1.10', tier: 'economy', tiers: [{ tier: 'economy' }, { tier: 'frontier' }] })]))
+      const gap = await ctx.workers.route(requirement({ tier: { min: 'standard', max: 'standard', source: 'caller' } }), { restrict: { workers: ['w:g'], reason: 'test' } }).catch((error: unknown) => error as AdmissionFailure)
+      expect((gap as AdmissionFailure).rejections[0]!.failed).toEqual([{ check: 'tier', reason: 'none of its tiers economy, frontier is from standard to standard' }])
+    } finally {
+      vi.useRealTimers()
+      await dispose()
+    }
+  })
+
+  it('closes only the tier whose model is at its limit: the frontier window at its limit leaves the standard tier admissible, and frontier work waits for it on an assigned account', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: NOW })
+    const { ctx, dispose } = await boot()
+    try {
+      ctx.workers.register(source('test', [tiered(['frontier'])]))
+      const standard = await ctx.workers.route(requirement({ tier: { min: 'standard', source: 'caller' } }))
+      expect([standard.worker.worker, standard.tier]).toEqual(['w:t', 'standard'])
+      standard.release()
+      const refused = await ctx.workers.route(requirement({ tier: { min: 'frontier', source: 'caller' } })).catch((error: unknown) => error as AdmissionFailure)
+      expect(refused).toBeInstanceOf(AdmissionFailure)
+      expect((refused as AdmissionFailure).rejections).toEqual([{ worker: 'w:t', state: 'ready', failed: [{ check: 'cooldown', reason: `tier frontier limit until ${BACK} (its model's limit)` }] }])
+      // Refused only for its limit, on an assigned account: the caller may wait for the frontier model's reset.
+      expect((refused as AdmissionFailure).limitUntil).toBe(new Date(BACK).toISOString())
+      // Work a closed tier would not serve anyway is not held: a lower tier still serves it.
+      const both = await ctx.workers.route(requirement({ tier: { min: 'economy', source: 'caller' } }))
+      expect(both.tier).toBe('economy')
+      both.release()
+    } finally {
+      vi.useRealTimers()
+      await dispose()
+    }
+  })
+
+  it('ranks a tier\'s Worker by that tier\'s headroom: its account\'s pool and its model\'s, never another model\'s (quota-score@2)', async () => {
+    const plan = { ...fivehour('acct-t', 10), pool: 'plan/acct-t' }
+    const frontier = { ...fivehour('acct-t', 90), pool: 'model-frontier/acct-t' }
+    const { ctx, dispose } = await bootWithLedger([plan, frontier, fivehour('acct-o', 50)])
+    try {
+      const pools = { economy: ['plan/acct-t'], standard: ['plan/acct-t'], frontier: ['plan/acct-t', 'model-frontier/acct-t'] }
+      ctx.workers.register(source('test', [tiered([], pools), onAccount('w:o', 'acct-o', { tier: 'standard' })]))
+      // At standard, its account's pool alone: 10 % used, against the other account's 50 %.
+      const standard = await ctx.workers.route(requirement({ tier: { min: 'standard', source: 'caller' } }))
+      expect([standard.worker.worker, standard.tier]).toEqual(['w:t', 'standard'])
+      expect(body(ctx, standard.decisions.route).candidates.find((c) => c.selected)!.reasons)
+        .toContain('serves tier standard of the tiers it offers (economy, standard, frontier); tier standard has no window of its model\'s own: its tiers share its account\'s windows')
+      standard.release()
+      // Its frontier tier draws on its model's own window too, and the route decision says so.
+      const own = await ctx.workers.route(requirement({ tier: { min: 'frontier', source: 'caller' } }), { restrict: { workers: ['w:t'], reason: 'test' } })
+      expect(body(ctx, own.decisions.route).candidates.find((c) => c.selected)!.reasons)
+        .toContain('serves tier frontier of the tiers it offers (economy, standard, frontier); tier frontier draws on its model\'s own window beside its account\'s')
+      own.release()
+      // At frontier, its frontier model's window too: 90 % used, above the reserve, so the other account comes first.
+      ctx.workers.register(source('other', [onAccount('w:f', 'acct-o', { tier: 'frontier' })]))
+      const top = await ctx.workers.route(requirement({ tier: { min: 'frontier', source: 'caller' } }))
+      expect([top.worker.worker, top.tier]).toEqual(['w:f', 'frontier'])
+      const lost = body(ctx, top.decisions.route).candidates.find((c) => c.option === 'w:t')!
+      expect(lost.reasons[0]).toMatch(/^admitted; w:f's account has headroom; this one's 5 h window is used 90 %/)
+      top.release()
     } finally {
       await dispose()
     }

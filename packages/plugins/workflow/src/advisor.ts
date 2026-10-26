@@ -339,7 +339,7 @@ export class ModelAdvisor implements Advisor {
     }
     const execution = ((): WorkerExecution => {
       try {
-        return source.start({ key: `advisor:${newId('adv')}`, worker: admitted.worker.worker, prompt, requirement, decisions: admitted.decisions })
+        return source.start({ key: `advisor:${newId('adv')}`, worker: admitted.worker.worker, prompt, requirement, decisions: admitted.decisions, ...(admitted.tier ? { tier: admitted.tier } : {}) })
       } finally {
         admitted.release()
       }

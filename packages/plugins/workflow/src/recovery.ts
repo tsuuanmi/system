@@ -5,7 +5,7 @@
 import type { InfrastructureFailure } from '@tsuuanmi/system-board-core'
 import type { Lease } from '@tsuuanmi/system-leases'
 import type { ProviderErrorKind } from '@tsuuanmi/system-provider-core'
-import { type AdmissionFailure, type ArtifactRef, type CapabilityDescriptor, type RouteOptions, TIERS, type WorkerAccount, type WorkerExecution } from '@tsuuanmi/system-workers-core'
+import { type AdmissionFailure, type ArtifactRef, type CapabilityDescriptor, offeredTiers, type RouteOptions, TIERS, type WorkerAccount, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { noteDeferral } from './continuations.ts'
 import type { Engine } from './engine.ts'
 import { MATERIAL, type SourceSnapshot } from './sources.ts'
@@ -55,14 +55,15 @@ export function escalate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNo
   const max = spec.maxEscalations ?? 1
   const served = node.served_tier ?? spec.tier
   const next = TIERS[TIERS.indexOf(served) + 1]
-  const reachable = next === undefined || !held || ('workers' in held && held.workers.some((w) => TIERS.indexOf(w.tier) >= TIERS.indexOf(next)))
+  // A Worker that offers several tiers (ADR-0073) serves the next tier when any of them is at or above it.
+  const reachable = next === undefined || !held || ('workers' in held && held.workers.some((w) => offeredTiers(w).some((o) => TIERS.indexOf(o.tier) >= TIERS.indexOf(next))))
   const escalate = node.escalations < max && next !== undefined && reachable
   const why = escalate
     ? `escalation ${node.escalations + 1} of ${max} to ${next}: ${spec.acceptance} rejected the ${served} result (${reasons.join('; ')})`
     : next === undefined ? `no tier above ${served}`
     : node.escalations >= max ? `escalation bound reached (${max})`
     : held && 'unknown' in held ? `held Workers unknown: the Workers session ${held.session} stays on could not be listed (${held.unknown}), so no Worker can be shown to take it at tier ${next}`
-    : `session ${held!.session} stays on its Worker${held!.workers.length > 1 ? 's' : ''} ${held!.workers.map((w) => `${w.worker} (${w.tier})`).join(', ')}, none at tier ${next} or above, so no Worker could take it there`
+    : `session ${held!.session} stays on its Worker${held!.workers.length > 1 ? 's' : ''} ${held!.workers.map((w) => `${w.worker} (${offeredTiers(w).map((o) => o.tier).join(', ')})`).join(', ')}, none at tier ${next} or above, so no Worker could take it there`
   const decision = e.ctx.artifacts.recordDecision({
     decisionType: 'escalation',
     question: `Does node ${node.node_id} of run ${run.run_id} run again at a higher tier after its result was rejected?`,

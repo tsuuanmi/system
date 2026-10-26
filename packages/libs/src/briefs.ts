@@ -24,7 +24,11 @@ export interface BriefFile { path: string; ref: ContentId; note?: string }
 export type BriefCheck = 'tests' | 'typecheck' | 'lint' | 'schema' | 'quote-check' | 'review' | 'operator'
 
 export interface Brief {
-  schema: 'brief@1.0' | 'brief@1.1' | 'brief@1.2' | 'brief@1.3'
+  schema: 'brief@1.0' | 'brief@1.1' | 'brief@1.2' | 'brief@1.3' | 'brief@1.4' | 'brief@1.5'
+  /** `@1.4`: the tier routing served the run at, when its Worker offers several (ADR-0073); from the route decision. */
+  tier?: 'economy' | 'standard' | 'frontier'
+  /** `@1.5`, with `tier`: the model its Worker's source configuration runs at that tier (ADR-0073); configuration, shown only. */
+  model?: string
   projectId?: string
   taskId?: string
   attempt?: number

@@ -107,11 +107,11 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
 
   it('runs read-only: no prompts, no settings files, only the allowed tools, in the workspace', async () => {
     const calls: Call[] = []
-    const result = await runtime(scripted(calls)).run({ prompt: 'review', workspace, sandbox: 'read-only', model: 'opus-x', maxTurns: 5, resume: 'h-0' }, new AbortController().signal)
+    const result = await runtime(scripted(calls)).run({ prompt: 'review', workspace, sandbox: 'read-only', model: 'model-x', maxTurns: 5, resume: 'h-0' }, new AbortController().signal)
     expect(result).toEqual({ text: 'echo: review', nativeHandle: 'h-1', turns: 2, costUsd: 0.01, resultId: 'h-1:r-1', model: 'model-main', ...NORMALIZED })
     expect(calls[0]!.options).toMatchObject({
       cwd: workspace, permissionMode: 'dontAsk', permissionPrompts: 'none', allowedTools: ['Read(./**)', 'Grep(./**)', 'Glob(./**)'], tools: ['Read', 'Grep', 'Glob'],
-      settingSources: [], mcpServers: {}, strictMcpConfig: true, pathToClaudeCodeExecutable: '/usr/bin/claude', model: 'opus-x', maxTurns: 5, resume: 'h-0',
+      settingSources: [], mcpServers: {}, strictMcpConfig: true, pathToClaudeCodeExecutable: '/usr/bin/claude', model: 'model-x', maxTurns: 5, resume: 'h-0',
     })
   })
 
@@ -229,13 +229,13 @@ describe('claude-agent-sdk: what a run consumed, from the SDK\'s own numbers (do
       event({ status: 'allowed', rateLimitType: 'seven_day' }),
       event({ status: 'allowed' }),
       // A reset in milliseconds would be centuries away: not believed.
-      event({ status: 'allowed', rateLimitType: 'seven_day_opus', resetsAt: RESET * 1000 }),
+      event({ status: 'allowed', rateLimitType: 'seven_day_family_a', resetsAt: RESET * 1000 }),
     ]
     const result = await runtime(scripted([], {}, { before })).run(spec, new AbortController().signal)
     expect(result.limits).toEqual([
       { window: 'five_hour', status: 'warning', resetsAt: '2026-10-22T14:00:00.000Z', usedPercentage: 82, observedAt: expect.any(String) },
       { window: 'seven_day', status: 'allowed', observedAt: expect.any(String) },
-      { window: 'seven_day_opus', status: 'allowed', observedAt: expect.any(String) },
+      { window: 'seven_day_family_a', status: 'allowed', observedAt: expect.any(String) },
     ])
     expectConsistentMetering(result)
   })

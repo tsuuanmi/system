@@ -47,11 +47,11 @@ import {
   type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, pooledTermsDecision, probeProcess, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDraw, sha256, USAGE_UNKNOWN_EVENT, type UsageUnknown, usageUnknown,
 } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
-import { type LimitState, type PoolState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
+import { type LimitState, type PoolState, type Resources, ResourcesError, templatePool, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type {} from '@tsuuanmi/system-store'
 import {
   type ArtifactRef, type CapabilityDescriptor, type CapabilityOffer, type ExecutionInfrastructure, type ExecutionStatus, type LivenessQuery, type LivenessReport, type LivenessState, MAX_LIVENESS_RUNS, type QuotaClass, type RunLiveness, type Tier,
-  type WorkerExecution, type WorkerSandbox, type WorkerStart, type WorkScope,
+  type TierOffer, TIERS, type WorkerExecution, type WorkerSandbox, type WorkerStart, type WorkScope,
 } from '@tsuuanmi/system-workers-core'
 import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MAX_SLOTS } from './accounts.ts'
 import { type DossierCaller, dossiersOf, dossierTools, type StepDossiers } from './dossier.ts'
@@ -63,8 +63,8 @@ import { Probes, refused } from './probes.ts'
 import { regenerationOf } from './regenerate.ts'
 import { ReportSchedule, type ReportTarget } from './reports.ts'
 import {
-  type AgentAssignmentConfig, type AgentProviderConfig, type AgentRoleConfig, checkProviders, DEFAULT_LIMIT_READ_SECONDS, type DerivedWorker, deriveWorkers, kindsProblem, MAX_CONCURRENT_PER_ACCOUNT,
-  MAX_LIMIT_READ_SECONDS, setsDerivedOnly,
+  type AgentAssignmentConfig, type AgentProviderConfig, type AgentRoleConfig, checkProviders, DEFAULT_LIMIT_READ_SECONDS, type DerivedTier, type DerivedWorker, deriveWorkers, kindsProblem, MAX_CONCURRENT_PER_ACCOUNT,
+  MAX_LIMIT_READ_SECONDS, MAX_MODEL_POOLS, setsDerivedOnly,
 } from './roles.ts'
 import { CHECKS_MIGRATION, RunChecks } from './checks.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
@@ -139,10 +139,12 @@ export interface AgentWorkerConfig {
   description?: string
 }
 
-/** A Worker as this source runs it: a hand-named row, or one derived as account × role (`derived`). */
-type WorkerSpec = AgentWorkerConfig & { derived?: DerivedWorker['derived'] }
+/** A Worker as this source runs it: a hand-named row, or one derived as account × role (`derived`), with the tiers it offers (ADR-0073). */
+type WorkerSpec = AgentWorkerConfig & { derived?: DerivedWorker['derived']; tiers?: DerivedTier[] }
+/** What a run at its tier runs (ADR-0073): the tier, its model and options, and its model's pool. */
+type AtTier = Pick<AgentWorkerConfig, 'tools' | 'model' | 'maxTurns'> & { tier: Tier; modelPool?: DerivedTier['modelPool']; declared: boolean }
 
-export type { AgentAssignmentConfig, AgentProviderConfig, AgentRoleConfig } from './roles.ts'
+export type { AgentAssignmentConfig, AgentModelPool, AgentProviderConfig, AgentRoleConfig, AgentRoleRuntime, AgentRoleTier } from './roles.ts'
 export type { WorktreeGeneratedConfig, WorktreeSetupConfig, WorktreeSetupView } from './setup.ts'
 export type { MigrationPlan } from './migrate.ts'
 
@@ -288,6 +290,10 @@ interface RunRow {
   /** The workflow template and step it serves (`WorkerStart.step`), for what it drew. */
   step_template?: string | null
   step_node?: string | null
+  /** The tier it runs at (ADR-0073): the routed one, of the tiers its Worker offers, so its model is that tier's. */
+  tier?: string | null
+  /** The model its tier's configuration gave it when it was started, on a Worker that offers tiers (ADR-0073): it runs no other. */
+  configured_model?: string | null
   created_at: string
   updated_at: string
 }
@@ -362,7 +368,7 @@ function configuredWorkers(config: Partial<Config>): { derived: boolean; workers
   }
   const derivedOnly = providers.find(setsDerivedOnly)
   if (!derived && derivedOnly) {
-    throw new ProviderError('config_error', `agent-workers.providers (${derivedOnly.provider}): maxConcurrentRunsPerAccount, pool, windows, limitCooldownSeconds, and limitReadSeconds apply to Workers derived from roles and assignments; a hand-named Worker sets its own`)
+    throw new ProviderError('config_error', `agent-workers.providers (${derivedOnly.provider}): maxConcurrentRunsPerAccount, pool, windows, modelPools, limitCooldownSeconds, and limitReadSeconds apply to Workers derived from roles and assignments; a hand-named Worker sets its own`)
   }
   const workers = new Map<string, WorkerSpec>()
   for (const worker of [...config.workers ?? [], ...derived ? deriveWorkers(config.roles ?? [], config.assignments ?? [], providers) : []] as WorkerSpec[]) {
@@ -450,7 +456,7 @@ export class AgentWorkers extends Service {
       id: z.string().pattern(/^[a-z][a-z0-9-]{0,31}$/).required().description('Role id: its Workers are agent:<accountId>/<role>'),
       workspace: z.string().required().description('Absolute workspace root its work is done in'),
       sandbox: z.union(['read-only', 'workspace-write']).required(),
-      tier: z.union(['economy', 'standard', 'frontier']).required(),
+      tier: z.union(['economy', 'standard', 'frontier']).description('Its one tier on a runtime that declares no tiers (runtimes.<runtime>.tiers); may be left out when every runtime it is assigned on declares them'),
       quotaClass: z.union(['subscription-chat', 'agent-plan', 'metered', 'local']).default('agent-plan'),
       worktreePerRun: z.boolean().default(false).description('Each run of a workflow run works in that run\'s own git worktree of the workspace, as a hand-named Worker\'s'),
       reviewMember: z.boolean().default(false).description('Its review team member steps run under the enforced review-member profile (ADR-0049); read-only, and each runtime it is assigned on names its family'),
@@ -462,7 +468,9 @@ export class AgentWorkers extends Service {
         model: z.string(),
         maxTurns: z.natural().min(1),
         family: z.string().min(1).max(128).description('Its provider family on this runtime (ADR-0027; default the runtime); required for a review member'),
-      })).description('What differs per runtime, by runtime kind: tools, model, maxTurns, family; never a routing input'),
+        // Not z.dict: an omitted object would come back as {}, a runtime declaring no tier at all; checked at load.
+        tiers: z.any().description('The tiers its Workers on this runtime offer (ADR-0073), {economy, standard, frontier}, each {model, tools?, maxTurns?}: one Worker offers them all, routing serves it at the lowest a step admits, and its run uses that tier\'s model. Replaces the role\'s tier on this runtime. Model names are configuration only'),
+      })).description('What differs per runtime, by runtime kind: tools, model, maxTurns, family, and tiers (ADR-0073: runtimes.<runtime>.tiers = {economy?, standard?, frontier?}, each {model, tools?, maxTurns?}, in place of the role\'s tier and the runtime\'s model there; one Worker per account then offers every tier, each run on its tier\'s model; models named in the live profile only; docs/operations/runbooks.md#give-a-role-tiers); never a routing input'),
     })).default([]).description('Role templates (PROP-0012 phase F), each defined once: what the work needs, whatever account serves it'),
     assignments: z.array(z.object({
       account: z.string().pattern(/^[a-z][a-z0-9-]{0,63}:[0-9a-f]{16}$/).required().description('An enrolled agent account, by the id system account list shows'),
@@ -480,6 +488,11 @@ export class AgentWorkers extends Service {
       windows: z.dict(z.string()).description('The runtime\'s limit window names mapped to the template\'s window ids; with pool only'),
       limitCooldownSeconds: z.natural().min(60).max(604_800).description('How long a limit hit with no reset time closes an account\'s pool, or with no pool cools the account down (default 3600); with roles and assignments only'),
       limitReadSeconds: z.natural().max(MAX_LIMIT_READ_SECONDS).description(`How often each ready account with a pool has its runtime's usage report read into its pool's windows (ADR-0059; default ${DEFAULT_LIMIT_READ_SECONDS}, at least 60; 0 turns the periodic read off); with pool only`),
+      modelPools: z.array(z.object({
+        model: z.string().required().description('The model, as the roles\' tiers name it'),
+        pool: z.string().required().description('The pool template (resources templates, of this runtime\'s group) its accounts draw on for this model: pool <pool>/<accountId>'),
+        windows: z.dict(z.string()).description('The runtime\'s window names for this model (a weekly window per model) mapped to the template\'s window ids'),
+      })).description(`Per-model quota (ADR-0073): a model whose provider reports a window of its own draws on one more pool per account; a run on it reserves on both, and its limit closes only the tiers that run it. At most ${MAX_MODEL_POOLS}; with pool only`),
     })).default([]).description('How each agent runtime\'s accounts are used and how many may be enrolled; a runtime not listed is assigned, with one slot (ADR-0051, ADR-0052)'),
     accountHomes: z.string().description('Where enrollment slots 2 and later keep their homes, <accountHomes>/<provider>/<n> (default <DSH_HOME>/system/agent-homes); hidden from every agent'),
     maxReplayChars: z.natural().min(1).max(2_000_000).default(200_000).description('Characters of earlier turns a review member\'s replayed conversation holds, at most; a turn past it fails, never cut'),
@@ -695,6 +708,13 @@ export class AgentWorkers extends Service {
       sql: `ALTER TABLE agent_runs ADD COLUMN kind TEXT;
       ALTER TABLE agent_runs ADD COLUMN step_template TEXT;
       ALTER TABLE agent_runs ADD COLUMN step_node TEXT;`,
+    }, {
+      // The tier a run runs at (ADR-0073), of the tiers its Worker offers: its model is that tier's.
+      // A run from before has none, and runs its Worker's lowest tier, as it would have. The model
+      // its tier gave it at the start, on a Worker that offers tiers: it runs no other.
+      version: 20,
+      sql: `ALTER TABLE agent_runs ADD COLUMN tier TEXT;
+      ALTER TABLE agent_runs ADD COLUMN configured_model TEXT;`,
     }])
     this.cutover = new Cutover(ctx)
     // Once the operator applied the move, the hand-named rows are refused: one implementation, no second path.
@@ -719,6 +739,11 @@ export class AgentWorkers extends Service {
       cancel: (id) => this.cancel(id),
       reserve: (worker) => this.admit(worker),
       sandbox: (worker, runId) => this.sandboxOf(worker, runId),
+      // The model a run of a Worker that offers tiers asks for at a tier (ADR-0073), for its brief.
+      model: (worker, tier) => {
+        const spec = this.workers.get(worker)
+        return spec?.tiers?.some((t) => t.tier === tier) ? this.atTier(spec, tier).model : undefined
+      },
       affinity: (sessionId) => {
         const session = this.ctx.store.db.prepare('SELECT worker FROM agent_sessions WHERE session_id = ?').get(sessionId) as { worker: string } | undefined
         return session ? [session.worker] : undefined
@@ -821,16 +846,87 @@ export class AgentWorkers extends Service {
       // A derived Worker reports its account's load: what runs and waits on it across its roles (ADR-0033).
       const load = loads && worker.derived ? this.loadOf(worker, loads) : undefined
       const state = !ready ? 'unavailable' : pool === 'ready' && load && load.running >= load.slots ? 'busy' : pool
+      // The tiers it offers (ADR-0073), each with the pools a run at it draws on, closed while its model's pool is.
+      const tiers = worker.tiers ? await this.tierOffers(id, worker, ready && pool === 'ready') : undefined
       return {
         // The operator's family, else the runtime, who serves the work (ADR-0027); the kinds of work
         // the operator gives it, so it takes no other (ADR-0057).
-        schema: why !== undefined ? 'capability-descriptor@1.9' : worker.description ? 'capability-descriptor@1.7' : worker.kinds ? 'capability-descriptor@1.6' : 'capability-descriptor@1.5', account, ...(worker.kinds ? { kinds: [...worker.kinds] } : {}),
+        schema: tiers ? 'capability-descriptor@1.10' : why !== undefined ? 'capability-descriptor@1.9' : worker.description ? 'capability-descriptor@1.7' : worker.kinds ? 'capability-descriptor@1.6' : 'capability-descriptor@1.5', account, ...(worker.kinds ? { kinds: [...worker.kinds] } : {}),
         ...(worker.description ? { description: worker.description } : {}),
         ...(why !== undefined ? { unavailableReason: boundedReason(why) } : {}),
-        worker: id, provider: worker.runtime, family: worker.family ?? worker.runtime, ...(load ? { load } : {}), tier: worker.tier, quotaClass: worker.quotaClass ?? 'agent-plan',
+        worker: id, provider: worker.runtime, family: worker.family ?? worker.runtime, ...(load ? { load } : {}), tier: worker.tier, ...(tiers ? { tiers } : {}), quotaClass: worker.quotaClass ?? 'agent-plan',
         locality: 'local', capabilities: proven, state, observedAt,
       }
     }))
+  }
+
+  /**
+   * The tiers a Worker offers (ADR-0073), lowest first: each with the pools a run at it draws on (its
+   * account's, and its model's when the provider names one), and closed while its model's pool is
+   * unavailable, with when it is expected back. A model's pool that cannot be read closes its tier
+   * (INV-2). `read` false (the Worker takes no work anyway): the tiers alone, no pool read.
+   */
+  private async tierOffers(id: string, worker: WorkerSpec, read: boolean): Promise<TierOffer[]> {
+    const gates = new Map<string, Promise<{ state: string; until?: string | undefined }>>()
+    return Promise.all(worker.tiers!.map(async (t): Promise<TierOffer> => {
+      const pools = worker.pool !== undefined ? [worker.pool, ...(t.modelPool ? [t.modelPool.pool] : [])] : undefined
+      if (!read || !t.modelPool) return { tier: t.tier, ...(pools ? { pools } : {}) }
+      const pool = t.modelPool.pool
+      if (!gates.has(pool)) gates.set(pool, this.poolGate(id, { ...worker, pool }))
+      const gate = await gates.get(pool)!
+      return { tier: t.tier, ...(pools ? { pools } : {}), ...(gate.state !== 'ready' ? { closed: true as const, ...(gate.until ? { until: gate.until } : {}) } : {}) }
+    }))
+  }
+
+  /**
+   * The tier a run of this Worker runs at (ADR-0073), and what it runs there: the routed tier
+   * (`WorkerStart.tier`) when the Worker offers it, else the lowest it offers at or above the
+   * requirement's minimum. A Worker that offers no tiers runs its one, as before. Refuses a tier it
+   * does not offer: nothing is started.
+   */
+  private tierOfStart(worker: WorkerSpec, request: WorkerStart): Tier {
+    if (!worker.tiers) {
+      if (request.tier !== undefined && request.tier !== worker.tier) throw new ProviderError('invalid_input', `${request.worker} offers tier ${worker.tier} only, not ${request.tier}; nothing was started`)
+      return worker.tier
+    }
+    const offered = worker.tiers.map((t) => t.tier)
+    if (request.tier !== undefined) {
+      if (!offered.includes(request.tier)) throw new ProviderError('invalid_input', `${request.worker} offers the tiers ${offered.join(', ')}, not ${request.tier}; nothing was started`)
+      return request.tier
+    }
+    const min = TIERS.indexOf(request.requirement.tier.min)
+    const found = offered.find((t) => TIERS.indexOf(t) >= min)
+    if (!found) throw new ProviderError('invalid_input', `${request.worker} offers the tiers ${offered.join(', ')}, none at or above ${request.requirement.tier.min}; nothing was started`)
+    return found
+  }
+
+  /**
+   * Why a run its Worker no longer serves as it was started (ADR-0073), or undefined: the
+   * configuration changed while it waited (a restart, a live update) so that the tier it was routed
+   * at is no longer offered (its tiers removed or changed, or a one-tier Worker's tier another), or,
+   * on a Worker that offered tiers, that tier runs another model now, or none of its own. A run from
+   * before tiers names none and runs its Worker's lowest tier, as it would have.
+   */
+  private offerChanged(row: RunRow, worker: WorkerSpec): string | undefined {
+    if (row.tier == null) return undefined
+    const offered = worker.tiers?.map((t) => t.tier) ?? [worker.tier]
+    if (!offered.includes(row.tier as Tier)) {
+      return `${row.worker} was started at tier ${row.tier}, and it no longer offers tier ${row.tier}: it offers ${offered.length === 1 ? `tier ${offered[0]} only` : `the tiers ${offered.join(', ')}`}`
+    }
+    if (row.configured_model == null) return undefined
+    const model = this.atTier(worker, row.tier).model
+    if (model === row.configured_model) return undefined
+    return `${row.worker} was started at tier ${row.tier} for the model its configuration gave that tier then, and tier ${row.tier} now ${model === undefined ? 'names no model of its own' : 'runs another model'}`
+  }
+
+  /** What a run at its tier runs (ADR-0073): the tier's model and options, else the Worker's own. */
+  private atTier(worker: WorkerSpec, tier: string | null | undefined): AtTier {
+    const at = worker.tiers?.find((t) => t.tier === tier) ?? (tier == null ? worker.tiers?.[0] : undefined)
+    if (!at) return { tier: worker.tier, ...(worker.tools ? { tools: worker.tools } : {}), ...(worker.model ? { model: worker.model } : {}), ...(worker.maxTurns ? { maxTurns: worker.maxTurns } : {}), declared: false }
+    const tools = at.tools ?? worker.tools
+    const model = at.model ?? worker.model
+    const maxTurns = at.maxTurns ?? worker.maxTurns
+    return { tier: at.tier, declared: at.declared, ...(at.modelPool ? { modelPool: at.modelPool } : {}), ...(tools ? { tools } : {}), ...(model ? { model } : {}), ...(maxTurns ? { maxTurns } : {}) }
   }
 
   /** Each Worker's queued and running runs now, by Worker id. */
@@ -945,12 +1041,18 @@ export class AgentWorkers extends Service {
   }
 
   /** The ledger a metered Worker's runs go through, or undefined for a Worker with no pool. */
-  private meter(id: string, worker: AgentWorkerConfig): Meter | undefined {
+  private meter(id: string, worker: WorkerSpec, model?: DerivedTier['modelPool']): Meter | undefined {
     if (worker.pool === undefined || worker.account === undefined) return undefined
     const resources = this.ctx.get('resources')
     // Configured to be metered, and no ledger: no run starts (INV-2; docs/design/resources.md).
     if (!resources) throw new ProviderError('config_error', `${id} draws on pool ${worker.pool}, and no resource ledger (ctx.resources) is loaded`)
-    return { resources, pool: worker.pool, account: worker.account }
+    return { resources, pool: worker.pool, account: worker.account, ...(model ? { model } : {}), models: this.modelPoolsOf(worker) }
+  }
+
+  /** Every model's own pool on a derived Worker's account (ADR-0073), with its window map; none for a hand-named Worker. */
+  private modelPoolsOf(worker: WorkerSpec): Meter['models'] {
+    if (!worker.derived || worker.pool === undefined) return []
+    return (this.providerOf.get(worker.runtime)?.modelPools ?? []).map((m) => ({ pool: templatePool(m.pool, worker.derived!.accountId), windows: { ...m.windows } }))
   }
 
   /** The Workers on this Worker's account, itself included, ordered by id (`siblings`, PROP-0012 phase C). */
@@ -1267,6 +1369,9 @@ export class AgentWorkers extends Service {
     const files = places && Array.isArray(task?.files) && task.files.length ? JSON.stringify(task.files.map((file) => this.fileOf(file))) : null
     // The template step it serves, as the engine named it: kept only when both are ids.
     const step = request.step && DRAW_ID.test(request.step.template) && DRAW_ID.test(request.step.node) ? request.step : undefined
+    // The tier it runs at (ADR-0073): the routed one, so its model is that tier's, kept with it, as its brief names it.
+    const tier = this.tierOfStart(worker, request)
+    const configuredModel = worker.tiers ? this.atTier(worker, tier).model ?? null : null
     const key = sha256(`agent\0${request.key}`)
     return this.ctx.store.transaction((db) => {
       const existing = db.prepare('SELECT * FROM agent_runs WHERE request_key = ?').get(key) as RunRow | undefined
@@ -1289,12 +1394,12 @@ export class AgentWorkers extends Service {
         scope: request.requirement.scope ?? null, session_generation: generation,
         // Its kind of work and template step, for what it draws (PROP-0015 E2): only well-formed ones, never guessed.
         kind: request.requirement.kind !== undefined && WORK_KIND.test(request.requirement.kind) ? request.requirement.kind : null,
-        step_template: step?.template ?? null, step_node: step?.node ?? null,
+        step_template: step?.template ?? null, step_node: step?.node ?? null, tier, configured_model: configuredModel,
         created_at: now(), updated_at: now(),
       }
-      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, task_id, project_id, files, scope, session_generation, kind, step_template, step_node, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.workflow_run_id ?? null, taskId, projectId, files,
-        row.scope ?? null, generation, row.kind ?? null, row.step_template ?? null, row.step_node ?? null, row.created_at, row.updated_at)
+      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, task_id, project_id, files, scope, session_generation, kind, step_template, step_node, tier, configured_model, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.workflow_run_id ?? null, taskId, projectId, files,
+        row.scope ?? null, generation, row.kind ?? null, row.step_template ?? null, row.step_node ?? null, tier, configuredModel, row.created_at, row.updated_at)
       this.ctx.store.afterCommit(() => this.schedule(row.run_id))
       return execution(row)
     })
@@ -1848,6 +1953,10 @@ export class AgentWorkers extends Service {
         }
         const worker = this.workers.get(row.worker)
         if (!worker) throw new ProviderError('config_error', `${row.worker} is no longer configured`)
+        // Its Worker's configuration changed while it waited (ADR-0073): a tier, or a tier's model, it no
+        // longer offers runs nothing else in its place; routing serves the work again.
+        const changed = this.offerChanged(row, worker)
+        if (changed) throw new ProviderError('worker_changed', `${changed}; nothing was run, and routing serves the work again`)
         // A derived Worker's account that is not ready takes nothing, whatever the run would send (REQ-ACC-11).
         const account = worker.derived ? this.agentAccounts.accountGate(worker.derived.accountId) : undefined
         if (account?.state === 'unavailable') throw new ProviderError('config_error', `${row.worker}: ${account.why}; nothing was run`)
@@ -1996,7 +2105,7 @@ export class AgentWorkers extends Service {
     try {
       const evidence = await this.evidence(worker, 'proven').catch(() => undefined)
       const note = unaskedNote(await approvals.policy(), workspace, {
-        shellReads: evidence?.cleanShells === true, workspaceReads: evidence?.workspaceReads === true, readTools: readToolsOf(evidence, worker.tools), resumes: row.session_id !== null && row.session_id !== undefined, sandbox: worker.sandbox,
+        shellReads: evidence?.cleanShells === true, workspaceReads: evidence?.workspaceReads === true, readTools: readToolsOf(evidence, this.atTier(worker, row.tier).tools), resumes: row.session_id !== null && row.session_id !== undefined, sandbox: worker.sandbox,
         dossier: this.dossierOf(row, evidence) !== undefined,
       })
       return { ...turn, prompt: `${turn.prompt}\n\n${note}` }
@@ -2129,14 +2238,17 @@ export class AgentWorkers extends Service {
       // The workspace reads server's tools are reads only where the runtime gives its agent that server (T200b).
       workspaceReads: evidence.workspaceReads === true,
       // A shell inspection command the agent has a reading tool for is denied at once, naming it (T222).
-      readTools: readToolsOf(evidence, worker.tools),
+      readTools: readToolsOf(evidence, this.atTier(worker, row.tier).tools),
       // Only the host tools this run was given are classified (ADR-0070).
       hostTools: hostTools.map((tool) => tool.name),
     })
+    // What it runs at its tier (ADR-0073): that tier's model, tools, and turn limit, else the Worker's own
+    // (one it still offers, with the model it was started for: checked before the egress check).
+    const at = this.atTier(worker, row.tier)
     const spec: RunSpec = {
       prompt: turn.prompt, workspace, sandbox: worker.sandbox,
       // Omitted or empty means the runtime's minimal set: the config schema turns an omitted list into [].
-      ...(worker.tools?.length ? { tools: worker.tools } : {}), ...(worker.model ? { model: worker.model } : {}), ...(worker.maxTurns ? { maxTurns: worker.maxTurns } : {}),
+      ...(at.tools?.length ? { tools: at.tools } : {}), ...(at.model ? { model: at.model } : {}), ...(at.maxTurns ? { maxTurns: at.maxTurns } : {}),
       // Only a runtime that reports `resume` is ever asked to continue a conversation.
       ...(turn.resume ? { resume: turn.resume } : {}),
       // A derived Worker's account in another home than the runtime's own runs there, and only there (ADR-0051).
@@ -2146,13 +2258,13 @@ export class AgentWorkers extends Service {
       ...(hostTools.length ? { hostTools } : {}),
       toolGate: gate.gate,
     }
-    // Metered: nothing runs without a reservation (INV-2, INV-9).
-    const meter = this.meter(row.worker, worker)
+    // Metered: nothing runs without a reservation (INV-2, INV-9), on its model's pool too when it has one (ADR-0073).
+    const meter = this.meter(row.worker, worker, at.modelPool)
     if (meter) await this.declareAccounts(meter.resources)
     const reservation = meter ? await this.reserve(row, meter, lease) : undefined
     try {
       const result = await this.submit(row, worker, provider, spec, turn.native, signal, lease, meter, gate.deferral)
-      this.complete(row, worker, workspace, result, turn, lease)
+      this.complete(row, worker, workspace, result, turn, lease, at)
     } finally {
       if (reservation) await this.release(row.worker, reservation)
     }
@@ -2336,7 +2448,7 @@ export class AgentWorkers extends Service {
   }
 
   /** Store the result as a `report` artifact and complete the run. */
-  private complete(row: RunRow, worker: AgentWorkerConfig, workspace: string, result: RunResult, turn: Turn, lease: () => Lease): void {
+  private complete(row: RunRow, worker: WorkerSpec, workspace: string, result: RunResult, turn: Turn, lease: () => Lease, at?: AtTier): void {
     const handle = result.nativeHandle ?? this.row(row.run_id)?.native_handle ?? undefined
     const native = turn.native
     const member = row.scope === REVIEW_MEMBER
@@ -2359,10 +2471,12 @@ export class AgentWorkers extends Service {
     this.ctx.store.transaction((db) => {
       this.ctx.leases.fence(lease())
       if (handle && row.session_id && native) db.prepare('UPDATE agent_sessions SET native_handle = ? WHERE session_id = ?').run(handle, row.session_id)
-      // `agent-result@1.3` for a review member's step (its profile, and the turns it replayed), else
-      // `@1.2` when the runtime reported its token usage, `@1.1` otherwise.
+      // `agent-result@1.4` for a Worker that offers tiers (ADR-0073: the tier it ran at and the model it
+      // was given there), `@1.3` for a review member's step (its profile, and the turns it replayed),
+      // else `@1.2` when the runtime reported its token usage, `@1.1` otherwise.
       const usage = usageOf(result)
-      const schema = member ? 'agent-result@1.3' : usage.usage ? 'agent-result@1.2' : 'agent-result@1.1'
+      const tiered = at && worker.tiers ? { tier: at.tier, ...(at.model ? { configuredModel: at.model } : {}) } : undefined
+      const schema = tiered ? 'agent-result@1.4' : member ? 'agent-result@1.3' : usage.usage ? 'agent-result@1.2' : 'agent-result@1.1'
       const artifact = this.ctx.artifacts.put({
         kind: 'report', bodySchema: schema,
         body: {
@@ -2372,6 +2486,7 @@ export class AgentWorkers extends Service {
           ...(captured ? { subject: captured.subject } : {}),
           ...(result.turns !== undefined ? { turns: result.turns } : {}), ...(result.costUsd !== undefined ? { costUsd: result.costUsd } : {}),
           ...(usage.usage && result.model ? { model: result.model } : {}), ...usage,
+          ...tiered,
           // The answer is bound to exactly what it answered: the earlier turns replayed, by run and answer, and the hash of all it was sent.
           ...(member ? { profile: REVIEW_MEMBER } : {}),
           ...(turn.replay ? { replay: { runs: turn.replay.runs, answers: turn.replay.answers, promptHash: sha256(turn.prompt) } } : {}),
@@ -2391,7 +2506,9 @@ export class AgentWorkers extends Service {
    * `config_error` when the ledger does not configure it. Returns the reservation id.
    */
   private async reserve(row: RunRow, meter: Meter, lease: () => Lease): Promise<string> {
-    const reserved = await meter.resources.reserve({ runId: row.run_id, ...scopeOf(row), lines: [{ pool: meter.pool, unit: 'runs', amount: 1 }] }).catch((error: unknown) => {
+    // A run on a model with a pool of its own draws on both (ADR-0073): either closed refuses it.
+    const lines = [{ pool: meter.pool, unit: 'runs' as const, amount: 1 }, ...(meter.model ? [{ pool: meter.model.pool, unit: 'runs' as const, amount: 1 }] : [])]
+    const reserved = await meter.resources.reserve({ runId: row.run_id, ...scopeOf(row), lines }).catch((error: unknown) => {
       throw error instanceof ResourcesError ? new ProviderError('config_error', `the resource ledger refused to reserve for ${row.worker}: ${error.message}`, { cause: error }) : error
     })
     try {
@@ -2401,9 +2518,9 @@ export class AgentWorkers extends Service {
       throw error
     }
     if (reserved.state === 'reserved') return reserved.reservationId
-    const configured = await meter.resources.pools({ account: meter.account }).then((pools) => pools.some((p) => p.pool === meter.pool), () => true)
+    const configured = await meter.resources.pools({ account: meter.account }).then((pools) => lines.every((l) => pools.some((p) => p.pool === l.pool)), () => true)
     const reasons = reserved.reasons.join('; ')
-    throw new ProviderError(configured ? 'quota_exhausted' : 'config_error', `${row.worker} may not draw on pool ${meter.pool} now: ${reasons} (budget decision ${reserved.decision}); nothing was run`)
+    throw new ProviderError(configured ? 'quota_exhausted' : 'config_error', `${row.worker} may not draw on pool ${lines.map((l) => l.pool).join(' and ')} now: ${reasons} (budget decision ${reserved.decision}); nothing was run`)
   }
 
   private async release(worker: string, reservationId: string): Promise<void> {
@@ -2517,7 +2634,9 @@ export class AgentWorkers extends Service {
       this.ctx.logger.warn(`agent Workers: ${row.run_id} on ${row.worker} reported no usage (${ending}); it is left to transcript reconciliation`)
       return limited
     }
-    const model = { ...(worker.model ? { request: worker.model } : {}), ...(metering?.model ? { response: metering.model } : {}) }
+    // The model it asked for is its tier's (ADR-0073).
+    const asked = this.atTier(worker, row.tier).model
+    const model = { ...(asked ? { request: asked } : {}), ...(metering?.model ? { response: metering.model } : {}) }
     const record: UsageRecord = {
       // A lower bound says so on its record (`@1.1`, `partial`), in the ledger's one write of it: a
       // crash or a failed append before its fact never leaves it reading as the run's usage (INV-2).
@@ -2546,9 +2665,34 @@ export class AgentWorkers extends Service {
    * which closes a window as a run's do, and never opens one a `limited` reading closed until the
    * later of its reset and cooldown: such an `ok` reading is not recorded, and is logged. Its
    * rejections are recorded first, so its own `ok` of a window it closes is not either.
+   *
+   * Every model's pool of the account gets its readings, but only a `limited` reading of a pool the
+   * run drew on (the account's, and its own model's, `meter.model`) counts in the answer (ADR-0073):
+   * another model's limit says nothing of the limit this run hit, so it never stands in for it, and
+   * the run's own limit still closes its pools when nothing placed it.
    */
   private async observe(id: string, worker: AgentWorkerConfig, meter: Meter, limits: readonly LimitObservation[], report = false): Promise<boolean> {
-    const pool = await meter.resources.pools({ account: meter.account }).then((pools) => pools.find((p) => p.pool === meter.pool), () => undefined)
+    // A window a model's pool maps (ADR-0073) is a reading of that pool: its limit closes only the tiers
+    // that run that model. Every other observation is the account's, as before (an unplaced limit closes it whole).
+    const ofModels = (name: string): boolean => meter.models.some((m) => m.windows[name] !== undefined)
+    const own = limits.filter((l) => worker.windows?.[l.window] !== undefined || !ofModels(l.window))
+    let limited = own.length ? await this.observeIn(id, worker, meter, { pool: meter.pool, windows: worker.windows ?? {}, account: true }, own, report) : false
+    for (const model of meter.models) {
+      const mine = limits.filter((l) => model.windows[l.window] !== undefined)
+      if (!mine.length) continue
+      const closed = await this.observeIn(id, worker, meter, { pool: model.pool, windows: model.windows, account: false }, mine, report)
+      if (model.pool === meter.model?.pool) limited = closed || limited
+    }
+    return limited
+  }
+
+  /**
+   * Record observations as readings of one pool's mapped windows (the account's, or a model's,
+   * ADR-0073); whether a `limited` one was recorded. On the account's pool, a limit hit it cannot place
+   * closes every window, as before.
+   */
+  private async observeIn(id: string, worker: AgentWorkerConfig, meter: Meter, target: { pool: string; windows: Record<string, string>; account: boolean }, limits: readonly LimitObservation[], report: boolean): Promise<boolean> {
+    const pool = await meter.resources.pools({ account: meter.account }).then((pools) => pools.find((p) => p.pool === target.pool), () => undefined)
     const cooldownMs = (worker.limitCooldownSeconds ?? 3600) * 1000
     let limited = false
     /** Windows this call closed: a report's `ok` of one of them is not recorded either. */
@@ -2557,25 +2701,25 @@ export class AgentWorkers extends Service {
     // A usage report read every period names the same unmapped windows each time: it says so once.
     const unmapped = (message: string): void => (report ? this.warnOnce(message) : this.ctx.logger.warn(message))
     for (const limit of ordered) {
-      const windowId = worker.windows?.[limit.window]
+      const windowId = target.windows[limit.window]
       const mapped = windowId === undefined ? undefined : pool?.windows.find((w) => w.id === windowId)
       // A limit hit the ledger cannot place (an unmapped or unnamed window) closes every window of
-      // the pool: it is never retried on the same pool unseen (INV-2). Anything else unmapped is skipped.
-      const windows = mapped ? [mapped] : limit.status === 'rejected' ? pool?.windows ?? [] : []
+      // the account's pool: it is never retried on the same pool unseen (INV-2). Anything else unmapped is skipped.
+      const windows = mapped ? [mapped] : limit.status === 'rejected' && target.account ? pool?.windows ?? [] : []
       if (!windows.length) {
-        unmapped(`agent Workers: ${report ? `the usage report of ${meter.account}` : id} observed limit window ${limit.window}, which ${windowId === undefined ? 'its windows do not map' : `maps to ${windowId}, not a window of pool ${meter.pool}`}; not recorded`)
+        unmapped(`agent Workers: ${report ? `the usage report of ${meter.account}` : id} observed limit window ${limit.window}, which ${windowId === undefined ? 'its windows do not map' : `maps to ${windowId}, not a window of pool ${target.pool}`}; not recorded`)
         continue
       }
       for (const window of windows) {
         if (report && limit.status !== 'rejected') {
           const until = closed.has(window.id) ? Number.POSITIVE_INFINITY : closedUntil(pool, window.id)
           if (until !== undefined && Date.parse(limit.observedAt) < until) {
-            this.ctx.logger.info(`agent Workers: the usage report of ${meter.account} reads window ${window.id} of pool ${meter.pool} open (${limit.window}), and a limit closed it until ${Number.isFinite(until) ? new Date(until).toISOString() : 'a later reading'}; not recorded: a report never opens a window a limit closed`)
+            this.ctx.logger.info(`agent Workers: the usage report of ${meter.account} reads window ${window.id} of pool ${target.pool} open (${limit.window}), and a limit closed it until ${Number.isFinite(until) ? new Date(until).toISOString() : 'a later reading'}; not recorded: a report never opens a window a limit closed`)
             continue
           }
         }
         const reading: LimitState = {
-          schema: 'limit-state@1.0', pool: meter.pool, account: meter.account,
+          schema: 'limit-state@1.0', pool: target.pool, account: meter.account,
           window: { id: window.id, kind: window.kind, ...(window.seconds !== undefined ? { seconds: window.seconds } : {}) },
           // A limit hit is limited until its reset, or, with none given, for the configured cooldown:
           // never unknown, which a pool configured to admit unknown windows would ignore.
@@ -2895,8 +3039,13 @@ function replayed(turns: ReadonlyArray<{ prompt: string; answer: string }>, next
 /** The ledger a metered Worker draws on. */
 interface Meter {
   resources: Resources
+  /** The account's own pool: what every run of it draws on, and where its usage is recorded. */
   pool: string
   account: string
+  /** The run's model's own pool (ADR-0073), when its tier's model has one: reserved on beside the account's. */
+  model?: { pool: string; windows: Record<string, string> } | undefined
+  /** Every model's own pool of the account (ADR-0073): an observation one of them maps is a reading of that pool, never of the account's. */
+  models: Array<{ pool: string; windows: Record<string, string> }>
 }
 
 /** What a run's draw is watched with (PROP-0015 E2): its pool before it, when it started, and the end of its overlap watch (the other runs it overlapped). */

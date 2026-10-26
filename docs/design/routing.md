@@ -288,7 +288,9 @@ An unread window (no reading, stale, `unknown`, no used share, or from before it
 counts as headroom ([INV-2](../architecture/invariants.md#inv-2-fail-closed)). Which windows an
 account has is the operator's pool configuration: its **canonical gauge** is the windows its pool
 lists. A Claude Code plan's pool lists only its five-hour window (operator D70); a Codex plan's lists
-the windows it reports.
+the windows it reports. A Worker that offers several tiers names the pools a run at each tier draws
+on (its account's, and its model's own, [quota per model](agent-runtimes.md#tiers-per-role)): it is
+read, ranked, and scored at the tier it would serve by those pools only, never another model's.
 
 The order, each key compared only when every key before it is equal:
 
@@ -306,7 +308,8 @@ The order, each key compared only when every key before it is equal:
 6. **Headroom** in the binding window, most first, in `headroomBucketPercent`-point buckets.
 7. **Load**, then the priority list, then **id**.
 
-- **Recorded.** The route decision (`workers.route.deterministic` version 2) lists every admitted
+- **Recorded.** The route decision (`workers.route.deterministic` version 2; version 3 serves a Worker
+  that offers several tiers at one of them, ADR-0073) lists every admitted
   Worker's score in one line, `quota (quota-score@2): known, 5 h: used 10 %, resets in 3 h 59 min,
   headroom 70`. An admitted Worker that lost on a quota key says which one: "w:b's account has
   headroom; this one's 5 h window is used 85 %, above 80 % (the 20 % reserve), so it ranks last
@@ -380,6 +383,23 @@ without naming a provider ([INV-11](../architecture/invariants.md#inv-11-no-tool
   mode) and a `frontier` Worker (highest effort or Deep Research). The provider
   driver verifies the mode before every send (REQ-PRV-3), so a declared tier is
   always the tier that actually runs.
+- **One Worker, several tiers** ([ADR-0073](../decisions/adr/0073-agent-workers-offer-tiers-per-role-with-quota-per-model.md)).
+  An agent Worker whose role declares a model per tier offers them all (`capability-descriptor@1.10`
+  `tiers`, its lowest as its `tier`; [tiers per role](agent-runtimes.md#tiers-per-role)). Capability
+  comes first: every check but `tier` reads the Worker as before. Then routing serves it at the
+  **lowest offered tier within the requirement's bounds whose model's pool is open** (`servedTier` in
+  `workers-core`): a Worker none of whose tiers is within the bounds fails `tier` ("none of its tiers
+  economy, frontier is from standard to standard"); one whose tiers within them are all closed by
+  their models' limits fails `cooldown` ("tier frontier limit until …"), so an assigned account's
+  limit holds the work and the caller may wait for its reset ([assigned accounts](#assigned-accounts)).
+  The order's tier key, the quota keys (the served tier's pools only), the `tier` decision, and the
+  route decision's reasons ("serves tier frontier of the tiers it offers (economy, standard,
+  frontier)", then whether that tier "draws on its model's own window beside its account's" or "has
+  no window of its model's own: its tiers share its account's windows", as on a provider that
+  reports no window per model, such as Codex) are the served tier's; `AdmittedWorker.tier` and each admitted candidate's `tier` carry
+  it, and the caller passes it to the start (`WorkerStart.tier`), so the run runs that tier's model.
+  The route decision is `workers.route.deterministic` version 3. A Worker that offers one tier is
+  routed as before.
 - Profiles declare each node's minimum tier, for example triage → `economy`,
   research → `frontier`, compacting a handoff → `economy`.
 - **Escalation:** if acceptance rejects a result, the workflow engine opens a
@@ -400,7 +420,24 @@ without naming a provider ([INV-11](../architecture/invariants.md#inv-11-no-tool
   among the reasons, since a higher tier is not what a cut answer lacked.
   Escalation is only ever for a rejected result: a Worker refused at admission
   (its input bound, say) never raises the tier; routing takes the lowest
-  admissible tier at or above the node's own.
+  admissible tier at or above the node's own. A held Worker that offers several
+  tiers serves the next one when any of its tiers is at or above it.
+- **Tier by risk** ([ADR-0073](../decisions/adr/0073-agent-workers-offer-tiers-per-role-with-quota-per-model.md)).
+  A board task's step may take its minimum tier from its task's risk tier
+  ([ADR-0071](../decisions/adr/0071-a-changes-risk-tier-comes-from-the-policys-path-map.md)):
+  the autonomy policy's `tierByRisk` (`autonomy-policy@1.2`, versioned) maps, under
+  `light`, `normal`, or `heavy`, a step's capability or kind of work to a tier, such as
+  `heavy: { develop: frontier, review: frontier }` and `light: { validate: economy, docs: economy }`.
+  Before the step is routed, the engine reads the task's latest risk-tier decision (its run's, else
+  an earlier attempt's) and, when an entry names the step (the highest of several, across the
+  studio's and the project's policies), records a `tier` decision of policy `workflow.tier-by-risk`
+  version 1, its input the risk decision, its detail the maps' versions and the entries that matched,
+  raised, lowered, or kept; the step's requirement names it as its tier's source. A step an
+  escalation set is never lowered, and its maximum bounds it. Dispatch scores a task's writing step at
+  the same tier. With no map, steps keep their templates' tiers. When the policy or the board task
+  cannot be read, the step's tier is unknown, and it is not routed at its template's tier (INV-2): it
+  fails unsent and is retried with back-off, failing once its attempts are spent; dispatch does not
+  start or score the task meanwhile.
 - Planning may use a higher tier than the steps it coordinates,
   in line with "spend intelligence where intelligence matters".
 

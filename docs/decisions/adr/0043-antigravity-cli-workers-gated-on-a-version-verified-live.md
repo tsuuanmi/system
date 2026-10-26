@@ -21,7 +21,7 @@ confinement, reaches the run's gate). It cannot prove agy's half, that agy runs 
 each tool call with the inputs the rules read: that takes a model turn. So the runtime offered no
 sandbox and gated nothing, and the `agents` source admitted none of its Workers.
 
-A supervised live check of agy 1.4.6 (2026-10-23, `gemini-3.8-flash-low`, a scratch workspace,
+A supervised live check of agy 1.4.6 (2026-10-23, its economy model at its lowest effort, a scratch workspace,
 a copy of the Workers' signed-in home; evidence in
 `packages/plugins/runtime-antigravity-cli/tests/fixtures/agy-1.4.6-hook-inputs.json`) showed
 that agy:
@@ -32,7 +32,7 @@ that agy:
 - names the tool the model calls (`read_file`, `write_file`, `edit_file`, `run_command`), not
   the lowercased step type its hooks guide describes, and passes the model's arguments as
   `toolCall.args`, paths as absolute strings;
-- gives `gemini-3.8-flash` no tool that lists or searches a directory: it reads files by path,
+- gives that model (`<economy model>`) no tool that lists or searches a directory: it reads files by path,
   and runs a command for the rest;
 - blocks the step on a `deny`, an exit status other than 0, output it cannot read, `{}`, a
   decision it does not define, or a hook past its timeout;
@@ -78,7 +78,7 @@ Option 3.
 
 - Antigravity CLI Workers can be admitted for `review` and `develop`, under the same policy as
   the other agent Workers; never `validate` (no command is offered).
-- A `gemini-3.8-flash` Worker reads only files it is told of or finds named in what it reads:
+- A Worker on that model reads only files it is told of or finds named in what it reads:
   there is no listing or search tool, and the commands it would run for one are denied.
 - Another model's tools are not verified, so they are denied: such a Worker can do nothing.
 - The check trusts that one agy version runs its hooks the same way on every host. Revisit when

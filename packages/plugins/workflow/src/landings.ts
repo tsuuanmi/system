@@ -392,7 +392,7 @@ export class TaskLandings {
       if (admitted.source !== r.source) return { why: `${r.worker} is described by ${admitted.source} now, not ${r.source}` }
       const started = source.start({
         key: `landing-rebase:${row.run_id}:${r.from}:${r.base.sha}`, worker: r.worker!, brief: r.brief, runId: row.run_id,
-        requirement, decisions: admitted.decisions,
+        requirement, decisions: admitted.decisions, ...(admitted.tier ? { tier: admitted.tier } : {}),
       })
       return { id: started.id }
     } finally {

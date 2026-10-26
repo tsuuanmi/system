@@ -100,10 +100,12 @@ export const accountName = (name: string): string => { const i = name.lastIndexO
  * the step's kind of work (ADR-0057: a Worker that lists no kinds takes any). Routing decides at the
  * start; this decides nothing.
  */
-export function canTakeStep(d: { capabilities?: ReadonlyArray<{ capability: string; scope?: unknown }> | undefined; tier: RosterDescriptor['tier']; kinds?: string[] | undefined }, step: CapacityStep): boolean {
+export function canTakeStep(d: { capabilities?: ReadonlyArray<{ capability: string; scope?: unknown }> | undefined; tier: RosterDescriptor['tier']; tiers?: ReadonlyArray<{ tier: RosterDescriptor['tier'] }> | undefined; kinds?: string[] | undefined }, step: CapacityStep): boolean {
   const offers = d.capabilities ?? []
+  // A Worker that offers several tiers (ADR-0073) takes a step at or below its highest.
+  const highest = Math.max(TIERS.indexOf(d.tier), ...(d.tiers ?? []).map((t) => TIERS.indexOf(t.tier)))
   return step.capabilities.every((c) => offers.some((o) => o.capability === c && o.scope === undefined))
-    && TIERS.indexOf(d.tier) >= TIERS.indexOf(step.tier)
+    && highest >= TIERS.indexOf(step.tier)
     && (d.kinds === undefined || (step.kind !== undefined && d.kinds.includes(step.kind)))
 }
 

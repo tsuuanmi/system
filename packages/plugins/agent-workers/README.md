@@ -91,7 +91,21 @@ The **`agents` Worker source**: agent runtimes as Workers
     (as a hand-named Worker's, for each of its Workers), and under
     `runtimes.<runtime>` what differs per runtime (`tools`, `model`,
     `maxTurns`, `family`; a review member's role names the family of each
-    runtime it is assigned on);
+    runtime it is assigned on), and, instead of one `tier`, the **tiers** it
+    offers there (`tiers: { economy?, standard?, frontier? }`, each
+    `{ model, tools?, maxTurns? }`; ADR-0073,
+    [design](../../../docs/design/agent-runtimes.md#tiers-per-role)): its Worker
+    offers every tier (`capability-descriptor@1.10` `tiers`, each with its pools
+    and closed while its model's pool is), a run takes the routed tier
+    (`WorkerStart.tier`, kept on the run with its model, migration 20) and its
+    model, tools, and turn limit, and its result is `agent-result@1.4` (`tier`,
+    `configuredModel`). A run whose Worker no longer offers its tier, or whose
+    tier runs another model now (the configuration changed while it waited),
+    fails unsent as `worker_changed` (`IMMEDIATE`: routed again), never on
+    another model.
+    A provider's `modelPools: [{ model, pool, windows }]` gives a model one more
+    pool per account: a run on it reserves on both, and an observation its
+    windows map is that pool's alone, so its limit closes only its tiers;
   - an **assignment** (`assignments`) gives an enrolled account its roles, by
     the id `system account list` shows: `{ account, roles }`, one entry per
     account. An account with no assignment has no Worker;

@@ -1,0 +1,18 @@
+{
+  "schema": "agent-result@1.4",
+  "worker": "agent:runtime-a:0123456789abcdef/develop",
+  "runtime": "runtime-a",
+  "runId": "arun_0123456789abcdef",
+  "promptHash": "sha256:bf3acfd191a57cd645aedc8a34bb78d47296acbf90480b855b582740ac5e7813",
+  "sandbox": "workspace-write",
+  "workspace": "/home/operator/.dsh/system/worktrees/project/run_0123456789abcdef",
+  "turns": 12,
+  "model": "model-frontier-1",
+  "usage": {
+    "inputTokens": 120400,
+    "outputTokens": 8120
+  },
+  "tier": "frontier",
+  "configuredModel": "model-frontier-1",
+  "text": "Implemented the change in src/feature.ts; the tests pass."
+}

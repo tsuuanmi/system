@@ -15,6 +15,7 @@ describe('failure taxonomy (docs/design/workflow-engine.md#recovery)', () => {
     expect(dispositionOf('config_error')).toBe('CODE_FIX')
     expect(dispositionOf('aborted')).toBe('NONE')
     expect(dispositionOf('invalid_input')).toBe('NONE')
+    expect(dispositionOf('worker_changed')).toBe('IMMEDIATE') // ADR-0073: routed again at once
   })
 
   it('carries kind and disposition on the error', () => {

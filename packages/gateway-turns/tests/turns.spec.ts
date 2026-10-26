@@ -9,8 +9,9 @@ import { claimsNoAccess, NUDGE, parseToolCalls, renderOpening, renderSuffix, ren
 describe('the text tool protocol (ADR-0022)', () => {
   it('maps model names to tiers', () => {
     expect(tierOf('system-frontier', {})).toBe('frontier')
-    expect(tierOf('claude-haiku-5-5', { haiku: 'economy' })).toBe('economy')
-    expect(tierOf('claude-opus-5-5', { haiku: 'economy' })).toBe('standard')
+    // Fake model names: real ones are the operator's configuration only (ADR-0073).
+    expect(tierOf('vendor-small-5', { small: 'economy' })).toBe('economy')
+    expect(tierOf('vendor-large-5', { small: 'economy' })).toBe('standard')
   })
 
   it('lists tools compactly, and closes the opening turn by quoting the request (not a reminder)', () => {

@@ -362,7 +362,7 @@ export class StoreDigests extends Digests {
         const brief = this.ctx.artifacts.put({ kind: 'objective', bodySchema: body.schema, body, inputs: sources, classification: row.classification, producer: PRODUCER }).id as ArtifactRef
         // The escalated run has a key of its own, so its start is never mistaken for the first run's.
         const key = row.escalation ? `digests:${row.request_id}:${tier}` : `digests:${row.request_id}`
-        const execution = source.start({ key, worker: admitted.worker.worker, brief, requirement, decisions: admitted.decisions })
+        const execution = source.start({ key, worker: admitted.worker.worker, brief, requirement, decisions: admitted.decisions, ...(admitted.tier ? { tier: admitted.tier } : {}) })
         db.prepare('UPDATE digest_requests SET source = ?, worker = ?, execution_id = ?, brief = ?, updated_at = ? WHERE request_id = ?')
           .run(admitted.source, admitted.worker.worker, execution.id, brief, now(), row.request_id)
         return this.row(row.request_id)!

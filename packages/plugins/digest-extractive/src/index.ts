@@ -389,7 +389,7 @@ export class ExtractiveDigests extends Digests {
         const ref = this.ctx.artifacts.put({ kind: 'objective', bodySchema: brief.schema, body: brief, inputs: [extract], classification: row.classification, producer: PRODUCER }).id as ArtifactRef
         // The escalated run has a key of its own, so its start is never mistaken for the first run's.
         const key = row.escalation ? `digests:${row.request_id}:${tier}` : `digests:${row.request_id}`
-        const execution = source.start({ key, worker: admitted.worker.worker, brief: ref, requirement, decisions: admitted.decisions })
+        const execution = source.start({ key, worker: admitted.worker.worker, brief: ref, requirement, decisions: admitted.decisions, ...(admitted.tier ? { tier: admitted.tier } : {}) })
         db.prepare('UPDATE extractive_digest_requests SET source = ?, worker = ?, execution_id = ?, brief = ?, extract = ?, updated_at = ? WHERE request_id = ?')
           .run(admitted.source, admitted.worker.worker, execution.id, ref, extract, now(), row.request_id)
         return this.row(row.request_id)!

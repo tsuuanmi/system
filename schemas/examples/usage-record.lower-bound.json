@@ -10,7 +10,7 @@
   "taskId": "task-0007",
   "projectId": "proj-sparse-align",
   "model": {
-    "request": "claude-sonnet-5-5"
+    "request": "model-standard-1"
   },
   "usage": {
     "inputTokens": 4757,

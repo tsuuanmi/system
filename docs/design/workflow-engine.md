@@ -542,6 +542,7 @@ the decision artifact that caused it.
 | Failure class | Disposition |
 |---|---|
 | transient provider / network | `IMMEDIATE` or `BACKOFF` |
+| the Worker's configuration changed while the work waited, and no longer offers the tier it was routed at or that tier's model (`worker_changed`, unsent; [tiers per role](agent-runtimes.md#tiers-per-role)) | `IMMEDIATE`: routed again at once |
 | browser session or conversation broken | `RECREATE_SESSION` |
 | auth lost, confirmation needed, quota; a bound conversation the site no longer has (`conversation_lost`: reopening it cannot help, and a team member's conversation holds its context) | `USER_ACTION` |
 | contract violation, scheduler exception, internal programming error (`internal`) | `CODE_FIX` |
@@ -1110,7 +1111,7 @@ The bounds, each a reason for `fresh` (INV-2: any doubt starts from HEAD):
 - **Only a later step's failure.** That run failed (a completed run's result went to the board,
   which judged it), and it and each of its failed steps failed as `session_broken`,
   `provider_stalled`, `timeout`, `network`, `overloaded`, `quota_exhausted`, `reauth_required`,
-  `challenge`, `reconciliation_failed`, `config_error`, `internal`, `budget_spent`, or
+  `challenge`, `reconciliation_failed`, `config_error`, `worker_changed`, `internal`, `budget_spent`, or
   `holder_lost`. A review's or a person's verdict (`plan_rejected`, `gate_timeout`,
   `call_rejected`, `call_expired`, `stopped`, `aborted`), a moved subject (`stale_subject`), a
   denied egress, or a kind not listed is not.

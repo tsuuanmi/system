@@ -112,7 +112,8 @@ describe('store migrations', () => {
   it('reads every plugin\'s list in the real tree, imported constants included, and finds no collision', () => {
     const { lists } = migrationLists(root)
     const versions = (owner: string) => lists.find((l) => l.owner === owner)?.versions
-    expect(versions('agent-workers')).toEqual(Array.from({ length: 19 }, (_, i) => i + 1))
+    // 20: the tier a run runs at (T261, ADR-0073).
+    expect(versions('agent-workers')).toEqual(Array.from({ length: 20 }, (_, i) => i + 1))
     expect(versions('workflow')?.slice(0, 3)).toEqual([1, 2, 3])
     expect(versions('turns')).toContain(7)
     expect(checkMigrations(root)).toEqual([])

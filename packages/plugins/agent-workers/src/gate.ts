@@ -170,7 +170,7 @@ type FieldType = 'string' | 'number' | 'boolean' | 'strings' | 'edits'
  * input types (`sdk-tools.d.ts`; `MultiEdit`, `NotebookRead`, and `LS`, which it no longer
  * declares, from their last published shapes) and from what Codex's PreToolUse hook reports
  * (Codex 0.164: `apply_patch` and `view_image`; its `Bash` is a subset of Claude Code's) and the
- * Antigravity CLI's reports (agy 1.4.6 with `gemini-3.8-flash`, recorded in a supervised live check:
+ * Antigravity CLI's reports (agy 1.4.6 with its economy model, recorded in a supervised live check:
  * `runtime-antigravity-cli/tests/fixtures/agy-1.4.6-hook-inputs.json`; `ArtifactMetadata`, which
  * writes an agy artifact, is left out). A field not listed (Bash's `dangerouslyDisableSandbox`,
  * say, which would run it outside its sandbox), or a listed one of another type, refuses the call:

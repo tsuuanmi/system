@@ -90,9 +90,41 @@ export interface WorkerAccount {
   limitUntil?: string
 }
 
+/**
+ * One tier a Worker offers (`@1.10`; ADR-0073): the tier, the ledger pools a run at it draws on (its
+ * account's own and its model's, opaque ids), and, when its model's pool is closed now, until when
+ * (`closed`; `until` when known). Routing serves a Worker at the lowest offered tier within a
+ * requirement's bounds that is not closed ({@link servedTier}); it never names a model (INV-11).
+ */
+export interface TierOffer {
+  tier: Tier
+  /** The ledger pools a run at this tier draws on; absent: every pool of its account. */
+  pools?: string[]
+  /** Its model's limit closes this tier now (the Worker's other tiers stay open). */
+  closed?: true
+  /** When a closed tier is expected back, when its source knows. */
+  until?: string
+}
+
+/** The tiers a Worker offers, lowest first: its `tiers` (`@1.10`), else its one `tier`. */
+export const offeredTiers = (worker: Pick<CapabilityDescriptor, 'tier' | 'tiers'>): TierOffer[] =>
+  worker.tiers?.length ? [...worker.tiers].sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier)) : [{ tier: worker.tier }]
+
+/** The offers of a Worker within a requirement's tier bounds, lowest first, closed ones included. */
+export const tiersWithin = (worker: Pick<CapabilityDescriptor, 'tier' | 'tiers'>, bounds: WorkRequirement['tier']): TierOffer[] =>
+  offeredTiers(worker).filter((o) => TIERS.indexOf(o.tier) >= TIERS.indexOf(bounds.min) && (bounds.max === undefined || TIERS.indexOf(o.tier) <= TIERS.indexOf(bounds.max)))
+
+/**
+ * The offer a Worker serves work at (ADR-0073): the lowest offered tier within the requirement's
+ * bounds whose model's pool is open; undefined when none is (routing then refuses it, for its `tier`
+ * or, when its tiers in bounds are only closed, its limit).
+ */
+export const servedTier = (worker: Pick<CapabilityDescriptor, 'tier' | 'tiers'>, bounds: WorkRequirement['tier']): TierOffer | undefined =>
+  tiersWithin(worker, bounds).find((o) => !o.closed)
+
 /** What a Worker has proven right now (`capability-descriptor@1.0`; `@1.1` adds `family`). */
 export interface CapabilityDescriptor {
-  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4' | 'capability-descriptor@1.5' | 'capability-descriptor@1.6' | 'capability-descriptor@1.7' | 'capability-descriptor@1.8' | 'capability-descriptor@1.9'
+  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4' | 'capability-descriptor@1.5' | 'capability-descriptor@1.6' | 'capability-descriptor@1.7' | 'capability-descriptor@1.8' | 'capability-descriptor@1.9' | 'capability-descriptor@1.10'
   worker: string
   /** Informational only; routing never branches on it (INV-11). */
   provider: string
@@ -143,7 +175,13 @@ export interface CapabilityDescriptor {
    * names one of them ({@link takesKind}; check `capability`). Absent: work of any kind, or of none.
    */
   kinds?: string[]
+  /** Its lowest tier; with `tiers`, the first of them. */
   tier: Tier
+  /**
+   * Every tier it offers (`@1.10`; ADR-0073), each once, its lowest equal to `tier`: one Worker of an
+   * agent role that declares a model per tier. Absent: it offers `tier` alone, as before.
+   */
+  tiers?: TierOffer[]
   quotaClass: QuotaClass
   locality: 'local' | 'remote'
   capabilities: CapabilityOffer[]
@@ -210,6 +248,12 @@ export interface WorkerStart {
    * with what the execution drew (the `agents` source's `quota-draw@1.0`, PROP-0015 E2).
    */
   step?: { template: string; node: string } | undefined
+  /**
+   * The tier routing served the work at (`AdmittedWorker.tier`, ADR-0073), for a Worker that offers
+   * several: its source runs that tier's model. Absent: the source serves the lowest tier it offers at
+   * or above the requirement's minimum, by the same rule.
+   */
+  tier?: Tier | undefined
   /** The requirement the Worker was admitted for, and the decisions that admitted it. */
   requirement: WorkRequirement
   decisions: { tier: ArtifactRef; route: ArtifactRef }
@@ -571,6 +615,12 @@ export interface WorkerSource {
    * policy allows (`NO_LOCAL_SANDBOX`).
    */
   sandbox?(worker: string, runId?: string): WorkerSandbox | undefined
+  /**
+   * The model a run on this Worker at `tier` asks for, as its source's configuration gives it
+   * (ADR-0073), for the brief to record beside the served tier; undefined when the source names none.
+   * Configuration, shown only: routing never reads it (INV-11).
+   */
+  model?(worker: string, tier: Tier): string | undefined
   /** The Workers a continued session must stay on, when this source owns the session. */
   affinity?(sessionId: string): string[] | undefined
   /**
@@ -713,6 +763,8 @@ export interface Candidate {
   source: string
   /** Every admission check it fails, in the router's order and words; empty when routing admits it. */
   failed: Rejection['failed']
+  /** The tier it would serve the work at ({@link servedTier}, ADR-0073), when routing admits it. */
+  tier?: Tier
 }
 
 /**
@@ -737,6 +789,12 @@ export interface AdmittedWorker {
   worker: CapabilityDescriptor
   /** Name of the source that describes the Worker, and runs work on it. */
   source: string
+  /**
+   * The tier it serves this work at (ADR-0073): the lowest tier it offers within the requirement's
+   * bounds whose model's pool is open; the `tier` decision's outcome. Optional for a router that
+   * predates it: then the Worker's `tier`.
+   */
+  tier?: Tier
   /** The stored work requirement and the decisions that chose the Worker (INV-13). */
   requirement: ArtifactRef
   decisions: { tier: ArtifactRef; route: ArtifactRef }

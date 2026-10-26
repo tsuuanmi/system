@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import StoreApprovals from '@tsuuanmi/system-approvals'
-import type { AutonomyPolicy, RiskTierMap } from '@tsuuanmi/system-approvals-core'
+import type { AutonomyPolicy, RiskTierMap, TierByRisk } from '@tsuuanmi/system-approvals-core'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import StoreBoard, { type Config as BoardConfig } from '@tsuuanmi/system-board'
 import type { ArtifactRef, BoardTask } from '@tsuuanmi/system-board-core'
@@ -38,11 +38,16 @@ const MAP: RiskTierMap = {
     { tier: 'normal', note: 'the source', paths: ['src/'] },
   ],
 }
-const policy = (riskTiers?: RiskTierMap): AutonomyPolicy => ({
-  schema: riskTiers ? 'autonomy-policy@1.1' : 'autonomy-policy@1.0', id: 'studio', version: 1, scope: 'studio',
+const policy = (riskTiers?: RiskTierMap, tierByRisk?: TierByRisk): AutonomyPolicy => ({
+  schema: tierByRisk ? 'autonomy-policy@1.2' : riskTiers ? 'autonomy-policy@1.1' : 'autonomy-policy@1.0', id: 'studio', version: 1, scope: 'studio',
   rules: [{ actionClass: 'read', mode: 'auto' }, { actionClass: 'workspace-write', mode: 'auto', requires: ['tests', 'lint'] }, { actionClass: 'merge', mode: 'ask' }],
-  default: 'ask', expiry: { defaultSeconds: 3600, maxSeconds: 86400 }, ...(riskTiers ? { riskTiers } : {}),
+  default: 'ask', expiry: { defaultSeconds: 3600, maxSeconds: 86400 }, ...(riskTiers ? { riskTiers } : {}), ...(tierByRisk ? { tierByRisk } : {}),
 })
+/**
+ * The operator's tier by risk (ADR-0073): heavy → frontier for develop and review, light → economy for
+ * validate and docs; this template's validation step asks for `reason`, so its entry is named too.
+ */
+const BY_RISK: TierByRisk = { version: 1, heavy: { develop: 'frontier', review: 'frontier' }, light: { validate: 'economy', docs: 'economy', reason: 'economy' } }
 
 /** Scripted Workers whose results name a git working tree and the subject it is at, as an agent's do. */
 class TreeWorkers extends ScriptedWorkers {
@@ -134,7 +139,7 @@ const TWO_FAMILIES = [reviewer('w:reviewer-a', 'fam-a'), reviewer('w:reviewer-b'
 const AUTO: BoardConfig = { autoAccept: { projects: ['p1'], branches: ['dev'] } }
 
 /** `map: null`: the policy carries no path map. */
-async function boot({ map = MAP as RiskTierMap | null, reviewers = TWO_FAMILIES, board = AUTO, allowSameFamily = false }: { map?: RiskTierMap | null; reviewers?: CapabilityDescriptor[]; board?: BoardConfig; allowSameFamily?: boolean } = {}) {
+async function boot({ map = MAP as RiskTierMap | null, reviewers = TWO_FAMILIES, board = AUTO, allowSameFamily = false, byRisk }: { map?: RiskTierMap | null; reviewers?: CapabilityDescriptor[]; board?: BoardConfig; allowSameFamily?: boolean; byRisk?: TierByRisk } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'system-workflow-risk-db-'))
   const workspace = tree()
   const holder = new Holder()
@@ -156,7 +161,7 @@ async function boot({ map = MAP as RiskTierMap | null, reviewers = TWO_FAMILIES,
       c.workers.register(workers.source(c))
       holder.register(c)
     } }),
-    ctx.plugin(StoreApprovals, { policies: [policy(map ?? undefined)], sweepSeconds: 3600 }), ctx.plugin(StoreBoard, { sweepSeconds: 0, ...board }),
+    ctx.plugin(StoreApprovals, { policies: [policy(map ?? undefined, byRisk)], sweepSeconds: 3600 }), ctx.plugin(StoreBoard, { sweepSeconds: 0, ...board }),
   ]
   await Promise.all(fibers)
   const engine = ctx.plugin(Workflow, config)
@@ -324,6 +329,102 @@ describe('a light change (ADR-0071): its validation step is skipped once its req
     expect(workers.started.some((s) => s.prompt.includes('Validate it'))).toBe(true)
     expect(decisionsOf(ctx, runId, 'workflow.risk-skip')).toEqual([])
     expect(acceptanceOf(ctx, runId).outcome.detail['risk']).toMatchObject({ tier: 'normal' })
+  })
+})
+
+describe('tier by risk (ADR-0073): a step\'s minimum tier set by its task\'s risk tier, as the policy maps it, recorded', () => {
+  const tierDecisions = (ctx: Context, runId: string) => decisionsOf(ctx, runId, 'workflow.tier-by-risk')
+
+  it('raises a heavy change\'s second review to frontier, a recorded decision naming the risk and the map, while the steps routed before the change was tiered keep their tier', async () => {
+    const frontierReviewer = worker('w:reviewer-b', { schema: 'capability-descriptor@1.1', family: 'fam-b', tier: 'frontier', proves: ['review'] })
+    const { ctx, holder, workers, task } = await boot({ reviewers: [reviewer('w:reviewer-a', 'fam-a'), frontierReviewer], byRisk: BY_RISK })
+    holder.files = ['src/gate/policy.ts']
+    const { taskId, runId } = await task()
+    await settled(ctx, taskId)
+    // Nothing was tiered before the review approved the change: develop and the first review keep their templates' tier.
+    const decided = tierDecisions(ctx, runId)
+    expect(decided.map((d) => d.nodeId)).toEqual(['review:second'])
+    const [second] = decided
+    expect(second).toMatchObject({ decider: { id: 'workflow.tier-by-risk', version: '1' }, outcome: { option: 'frontier', detail: { risk: 'heavy', from: 'standard', to: 'frontier', matched: [{ policy: 'studio', policyVersion: 1, mapVersion: 1, key: 'review', tier: 'frontier' }] } } })
+    expect(second!.inputs).toHaveLength(1)
+    expect(ctx.artifacts.get(second!.inputs[0] as ArtifactRef)?.body).toMatchObject({ decider: { id: 'workflow.risk-tier' }, outcome: { option: 'heavy' } })
+    expect(second!.candidates.find((c) => c.selected)!.reasons).toEqual([expect.stringContaining('the task\'s change is heavy'), 'raised from standard to frontier'])
+    const view = ctx.workflow.get(runId)!
+    expect(view.nodes.find((n) => n.nodeId === 'review:second')).toMatchObject({ state: 'COMPLETED', worker: 'w:reviewer-b', tier: 'frontier' })
+    expect(view.nodes.find((n) => n.nodeId === 'develop')).toMatchObject({ worker: 'w:standard', tier: 'standard' })
+    const explained = ctx.workflow.explain(runId)!.nodes.find((n) => n.nodeId === 'review:second')!
+    expect(explained.decisions.map((d) => d.type)).toEqual(expect.arrayContaining(['tier', 'route']))
+    expect(workers.started.filter((s) => s.worker === 'w:frontier')).toEqual([])
+  })
+
+  it('records in the brief of a step on a Worker that offers tiers the tier it was served at and the model its source runs there; a one-tier Worker\'s brief names neither', async () => {
+    const tiered = worker('w:reviewer-t', { schema: 'capability-descriptor@1.10', family: 'fam-a', tier: 'standard', tiers: [{ tier: 'standard' }, { tier: 'frontier' }], proves: ['review'] })
+    const { ctx, workers, task } = await boot({ map: null, reviewers: [tiered] })
+    workers.models.set('w:reviewer-t standard', 'model-standard-1')
+    workers.models.set('w:reviewer-t frontier', 'model-frontier-1')
+    const { taskId, runId } = await task()
+    await settled(ctx, taskId)
+    const view = ctx.workflow.get(runId)!
+    const brief = (nodeId: string) => ctx.artifacts.get(view.nodes.find((n) => n.nodeId === nodeId)!.brief!)!.body as Record<string, unknown>
+    expect(brief('review')).toMatchObject({ schema: 'brief@1.5', tier: 'standard', model: 'model-standard-1' })
+    expect(brief('develop')).not.toHaveProperty('tier')
+    expect(brief('develop')).not.toHaveProperty('model')
+  })
+
+  it('lowers a light change\'s validation to economy when it runs (a required check failed), and leaves a normal change\'s steps as their templates say', async () => {
+    const { ctx, holder, workers, task } = await boot({ byRisk: BY_RISK })
+    holder.files = ['docs/a.md']
+    holder.lint = 'failed'
+    const { taskId, runId } = await task()
+    await settled(ctx, taskId)
+    const validate = workers.started.find((s) => s.prompt.includes('Validate it'))!
+    expect(validate.worker).toBe('w:economy')
+    expect(tierDecisions(ctx, runId)).toEqual([expect.objectContaining({ nodeId: 'validate', outcome: expect.objectContaining({ option: 'economy', detail: expect.objectContaining({ risk: 'light', from: 'standard', to: 'economy' }) }) })])
+
+    const normal = await boot({ byRisk: BY_RISK })
+    normal.holder.files = ['src/a.c']
+    const two = await normal.task()
+    await settled(normal.ctx, two.taskId)
+    expect(tierDecisions(normal.ctx, two.runId)).toEqual([])
+    expect(normal.workers.started.find((s) => s.prompt.includes('Validate it'))!.worker).toBe('w:standard')
+  })
+
+  it('starts a heavy task\'s next attempt with its develop step at frontier, from the earlier attempt\'s risk tier', async () => {
+    const { ctx, holder, workers, task } = await boot({ reviewers: [reviewer('w:reviewer-a', 'fam-a'), reviewer('w:reviewer-a2', 'fam-a')], byRisk: { version: 2, heavy: { develop: 'frontier' } } })
+    holder.files = ['src/gate/policy.ts']
+    const first = await task()
+    // One family only: the second review cannot run, and the attempt fails, its change found heavy.
+    expect((await settled(ctx, first.taskId)).state).toBe('ready')
+    expect(decisionsOf(ctx, first.runId, 'workflow.risk-tier').map((d) => d.outcome.option)).toContain('heavy')
+    const again = await ctx.workflow.start({ template: 'tiered', input: 'change it again', classification: 'public', task: { taskId: first.taskId } })
+    await vi.waitFor(() => {
+      if (!ctx.workflow.get(again.runId)!.nodes.find((n) => n.nodeId === 'develop')?.worker) throw new Error('develop not routed yet')
+    }, { timeout: 30_000, interval: 25 })
+    expect(ctx.workflow.get(again.runId)!.nodes.find((n) => n.nodeId === 'develop')).toMatchObject({ worker: 'w:frontier', tier: 'frontier' })
+    expect(workers.started.find((s) => s.runId === again.runId)!.worker).toBe('w:frontier')
+    const [raised] = tierDecisions(ctx, again.runId)
+    expect(raised).toMatchObject({ nodeId: 'develop', outcome: { option: 'frontier', detail: { risk: 'heavy', from: 'standard', matched: [{ mapVersion: 2, key: 'develop' }] } } })
+    // Its input is the earlier attempt's risk-tier decision: the task's tier, read from the run that found it.
+    expect(ctx.artifacts.get(raised!.inputs[0] as ArtifactRef)?.body).toMatchObject({ decider: { id: 'workflow.risk-tier' }, outcome: { option: 'heavy' } })
+  })
+
+  it('holds a step whose tier at its risk tier cannot be read (the policy unreadable): it is never routed at its template\'s tier, and fails unsent once its attempts are spent (INV-2)', async () => {
+    const { ctx, workers, task } = await boot({ byRisk: BY_RISK })
+    const read = vi.spyOn(ctx.approvals, 'policy').mockRejectedValue(new Error('the policy store is unavailable'))
+    const { taskId, runId } = await task()
+    await vi.waitFor(() => {
+      if (ctx.workflow.get(runId)!.status !== 'failed') throw new Error('run not failed yet')
+    }, { timeout: 30_000, interval: 25 })
+    expect(read).toHaveBeenCalled()
+    // Nothing was routed or sent: not at the template's tier, not anywhere.
+    expect(workers.started.filter((s) => s.runId === runId)).toEqual([])
+    const develop = ctx.workflow.get(runId)!.nodes.find((n) => n.nodeId === 'develop')!
+    expect(develop).toMatchObject({ state: 'FAILED', error: { kind: 'internal', message: expect.stringContaining('the autonomy policy could not be read (the policy store is unavailable)') } })
+    expect(develop).not.toHaveProperty('worker')
+    expect(develop.error!.message).toContain('the step is held, not routed at its template\'s tier')
+    expect(tierDecisions(ctx, runId)).toEqual([])
+    read.mockRestore()
+    expect((await ctx.board.task(taskId))!.state).not.toBe('done')
   })
 })
 

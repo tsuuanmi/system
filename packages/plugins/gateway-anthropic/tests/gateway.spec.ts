@@ -87,7 +87,7 @@ describe('Anthropic Messages gateway over HTTP', () => {
 
   it('guards like the MCP endpoint: token, no browser origin', async () => {
     const { base, auth } = await boot()
-    const body = JSON.stringify({ model: 'claude-opus-5-5', messages: [{ role: 'user', content: 'hi' }] })
+    const body = JSON.stringify({ model: 'vendor-large-5', messages: [{ role: 'user', content: 'hi' }] })
     expect((await fetch(`${base}/v1/messages`, { method: 'POST', body })).status).toBe(401)
     // Only the model scope reaches a model gateway: the client and operator tokens do not (ADR-0023).
     for (const fill of [8, 7]) {
@@ -102,7 +102,7 @@ describe('Anthropic Messages gateway over HTTP', () => {
   it('turns a proposed call into tool_use, then sends only the tool result into the same conversation (REQ-GW-2)', async () => {
     const { base, auth, workflow } = await boot()
     workflow.answers = ['I will read it.\n<call tool="Read">{"file_path": "/repo/README.md"}</call>', 'The heading is "system".']
-    const first: MessagesRequest = { model: 'claude-opus-5-5', system: 'Be brief.', tools: TOOLS, messages: [{ role: 'user', content: 'What is the first heading of README.md?' }] }
+    const first: MessagesRequest = { model: 'vendor-large-5', system: 'Be brief.', tools: TOOLS, messages: [{ role: 'user', content: 'What is the first heading of README.md?' }] }
     const one = await (await fetch(`${base}/v1/messages`, { method: 'POST', headers: auth, body: JSON.stringify(first) })).json()
     expect(one).toMatchObject({ stop_reason: 'tool_use', content: [{ type: 'text', text: 'I will read it.' }, { type: 'tool_use', name: 'Read', input: { file_path: '/repo/README.md' } }] })
     expect(one.content[1].id).toMatch(/^toolu_/)
@@ -116,7 +116,7 @@ describe('Anthropic Messages gateway over HTTP', () => {
   it('streams server-sent events for stream: true (REQ-GW-5)', async () => {
     const { base, auth, workflow } = await boot()
     workflow.answers = ['four']
-    const res = await fetch(`${base}/v1/messages?beta=true`, { method: 'POST', headers: auth, body: JSON.stringify({ model: 'claude-haiku-5-5', stream: true, messages: [{ role: 'user', content: '2+2?' }] }) })
+    const res = await fetch(`${base}/v1/messages?beta=true`, { method: 'POST', headers: auth, body: JSON.stringify({ model: 'system-economy', stream: true, messages: [{ role: 'user', content: '2+2?' }] }) })
     expect(res.headers.get('content-type')).toBe('text/event-stream')
     const text = await res.text()
     expect(text).toContain('event: message_start')

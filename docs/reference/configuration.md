@@ -61,13 +61,13 @@
 | `roles[].id` (required) | string |  | Role id: its Workers are agent:<accountId>/<role> |
 | `roles[].workspace` (required) | string |  | Absolute workspace root its work is done in |
 | `roles[].sandbox` (required) | "read-only" \| "workspace-write" |  |  |
-| `roles[].tier` (required) | "economy" \| "standard" \| "frontier" |  |  |
+| `roles[].tier` | "economy" \| "standard" \| "frontier" |  | Its one tier on a runtime that declares no tiers (runtimes.<runtime>.tiers); may be left out when every runtime it is assigned on declares them |
 | `roles[].quotaClass` | "subscription-chat" \| "agent-plan" \| "metered" \| "local" | `"agent-plan"` |  |
 | `roles[].worktreePerRun` | boolean | `false` | Each run of a workflow run works in that run's own git worktree of the workspace, as a hand-named Worker's |
 | `roles[].reviewMember` | boolean | `false` | Its review team member steps run under the enforced review-member profile (ADR-0049); read-only, and each runtime it is assigned on names its family |
 | `roles[].kinds` | any |  | The kinds of work its Workers take (ADR-0057), as a hand-named Worker's; unset, any work. Not for a review member |
 | `roles[].description` | string (…200) |  | What the role's Workers are for, in your words: plain text on one line, at most 200 characters; every Worker of the role shows it on the roster, never a routing input |
-| `roles[].runtimes` | Record<string, object> | `{}` | What differs per runtime, by runtime kind: tools, model, maxTurns, family; never a routing input |
+| `roles[].runtimes` | Record<string, object> | `{}` | What differs per runtime, by runtime kind: tools, model, maxTurns, family, and tiers (ADR-0073: runtimes.<runtime>.tiers = {economy?, standard?, frontier?}, each {model, tools?, maxTurns?}, in place of the role's tier and the runtime's model there; one Worker per account then offers every tier, each run on its tier's model; models named in the live profile only; docs/operations/runbooks.md#give-a-role-tiers); never a routing input |
 | `assignments` | object[] | `[]` | Which roles each enrolled account serves (D24: assigned); an account with no assignment has no Worker |
 | `assignments[].account` (required) | string |  | An enrolled agent account, by the id system account list shows |
 | `assignments[].roles` (required) | string[] | `[]` | The roles it serves: one Worker agent:<account>/<role> each |
@@ -82,6 +82,10 @@
 | `providers[].windows` | Record<string, string> | `{}` | The runtime's limit window names mapped to the template's window ids; with pool only |
 | `providers[].limitCooldownSeconds` | number (60…604800) |  | How long a limit hit with no reset time closes an account's pool, or with no pool cools the account down (default 3600); with roles and assignments only |
 | `providers[].limitReadSeconds` | number (0…86400) |  | How often each ready account with a pool has its runtime's usage report read into its pool's windows (ADR-0059; default 600, at least 60; 0 turns the periodic read off); with pool only |
+| `providers[].modelPools` | object[] | `[]` | Per-model quota (ADR-0073): a model whose provider reports a window of its own draws on one more pool per account; a run on it reserves on both, and its limit closes only the tiers that run it. At most 8; with pool only |
+| `providers[].modelPools[].model` (required) | string |  | The model, as the roles' tiers name it |
+| `providers[].modelPools[].pool` (required) | string |  | The pool template (resources templates, of this runtime's group) its accounts draw on for this model: pool <pool>/<accountId> |
+| `providers[].modelPools[].windows` | Record<string, string> | `{}` | The runtime's window names for this model (a weekly window per model) mapped to the template's window ids |
 | `accountHomes` | string |  | Where enrollment slots 2 and later keep their homes, <accountHomes>/<provider>/<n> (default <DSH_HOME>/system/agent-homes); hidden from every agent |
 | `maxReplayChars` | number (1…2000000) | `200000` | Characters of earlier turns a review member's replayed conversation holds, at most; a turn past it fails, never cut |
 | `probeTtlMs` | number (0…) | `300000` | How long a runtime's probe result stands, from when its probe started: the next probe starts in the background at half of it, a result past it admits no Worker until one finishes, and a probe not settled within it is refused as timed out (0: every read waits for a probe, bounded at 5 min) |
@@ -252,7 +256,7 @@
 | `path` | string | `"/anthropic"` | Route prefix; Claude Code sets ANTHROPIC_BASE_URL to it |
 | `tokenDir` | string |  | Directory of the scope token files (default <DSH_HOME>/system); the gateway takes model.token |
 | `allowedHosts` | string[] | `["127.0.0.1","localhost","[::1]"]` |  |
-| `models` | Record<string, "economy" \| "standard" \| "frontier"> | `{"haiku":"economy"}` | Model-name patterns → tier |
+| `models` | Record<string, "economy" \| "standard" \| "frontier"> | `{}` | Model-name patterns → tier, as the operator configures them (model names are configuration only, ADR-0073); none by default |
 | `classification` | "public" \| "operator-shared" \| "local-private" | `"operator-shared"` | Classification of what the client sends |
 | `timeoutMs` | number (1000…) | `900000` |  |
 | `pingMs` | number (100…) | `10000` |  |

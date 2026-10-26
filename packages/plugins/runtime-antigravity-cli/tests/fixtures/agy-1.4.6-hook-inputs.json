@@ -1,7 +1,7 @@
 {
-  "description": "The supervised live check of the Antigravity CLI's PreToolUse hook (docs/operations/runbooks.md#antigravity-cli-workers). Sanitized: paths are placeholders, and no token or credential is kept; conversation ids are agy's own, random.",
+  "description": "The supervised live check of the Antigravity CLI's PreToolUse hook (docs/operations/runbooks.md#antigravity-cli-workers). Sanitized: paths are placeholders, the model's name a fake one (model names are configuration only, ADR-0073), and no token or credential is kept; conversation ids are agy's own, random.",
   "agy": "1.4.6",
-  "model": "gemini-3.8-flash-low",
+  "model": "model-economy-low",
   "date": "2026-10-23",
   "placeholders": {
     "<workspace>": "the session's scratch workspace (absolute, no repository)",
@@ -56,7 +56,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/e4e41eeb-c3d1-4c20-b899-6abea0faaea1",
         "conversationId": "e4e41eeb-c3d1-4c20-b899-6abea0faaea1",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 2,
         "toolCall": {
           "args": {
@@ -90,7 +90,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/e4e41eeb-c3d1-4c20-b899-6abea0faaea1",
         "conversationId": "e4e41eeb-c3d1-4c20-b899-6abea0faaea1",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 4,
         "toolCall": {
           "args": {
@@ -125,7 +125,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/e4e41eeb-c3d1-4c20-b899-6abea0faaea1",
         "conversationId": "e4e41eeb-c3d1-4c20-b899-6abea0faaea1",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 6,
         "toolCall": {
           "args": {
@@ -159,7 +159,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/c104cce5-3874-470e-a9ab-6ad54507db1e",
         "conversationId": "c104cce5-3874-470e-a9ab-6ad54507db1e",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 2,
         "toolCall": {
           "args": {
@@ -197,7 +197,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/c104cce5-3874-470e-a9ab-6ad54507db1e",
         "conversationId": "c104cce5-3874-470e-a9ab-6ad54507db1e",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 4,
         "toolCall": {
           "args": {
@@ -235,7 +235,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/c104cce5-3874-470e-a9ab-6ad54507db1e",
         "conversationId": "c104cce5-3874-470e-a9ab-6ad54507db1e",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 6,
         "toolCall": {
           "args": {
@@ -271,7 +271,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/c104cce5-3874-470e-a9ab-6ad54507db1e",
         "conversationId": "c104cce5-3874-470e-a9ab-6ad54507db1e",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 8,
         "toolCall": {
           "args": {
@@ -309,7 +309,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
         "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 2,
         "toolCall": {
           "args": {
@@ -345,7 +345,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
         "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 4,
         "toolCall": {
           "args": {
@@ -379,7 +379,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
         "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 6,
         "toolCall": {
           "args": {
@@ -413,7 +413,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
         "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 8,
         "toolCall": {
           "args": {
@@ -447,7 +447,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
         "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 10,
         "toolCall": {
           "args": {
@@ -481,7 +481,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
         "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 12,
         "toolCall": {
           "args": {
@@ -517,7 +517,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
         "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 14,
         "toolCall": {
           "args": {
@@ -551,7 +551,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
         "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 16,
         "toolCall": {
           "args": {
@@ -585,7 +585,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
         "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 18,
         "toolCall": {
           "args": {
@@ -618,7 +618,7 @@
       "input": {
         "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
         "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
-        "modelName": "gemini-3.8-flash-low",
+        "modelName": "model-economy-low",
         "stepIdx": 20,
         "toolCall": {
           "args": {

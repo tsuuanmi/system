@@ -12,10 +12,12 @@
  *   "behaviors": null }                         W = { "utilization": number (0 to 100) | null, "resets_at": ISO 8601 | null, … }
  * ```
  *
- * Only `rate_limits` is read, and in it only the windows, told by their shape: the other entries
- * (`model_scoped` and `limits`, arrays; `spend`, an object without a `utilization`;
- * `member_dashboard_available`, a boolean) are not, nor is `extra_usage` (by name: it has a
- * `utilization` and no reset), nor are `session`, `subscription_type`, and `behaviors`.
+ * Only `rate_limits` is read, and in it only the windows, told by their shape, and the per-model
+ * weekly windows of `model_scoped` (`[{ display_name, utilization, resets_at }]`, ADR-0073), each a
+ * window named `model_scoped:<display name>`: the other entries (`limits`, an array; `spend`, an
+ * object without a `utilization`; `member_dashboard_available`, a boolean) are not, nor is
+ * `extra_usage` (by name: it has a `utilization` and no reset), nor are `session`,
+ * `subscription_type`, and `behaviors`.
  * @module
  */
 import type { LimitObservation, LimitReport } from '@tsuuanmi/system-agent-runtime-core'
@@ -63,7 +65,8 @@ const notWindow = (value: unknown): boolean => Array.isArray(value) || typeof va
  * The limit observations a `get_usage` answer gives, read at `observedAt` (ms), or why it cannot be
  * read. Only an answer whose `rate_limits_available` is true with `rate_limits` an object is read:
  * `false` (an API key, a third-party provider, a sign-in without the profile scope) has no plan
- * windows. In it, a null entry, `extra_usage`, and one that is not a window by its shape are
+ * windows. In it, `model_scoped` gives one observation per model ({@link modelScopedWindow}); a
+ * null entry, `extra_usage`, and one that is not a window by its shape are
  * skipped; each other is a window `{ utilization, resets_at }` (further fields ignored), or the
  * whole answer is unreadable (something changed, so nothing in it is believed): an entry that is a
  * number, a `utilization` that is not a number or null, or is negative; a `resets_at` missing, or
@@ -84,17 +87,56 @@ export function limitsFromUsage(answer: unknown, observedAt: number): LimitRepor
   const limits: LimitObservation[] = []
   for (const name of Object.keys(windows).sort()) {
     const window = windows[name]
+    // The per-model weekly windows (ADR-0073), a list, each read as a window of its own.
+    if (name === MODEL_SCOPED && Array.isArray(window)) {
+      limits.push(...modelScoped(window, observedAt, observed))
+      continue
+    }
     if (window === null || NOT_WINDOWS.has(name) || notWindow(window)) continue
     if (!isObject(window) || !(window.utilization === null || typeof window.utilization === 'number') || !(window.resets_at === null || typeof window.resets_at === 'string')) {
       return { unreadable: `its window ${name.slice(0, 64)} is not in the checked shape ({ utilization, resets_at })` }
     }
     if (window.utilization === null) continue
     if (!Number.isFinite(window.utilization) || window.utilization < 0) return { unreadable: `its window ${name.slice(0, 64)} reports a used share that is not a percentage` }
-    const used = Math.min(100, Math.round(window.utilization * 100) / 100)
-    const status = used >= 100 ? 'rejected' : 'allowed'
-    const reset = typeof window.resets_at === 'string' && ISO.test(window.resets_at) ? Date.parse(window.resets_at) : Number.NaN
-    const believed = Number.isFinite(reset) && Math.abs(reset - observedAt) <= PLAUSIBLE_MS && (status !== 'rejected' || reset > observedAt)
-    limits.push({ window: name, status, ...(believed ? { resetsAt: new Date(reset).toISOString() } : {}), usedPercentage: used, observedAt: observed })
+    limits.push(observationOf(name, window.utilization, window.resets_at, observedAt, observed))
   }
   return { limits }
+}
+
+/** The entry of `rate_limits` that lists the per-model weekly windows: `[{ display_name, utilization, resets_at }]`. */
+const MODEL_SCOPED = 'model_scoped'
+/** A per-model window's name: `model_scoped:` and the model's display name, lower-cased, each run of other characters than letters, digits, `.`, `_`, and `-` one `-`, at most 64 characters in all. */
+export const modelScopedWindow = (displayName: string): string =>
+  `${MODEL_SCOPED}:${displayName.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')}`.slice(0, 64)
+
+/** One window's observation: its share (at most 100), rejected at 100 or more, and its reset when believed. */
+function observationOf(name: string, utilization: number, resetsAt: unknown, observedAt: number, observed: string): LimitObservation {
+  const used = Math.min(100, Math.round(utilization * 100) / 100)
+  const status = used >= 100 ? 'rejected' : 'allowed'
+  const reset = typeof resetsAt === 'string' && ISO.test(resetsAt) ? Date.parse(resetsAt) : Number.NaN
+  const believed = Number.isFinite(reset) && Math.abs(reset - observedAt) <= PLAUSIBLE_MS && (status !== 'rejected' || reset > observedAt)
+  return { window: name, status, ...(believed ? { resetsAt: new Date(reset).toISOString() } : {}), usedPercentage: used, observedAt: observed }
+}
+
+/**
+ * The per-model weekly windows (ADR-0073), each `{ display_name, utilization, resets_at }`, as
+ * observations named {@link modelScopedWindow}: the operator maps a model's to its pool's window
+ * (`modelPools[].windows`). A list in any other shape (an entry that is not such an object, a name
+ * that is not text or reads as nothing, a share that is not a percentage, a name twice) gives no
+ * per-model reading at all, while the account's own windows are still read: their windows keep their
+ * last readings, never an invented one (INV-2). An entry whose share is null is no reading.
+ */
+function modelScoped(list: readonly unknown[], observedAt: number, observed: string): LimitObservation[] {
+  const out: LimitObservation[] = []
+  const names = new Set<string>()
+  for (const entry of list) {
+    if (!isObject(entry) || typeof entry.display_name !== 'string' || !(entry.utilization === null || typeof entry.utilization === 'number') || !(entry.resets_at === null || entry.resets_at === undefined || typeof entry.resets_at === 'string')) return []
+    const name = modelScopedWindow(entry.display_name)
+    if (name === `${MODEL_SCOPED}:` || names.has(name)) return []
+    names.add(name)
+    if (entry.utilization === null) continue
+    if (!Number.isFinite(entry.utilization) || entry.utilization < 0) return []
+    out.push(observationOf(name, entry.utilization, entry.resets_at, observedAt, observed))
+  }
+  return out
 }

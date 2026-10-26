@@ -13,7 +13,7 @@ The probe proves the hook's path on the host (below); that agy runs the hook
 before each tool call takes a model turn to show, which a probe never runs. So
 the runtime offers its sandboxes and reports `gatesToolCalls` only on a version
 in `VERIFIED_HOOK_VERSIONS`, which a supervised live check verified: **1.4.6**
-(2026-10-23, `gemini-3.8-flash-low`; the recorded hook inputs and outcomes are
+(2026-10-23, its economy model at its lowest effort; the recorded hook inputs and outcomes are
 [`tests/fixtures/agy-1.4.6-hook-inputs.json`](tests/fixtures/agy-1.4.6-hook-inputs.json),
 replayed through the bridge in the tests). On any other version it offers no
 sandbox (as an ACP agent offers none unless vouched for), and every run is
@@ -89,7 +89,7 @@ What turns it on is in the [runbook](../../../docs/operations/runbooks.md#antigr
 - **Policy, exactly or refused** (`policy.ts`, before the gate): tool names are
   as agy's hook names them, the name the model calls (not the lowercased step
   type agy's hooks guide describes). The live check recorded
-  `gemini-3.8-flash`'s file tools: a `read-only` run offers `read_file` (`Path`,
+  its economy model's file tools: a `read-only` run offers `read_file` (`Path`,
   `StartLine`, `EndLine`, `ByteOffset`); `workspace-write` adds `write_file`
   (`Path`, `Content`, `Append`, `Overwrite`) and `edit_file` (`Path`, `Target`,
   `Replacement`); a configured `tools` narrows that and may not widen it. That

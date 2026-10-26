@@ -153,9 +153,9 @@ describe('the model adapter\'s call', () => {
   const answer = JSON.stringify({ candidates: [{ alias: 'A', accepted: 0.7, limit: 0.1, needsOperator: 0.05 }] })
 
   it('records the model version the Worker result names', async () => {
-    const e = engineWith(0, { body: { model: 'gemini-2.5-flash-001', text: answer } })
+    const e = engineWith(0, { body: { model: 'model-economy-001', text: answer } })
     const shadow = await adviseInShadow(new ModelAdvisor(e.engine, 'model:gemini-api', 256), features([candidate('A', 60)]), 2000)
-    expect(shadow.advice).toMatchObject({ status: 'advice', provider: 'model-worker', modelVersion: 'gemini-2.5-flash-001' })
+    expect(shadow.advice).toMatchObject({ status: 'advice', provider: 'model-worker', modelVersion: 'model-economy-001' })
   })
 
   it.each([['no model', { text: answer }], ['an empty model', { model: ' ', text: answer }]])('with %s in the Worker result, the answer is unavailable: the Worker alias is not a model version', async (_how, body) => {

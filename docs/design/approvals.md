@@ -260,7 +260,7 @@ flowchart LR
 By code, from the tool's name and input only, never by a model's judgment; a call the table does
 not cover is denied. The table is keyed by the tool names the runtimes report: Claude Code's
 built-in tools, Codex's as its hook reports them (Codex 0.164), and the Antigravity CLI's as its
-hook reports them (agy 1.4.6 with `gemini-3.8-flash`, recorded in a supervised live check). Each
+hook reports them (agy 1.4.6 with its economy model, recorded in a supervised live check). Each
 tool in the table takes only the input fields its Claude Agent SDK type declares (`MultiEdit`,
 `NotebookRead`, and `LS`, which the SDK no longer declares, their last published shapes), or
 Codex's or agy's hook reports, each of its declared type: an unknown field, or a known one of

@@ -19,7 +19,7 @@
         "taskId": "task-0007",
         "providerName": "anthropic",
         "model": {
-          "response": "claude-sonnet-5-5"
+          "response": "model-standard-1"
         },
         "usage": {
           "inputTokens": 412880,
@@ -29,7 +29,7 @@
         },
         "models": [
           {
-            "model": "claude-sonnet-5-5",
+            "model": "model-standard-1",
             "usage": {
               "inputTokens": 398120,
               "outputTokens": 17020,
@@ -39,7 +39,7 @@
             "costUsd": 0.4123
           },
           {
-            "model": "claude-haiku-5-5",
+            "model": "model-economy-1",
             "usage": {
               "inputTokens": 14760,
               "outputTokens": 1322,

@@ -150,6 +150,18 @@ describe('ctx.workflow: the engine under injected faults', () => {
     expect(started).toEqual(['w:a', 'w:a'])
   }, 60_000)
 
+  it('routes a node again at once when its Worker no longer offers what it was routed to (worker_changed, unsent; ADR-0073)', async () => {
+    const { ctx } = await boot({}, {}, [])
+    const started = pair(ctx, { 'w:a': [{ kind: 'worker_changed', disposition: 'IMMEDIATE', sent: false }] }, ['w:a'])
+    const run = ctx.workflow.start({ template: 'ask', input: 'q', classification: 'public' })
+    const done = await ctx.workflow.wait(run.runId, 30_000)
+    expect(done.status).toBe('completed')
+    expect(started).toEqual(['w:a', 'w:a'])
+    const retry = ctx.eventLog.query({ type: 'workflow.node.retry', runId: run.runId })[0]!
+    expect(retry.data).toMatchObject({ kind: 'worker_changed', disposition: 'IMMEDIATE', delayMs: 0 })
+    expect(ctx.artifacts.get(retry.decision!)?.body).toMatchObject({ decisionType: 'recovery', outcome: { option: 'retry' } })
+  }, 60_000)
+
   it('fails the node a scheduler exception happened on, so the operator can continue it once fixed', async () => {
     const { ctx } = await boot()
     const accept = ctx.workers.accept.bind(ctx.workers)

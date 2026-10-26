@@ -329,7 +329,7 @@ proven", and no run starts.
    - id: agent-workers
      config:
        workers:
-         - { id: agy-reviewer, runtime: antigravity-cli, workspace: /home/me/src/project, sandbox: read-only, model: gemini-3.8-flash-high, tier: standard, worktreePerRun: true }
+         - { id: agy-reviewer, runtime: antigravity-cli, workspace: /home/me/src/project, sandbox: read-only, model: "<standard model>", tier: standard, worktreePerRun: true }
    ```
 
    Restart, then check with `system explain` (or `/ui`) on the Worker: "not
@@ -338,8 +338,8 @@ proven", and no run starts.
    (verified live)", and the Worker is admitted.
 
    - Set no `maxTurns`: agy has no turn limit, and a run with one is refused.
-   - The tools are agy's own, as the live check recorded them for the
-     `gemini-3.8-flash` models: `read_file` in a `read-only` run, and
+   - The tools are agy's own, as the live check recorded them for its
+     economy models: `read_file` in a `read-only` run, and
      `write_file` and `edit_file` added in a `workspace-write` run. `tools` may
      narrow them. There is no tool that lists or searches a directory, and no
      command (`run_command` is denied), so a reviewer reads the files it is
@@ -555,6 +555,97 @@ What this split does not reach, and why:
 
 To undo, remove `kinds` from the Workers (and the writers, if you no longer want them) and restart:
 every Worker then takes every step it proves the capabilities for.
+
+## Give a role tiers
+
+One account serves its plan's economy, standard, and frontier models. Give a role a model per tier
+on a runtime, and each account assigned the role gets **one** Worker that offers every tier: routing
+serves it at the lowest tier a step admits and its run uses that tier's model
+([tiers per role](../design/agent-runtimes.md#tiers-per-role),
+[ADR-0073](../decisions/adr/0073-agent-workers-offer-tiers-per-role-with-quota-per-model.md)). What
+the Worker may do stays the role's (its sandbox, kinds, review-member profile): a tier changes only
+the model and the options you give it. Accounts × roles only
+([migrate first](#migrate-agent-workers-to-accounts--roles)).
+
+1. **Name the models in the live profile only** (`~/.dsh/profiles/system/cordis.patch.yml`), never in
+   the repository. On the role's runtime, replace its `model` (and the role's `tier`, if no other
+   runtime it is assigned on needs it) with `tiers`:
+
+   ```yaml
+   - id: agent-workers
+     config:
+       roles:
+         - id: develop
+           workspace: /home/tan/workspaces/system
+           sandbox: workspace-write
+           worktreePerRun: true
+           kinds: [code, docs, tests]
+           runtimes:
+             claude-agent-sdk:
+               tiers:
+                 economy:  { model: "<economy model>" }
+                 standard: { model: "<standard model>" }
+                 frontier: { model: "<frontier model>", maxTurns: 60 }
+   ```
+
+   A tier sets `model` and, when it differs there, `tools` and `maxTurns`. `system check` refuses an
+   unknown tier, a tier with no model, and a role that gives an assigned runtime no tier at all.
+   Codex roles (a validation role such as `develop-2`, a review role) take the same shape under their
+   Codex runtime, each tier its own Codex model:
+
+   ```yaml
+           runtimes:
+             codex-sdk:
+               tiers:
+                 economy:  { model: "<economy Codex model>" }
+                 standard: { model: "<standard Codex model>" }
+                 frontier: { model: "<frontier Codex model>" }
+   ```
+
+   A run queued before a restart that changes a role's tiers (a tier removed, or the tier's model
+   changed) never runs another model: it fails unsent as `worker_changed`, naming the tier it was
+   started at and the tiers offered now, and the engine routes the work again at once.
+2. **Give a model that has a window of its own its own pool** (optional; with a metered provider
+   only). Claude's usage report gives a weekly window per model, read as
+   `model_scoped:<display name, lower-cased>`. Add a pool template for it to the `resources` row's
+   `templates` (`{ template: claude-frontier, group: claude-agent-sdk, kind: interactive, windows: [{ id: weekly, kind: rolling, seconds: 604800 }] }`)
+   and map it on the provider entry:
+
+   ```yaml
+       providers:
+         - provider: claude-agent-sdk
+           pool: claude-plan
+           windows: { five_hour: five-hour }
+           modelPools:
+             - { model: "<frontier model>", pool: claude-frontier, windows: { "model_scoped:<frontier family>": weekly } }
+   ```
+
+   Each account then draws on `claude-frontier/<accountId>` too when it runs the frontier model: at
+   its limit, only the frontier tier closes, and standard work goes on. Codex reports its windows by
+   length (300 and 10080 minutes), not per model: give a Codex provider no `modelPools`. Every tier
+   of a Codex account then shares its windows, and the route decision `system explain` shows says
+   `its tiers share its account's windows`. Until its first reading, a new
+   model pool is unknown, so its tier is closed (fail closed); the roster shows a tier its model's
+   limit closes as `at its model's limit`, with when it is back.
+3. **Restart** (`system restart`), then check: the roster shows one Worker per account and role, with
+   its tiers (`economy, standard, frontier tiers`); `system explain <runId>` and the run's page on
+   `/ui` name each step's tier and model.
+4. **Tier by risk** (optional): to develop and review a heavy change at the frontier, and validate a
+   light one at the economy tier, add `tierByRisk` to the policy (`autonomy-policy@1.2`) through a
+   `policy-change` approval, and raise its `version` with every change:
+
+   ```json
+   "tierByRisk": { "version": 1, "heavy": { "develop": "frontier", "review": "frontier" }, "light": { "validate": "economy", "docs": "economy" } }
+   ```
+
+   Turn it on only once a Worker offers the frontier tier for those steps' kinds: a step raised to a
+   tier no Worker offers fails admission. Each step it sets records a `workflow.tier-by-risk`
+   decision, which `system explain` lists before the step's tier and route decisions. A step that
+   fails unsent with "the tier of task … cannot be read" found the policy or its board task
+   unreadable: it was held, not run below its tier; once the policy reads again, continue the run.
+
+To undo, put the role's `tier` and runtime `model` back in place of `tiers` and restart: its Workers
+then offer that one tier, as before.
 
 ## Turn an off row back on
 
@@ -796,10 +887,10 @@ stopped it ([bounds](../design/models.md#a-call)):
 `system explain <runId>` shows the step's failure; a finished answer records
 its attempts (`attempts` 2 or more: a request failed transiently first).
 
-**A Gemini API call times out.** The Gemini API Worker (a `google` route,
-`gemini-3.8-flash`) answered in 45 s to 4 min on 2026-10-23, with at most about
+**A Gemini API call times out.** The Gemini API Worker (a `google` route, its
+economy model) answered in 45 s to 4 min on 2026-10-23, with at most about
 4,000 output tokens, and without a measurable thinking share: on a route that
-sets no `reasoning`, `gemini-3.8-flash` already thinks at its lowest level
+sets no `reasoning`, that model already thinks at its lowest level
 (`low`; it offers no `minimal` or `off`). Its time goes to the provider, not
 to the answer's length, so raising the ceiling is the remedy for a slow call;
 lowering `maxTokens` or `reasoning` does not help it. The defaults fit it: a

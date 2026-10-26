@@ -20,7 +20,7 @@ export function view(e: Engine, run: RunRow): RunView {
       nodeId: n.node_id, state: n.state, minTier: spec.tier, attempt: n.attempt,
       ...(n.execution_id ? { executionId: n.execution_id } : {}), ...(n.source ? { source: n.source } : {}), ...(n.worker ? { worker: n.worker } : {}),
       ...(n.served_tier ? { tier: n.served_tier } : {}), ...(n.quota_class ? { quotaClass: n.quota_class } : {}),
-      ...(record.outputReceipt ? { result: record.outputReceipt.result, ...usageOf(e, record.outputReceipt.result) } : {}),
+      ...(record.outputReceipt ? { result: record.outputReceipt.result, ...usageOf(e, record.outputReceipt.result), ...modelOf(e, record.outputReceipt.result) } : {}),
       ...(record.execution?.brief ? { brief: record.execution.brief } : {}),
       ...(waitingUntil(n) ? { waitingUntil: n.not_before! } : {}),
       ...(n.error && n.state !== 'COMPLETED' ? { error: JSON.parse(n.error) as WorkflowError } : {}),
@@ -51,6 +51,18 @@ function taskOf(e: Engine, runId: string): Pick<RunView, 'task'> {
 function sameFamilyNote(e: Engine, rows: ReturnType<Engine['nodeRows']>): string {
   const same = rows.filter((n) => !(JSON.parse(n.spec) as ResolvedNode).team && (n.decisions ? (JSON.parse(n.decisions) as ArtifactRef[]) : []).some((d) => isSameFamily(e, d)))
   return same.length ? `Same provider family (allowSameFamily): ${same.map((n) => n.node_id).join(', ')} ran on the family of the steps ${same.length > 1 ? 'they' : 'it'} should differ from; no other provider judged ${same.length > 1 ? 'them' : 'it'}.\n\n` : ''
+}
+
+/**
+ * The model a tiered Worker's result ran on (ADR-0073): `agent-result@1.4` names the model its
+ * configuration gives it at its tier (`configuredModel`), else the one its runtime answered with.
+ * Only a result that names its tier says it: a one-tier Worker's is shown as before.
+ */
+function modelOf(e: Engine, result: ArtifactRef): Pick<NodeView, 'model'> {
+  const body = e.ctx.artifacts.get(result)?.body as { tier?: unknown; configuredModel?: unknown; model?: unknown } | undefined
+  if (typeof body?.tier !== 'string') return {}
+  const model = typeof body.configuredModel === 'string' ? body.configuredModel : typeof body.model === 'string' ? body.model : undefined
+  return model ? { model: model.slice(0, 200) } : {}
 }
 
 /** The token usage a result reports (`model-answer`), for the usage report. */
@@ -189,6 +201,11 @@ export function explain(e: Engine, runId: string): Explanation | undefined {
       return {
         nodeId: node.node_id, state: node.state,
         ...(node.execution_id ? { executionId: node.execution_id } : {}), ...(node.worker ? { worker: node.worker } : {}), ...(node.quota_class ? { quotaClass: node.quota_class } : {}),
+        // A tiered Worker's step says the tier it ran at and the model it ran on (ADR-0073).
+        ...(() => {
+          const model = record.outputReceipt ? modelOf(e, record.outputReceipt.result) : {}
+          return model.model && node.served_tier ? { tier: node.served_tier, model: model.model } : {}
+        })(),
         decisions: ids.filter((id): id is ArtifactRef => !!id).map((id) => decision(e, id)).filter((d): d is ExplainedDecision => !!d),
       }
     }),

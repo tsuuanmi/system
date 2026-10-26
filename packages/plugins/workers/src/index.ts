@@ -15,8 +15,8 @@ import {
 } from '@tsuuanmi/system-libs'
 import {
   type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Candidates, type CapabilityDescriptor, type Carried, type CarryStep, type Checked, type CheckStep, type Landed, type LandStep, type WorkChange, LIVENESS_STATES, type LivenessQuery,
-  type LivenessState, MAX_LIVENESS_RUNS, provesFor, type QuotaClass, type Rejection, type RouteOptions, type RunLiveness, takesKind, TIERS, type Tier, type WorkRequirement, type WorkerSource,
-  type WorkerSourceRead, Workers,
+  type LivenessState, MAX_LIVENESS_RUNS, offeredTiers, provesFor, type QuotaClass, type Rejection, type RouteOptions, type RunLiveness, servedTier, takesKind, TIERS, type Tier, tiersWithin, type WorkRequirement,
+  type WorkerSource, type WorkerSourceRead, Workers,
 } from '@tsuuanmi/system-workers-core'
 
 export * from '@tsuuanmi/system-workers-core'
@@ -29,8 +29,15 @@ export interface Config {
 }
 
 const QUOTA_CLASSES: QuotaClass[] = ['subscription-chat', 'local', 'agent-plan', 'metered']
-/** Version 2 (T185, PROP-0014 D3): the quota score's headroom order is part of every route's order. */
-const DECIDER = { type: 'policy', id: 'workers.route.deterministic', version: '2' } as const
+/**
+ * Version 2 (T185, PROP-0014 D3): the quota score's headroom order is part of every route's order.
+ * Version 3 (T261, ADR-0073): a Worker that offers several tiers is served at the lowest of them
+ * within the work's bounds whose model's pool is open, ranked and read for quota at that tier.
+ */
+const DECIDER = { type: 'policy', id: 'workers.route.deterministic', version: '3' } as const
+
+/** The tier a Worker serves this work at (ADR-0073): its lowest open tier within the bounds; its own `tier` when it is refused. */
+const tierOf = (w: CapabilityDescriptor, requirement: WorkRequirement): Tier => servedTier(w, requirement.tier)?.tier ?? w.tier
 
 /** A pool of the resource ledger as routing reads it (`ctx.resources.pools()`): the account it is of, and what the quota score reads. */
 type LedgerPool = QuotaPool & { account: string }
@@ -320,7 +327,10 @@ export class WorkerRouter extends Workers {
       const { described, requirementRef, failures, silent } = await this.judge(requirement, options)
       return {
         requirement: requirementRef,
-        workers: described.map((d) => ({ worker: d.worker, source: d.source, failed: failures.get(d.worker.worker)! })),
+        workers: described.map((d) => {
+          const failed = failures.get(d.worker.worker)!
+          return { worker: d.worker, source: d.source, failed, ...(failed.length ? {} : { tier: tierOf(d.worker, requirement) }) }
+        }),
         unheard: silent.map((source) => ({ source, reason: SILENT })),
         order: { quota: this.quotaOrder(requirement), priority: [...(this.config.priority ?? [])] },
       }
@@ -361,7 +371,7 @@ export class WorkerRouter extends Workers {
     const producer = { type: 'system' as const, ref: options.producer ?? 'workers' }
     const passed = workers.filter((w) => failures.get(w.worker)!.length === 0)
     // Each admitted Worker's account quota, in the quota score's one headroom order (PROP-0014 D3).
-    const quotas = await this.quotas(passed)
+    const quotas = await this.quotas(passed, requirement)
     const admitted = passed.sort(this.order(requirement, quotas))
     const chosen = admitted[0]
     if (!chosen) {
@@ -392,13 +402,14 @@ export class WorkerRouter extends Workers {
       const summary = rejections.map((r) => `${r.worker}: ${r.failed.map((f) => f.reason).join(', ')}`).join('; ')
       throw new AdmissionFailure(rejections, decision.id as ArtifactRef, `no Worker can take this work: ${why} (${summary ? `${summary}; ` : ''}decision ${decision.id})`, limitUntil)
     }
+    const served = tierOf(chosen, requirement)
     const tier = this.ctx.artifacts.recordDecision({
       decisionType: 'tier',
       question: `Which intelligence tier serves work needing tier ${requirement.tier.min}${requirement.tier.max ? ` to ${requirement.tier.max}` : ''} or above?`,
       inputs: [requirementRef],
-      candidates: TIERS.map((t) => ({ option: t, selected: t === chosen.tier, reasons: this.tierReasons(t, chosen.tier, requirement, admitted) })),
+      candidates: TIERS.map((t) => ({ option: t, selected: t === served, reasons: this.tierReasons(t, served, requirement, admitted, workers) })),
       decider: DECIDER,
-      outcome: { option: chosen.tier },
+      outcome: { option: served },
       deterministic: true,
     }, { producer, classification: requirement.data.classification })
     const route = this.ctx.artifacts.recordDecision({
@@ -423,7 +434,7 @@ export class WorkerRouter extends Workers {
       held?.()
       held = undefined
     }
-    return { worker: chosen, source, requirement: requirementRef, decisions: { tier: tier.id as ArtifactRef, route: route.id as ArtifactRef }, release }
+    return { worker: chosen, source, tier: served, requirement: requirementRef, decisions: { tier: tier.id as ArtifactRef, route: route.id as ArtifactRef }, release }
   }
 
   contract(id: string, check: AcceptanceContract): void {
@@ -509,7 +520,12 @@ export class WorkerRouter extends Workers {
     // A site's usage limit on a capability the work needs (ADR-0034); a lapsed one no longer counts.
     const now = Date.now()
     const cooled = (worker.cooldowns ?? []).filter((c) => requirement.capabilities.includes(c.capability) && Date.parse(c.until) > now)
-    if (cooled.length) fail('cooldown', cooled.map((c) => `${c.capability} limit until ${c.until}`).join(', '))
+    // A model's limit closes only its tier (ADR-0073): refused for it when every tier it offers for this work is closed.
+    const within = tiersWithin(worker, requirement.tier)
+    const closed = within.length && within.every((o) => o.closed) ? within : []
+    if (cooled.length || closed.length) {
+      fail('cooldown', [...cooled.map((c) => `${c.capability} limit until ${c.until}`), ...closed.map((o) => `tier ${o.tier} limit${o.until ? ` until ${o.until}` : ''} (its model's limit)`)].join(', '))
+    }
     // The work stays on its account within its group (ADR-0052); opaque equality only.
     if (options.assignment && worker.account?.group === options.assignment.group && worker.account.id !== options.assignment.account) fail('assignment', options.assignment.reason)
     if (options.input && worker.maxInputChars !== undefined && options.input.chars > worker.maxInputChars) {
@@ -518,9 +534,14 @@ export class WorkerRouter extends Workers {
     if (requirement.data.classification === 'local-private' && worker.locality !== 'local') fail('locality', 'local-private data stays on local Workers')
     // Busy is admissible: it only orders the Worker after less busy ones (ADR-0033).
     if (worker.state !== 'ready' && worker.state !== 'busy') fail('state', `state ${worker.state}`)
-    const rank = TIERS.indexOf(worker.tier)
-    if (rank < TIERS.indexOf(requirement.tier.min)) fail('tier', `tier ${worker.tier} is below the minimum ${requirement.tier.min}`)
-    else if (requirement.tier.max && rank > TIERS.indexOf(requirement.tier.max)) fail('tier', `tier ${worker.tier} is above the maximum ${requirement.tier.max}`)
+    if (!within.length) {
+      // A Worker that offers several tiers (ADR-0073) is refused only when none of them is within the bounds.
+      const offered = offeredTiers(worker)
+      const named = worker.tiers?.length ? `its tiers ${offered.map((o) => o.tier).join(', ')} are` : `tier ${worker.tier} is`
+      if (TIERS.indexOf(offered.at(-1)!.tier) < TIERS.indexOf(requirement.tier.min)) fail('tier', `${named} below the minimum ${requirement.tier.min}`)
+      else if (requirement.tier.max && TIERS.indexOf(offered[0]!.tier) > TIERS.indexOf(requirement.tier.max)) fail('tier', `${named} above the maximum ${requirement.tier.max}`)
+      else fail('tier', `none of its tiers ${offered.map((o) => o.tier).join(', ')} is from ${requirement.tier.min} to ${requirement.tier.max ?? 'frontier'}`)
+    }
     return failed
   }
 
@@ -530,7 +551,7 @@ export class WorkerRouter extends Workers {
    * routing's own as before. A ledger that cannot be read leaves every account's quota unknown, never
    * headroom (INV-2); settings it cannot tell are the defaults (the 20 % reserve, D63).
    */
-  private async quotas(admitted: readonly CapabilityDescriptor[]): Promise<Quotas | undefined> {
+  private async quotas(admitted: readonly CapabilityDescriptor[], requirement: WorkRequirement): Promise<Quotas | undefined> {
     const ledger = this.ctx.get('resources' as never) as Ledger | undefined
     if (!ledger) return undefined
     const now = new Date()
@@ -549,7 +570,9 @@ export class WorkerRouter extends Workers {
     }
     const poolsOf = (w: CapabilityDescriptor): readonly QuotaPool[] | { unknown: string } | undefined => {
       if (!w.account) return undefined
-      return Array.isArray(pools) ? pools.filter((p) => p.account === w.account!.id) : pools
+      // A tier names the pools a run at it draws on (its account's and its model's, ADR-0073): its headroom is theirs alone.
+      const only = servedTier(w, requirement.tier)?.pools
+      return Array.isArray(pools) ? pools.filter((p) => p.account === w.account!.id && (only === undefined || only.includes(p.pool))) : pools
     }
     return new Map(headroomOrderOf(admitted, poolsOf, settings, now).map((o) => [o.item.worker, { quota: o.quota, keys: o.keys, settings }]))
   }
@@ -577,7 +600,7 @@ export class WorkerRouter extends Workers {
     const headroom = (name: keyof HeadroomKeys): OrderKey => ({ name, key: (w) => quotas?.get(w.worker)?.keys[name] ?? 0 })
     return [
       headroom('reserve'),
-      { name: 'tier', key: (w) => TIERS.indexOf(w.tier) }, { name: 'quota', key: (w) => rankOf(quota, w.quotaClass) },
+      { name: 'tier', key: (w) => TIERS.indexOf(tierOf(w, requirement)) }, { name: 'quota', key: (w) => rankOf(quota, w.quotaClass) },
       ...HEADROOM_KEYS.filter((k) => k !== 'reserve').map(headroom),
       { name: 'load', key: busy }, { name: 'priority', key: (w) => rankOf(priority, w.worker) },
     ]
@@ -590,7 +613,17 @@ export class WorkerRouter extends Workers {
   }
 
   private chosenReasons(worker: CapabilityDescriptor, requirement: WorkRequirement): string[] {
-    const reasons = [`proves ${requirement.capabilities.join(', ')}${requirement.scope ? ` for ${requirement.scope} work` : ''}`, `lowest admissible tier ${worker.tier}`, `quota class ${worker.quotaClass}`]
+    const served = tierOf(worker, requirement)
+    const reasons = [`proves ${requirement.capabilities.join(', ')}${requirement.scope ? ` for ${requirement.scope} work` : ''}`, `lowest admissible tier ${served}`, `quota class ${worker.quotaClass}`]
+    if (worker.tiers?.length) {
+      // One Worker, several tiers (ADR-0073): which it offers, and which of them its models' limits close now.
+      const shut = tiersWithin(worker, requirement.tier).filter((o) => o.closed && TIERS.indexOf(o.tier) < TIERS.indexOf(served))
+      // A tier with no pool of its model's own (its provider reports no window per model, as Codex's
+      // does not) draws on its account's windows, which every tier of the account shares.
+      const shared = (offeredTiers(worker).find((o) => o.tier === served)?.pools?.length ?? 0) < 2
+      reasons.push(`serves tier ${served} of the tiers it offers (${offeredTiers(worker).map((o) => o.tier).join(', ')})${shut.length ? `; ${shut.map((o) => `tier ${o.tier} is at its model's limit${o.until ? ` until ${o.until}` : ''}`).join(', ')}` : ''}`
+        + (shared ? `; tier ${served} has no window of its model's own: its tiers share its account's windows` : `; tier ${served} draws on its model's own window beside its account's`))
+    }
     if (requirement.kind !== undefined) reasons.push(worker.kinds ? `takes ${requirement.kind} work, one of its kinds` : 'takes work of any kind')
     if (worker.load) reasons.push(loadOf(worker.load))
     if ((this.config.priority ?? []).includes(worker.worker)) reasons.push('first in the configured priority list')
@@ -602,7 +635,7 @@ export class WorkerRouter extends Workers {
     const differs = this.keys(requirement, quotas).find(({ key }) => key(worker) !== key(chosen))
     switch (differs?.name) {
       case undefined: return `${chosen.worker} comes first by id`
-      case 'tier': return `${chosen.worker} has the lower tier ${chosen.tier}`
+      case 'tier': return `${chosen.worker} has the lower tier ${tierOf(chosen, requirement)}`
       case 'quota': return `${chosen.worker} has the preferred quota class ${chosen.quotaClass}`
       case 'load': return `${chosen.worker} is less busy (${loadOf(chosen.load)}; this one ${loadOf(worker.load)})`
       case 'priority': return `${chosen.worker} comes first in the configured priority list`
@@ -614,12 +647,16 @@ export class WorkerRouter extends Workers {
     }
   }
 
-  private tierReasons(tier: Tier, chosen: Tier, requirement: WorkRequirement, admitted: CapabilityDescriptor[]): string[] {
+  private tierReasons(tier: Tier, chosen: Tier, requirement: WorkRequirement, admitted: CapabilityDescriptor[], workers: readonly CapabilityDescriptor[]): string[] {
     const rank = TIERS.indexOf(tier)
     if (tier === chosen) return ['lowest tier at or above the minimum with an admitted Worker']
     if (rank < TIERS.indexOf(requirement.tier.min)) return [`below the minimum ${requirement.tier.min}`]
     if (requirement.tier.max && rank > TIERS.indexOf(requirement.tier.max)) return [`above the maximum ${requirement.tier.max}`]
-    if (!admitted.some((w) => w.tier === tier)) return ['no admitted Worker at this tier']
+    if (!admitted.some((w) => tierOf(w, requirement) === tier)) {
+      // A tier a Worker offers, closed now by its model's limit (ADR-0073), is named as such.
+      const shut = workers.filter((w) => offeredTiers(w).some((o) => o.tier === tier && o.closed)).map((w) => w.worker)
+      return [shut.length ? `no admitted Worker at this tier; its model's limit closes it on ${shut.slice(0, 3).join(', ')}${shut.length > 3 ? ` (and ${shut.length - 3} more)` : ''}` : 'no admitted Worker at this tier']
+    }
     return [`the lower tier ${chosen} has an admitted Worker`]
   }
 }
@@ -644,6 +681,12 @@ function limitedOnly(workers: readonly CapabilityDescriptor[], failures: Readonl
     const exhausted = worker.state === 'quota-exhausted'
     if (!failed.length || !failed.every((f) => f.check === 'cooldown' || (f.check === 'state' && exhausted))) continue
     const resets = (worker.cooldowns ?? []).filter((c) => requirement.capabilities.includes(c.capability) && Date.parse(c.until) > now).map((c) => Date.parse(c.until))
+    // Its tiers for this work closed by their models' limits (ADR-0073): back once the first of them is (any one serves); unknown when it is not known.
+    const within = tiersWithin(worker, requirement.tier)
+    if (within.length && within.every((o) => o.closed)) {
+      const back = within.map((o) => (o.until === undefined ? Number.NaN : Date.parse(o.until)))
+      resets.push(back.some((b) => !(b > now)) ? Number.NaN : Math.min(...back))
+    }
     const account = worker.account?.limitUntil === undefined ? Number.NaN : Date.parse(worker.account.limitUntil)
     if (exhausted) resets.push(account > now ? account : Number.NaN)
     const back = Math.max(...resets)

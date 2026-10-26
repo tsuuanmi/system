@@ -3,7 +3,7 @@
   "observedAt": "2026-10-24T14:05:00.000Z",
   "cases": [
     {
-      "case": "a plan account mid-window: each window with a share is read; null windows, the per-model list, extra usage, the session, and the plan type are not",
+      "case": "a plan account mid-window: each window with a share is read, and each entry of the per-model list as a window of its own (ADR-0073); null windows, extra usage, the session, and the plan type are not",
       "answer": {
         "session": { "total_cost_usd": 0, "total_api_duration_ms": 0, "total_duration_ms": 180, "total_lines_added": 0, "total_lines_removed": 0, "model_usage": {} },
         "subscription_type": "max",
@@ -19,7 +19,40 @@
       },
       "limits": [
         { "window": "five_hour", "status": "allowed", "resetsAt": "2026-10-24T14:20:00.000Z", "usedPercentage": 42, "observedAt": "2026-10-24T14:05:00.000Z" },
+        { "window": "model_scoped:model-a", "status": "allowed", "resetsAt": "2026-10-29T09:00:00.000Z", "usedPercentage": 3, "observedAt": "2026-10-24T14:05:00.000Z" },
         { "window": "seven_day", "status": "allowed", "resetsAt": "2026-10-29T09:00:00.000Z", "usedPercentage": 17.5, "observedAt": "2026-10-24T14:05:00.000Z" }
+      ]
+    },
+    {
+      "case": "the per-model list (ADR-0073): each model's weekly window by its display name, used up as rejected, a null share no reading",
+      "answer": {
+        "rate_limits_available": true,
+        "rate_limits": {
+          "five_hour": { "utilization": 10, "resets_at": "2026-10-24T16:00:00.000Z" },
+          "model_scoped": [
+            { "display_name": "Model A", "utilization": 100, "resets_at": "2026-10-29T09:00:00.000Z" },
+            { "display_name": "model-b", "utilization": 55.5, "resets_at": "2026-10-29T09:00:00.000Z" },
+            { "display_name": "model-c", "utilization": null, "resets_at": null }
+          ]
+        }
+      },
+      "limits": [
+        { "window": "five_hour", "status": "allowed", "resetsAt": "2026-10-24T16:00:00.000Z", "usedPercentage": 10, "observedAt": "2026-10-24T14:05:00.000Z" },
+        { "window": "model_scoped:model-a", "status": "rejected", "resetsAt": "2026-10-29T09:00:00.000Z", "usedPercentage": 100, "observedAt": "2026-10-24T14:05:00.000Z" },
+        { "window": "model_scoped:model-b", "status": "allowed", "resetsAt": "2026-10-29T09:00:00.000Z", "usedPercentage": 55.5, "observedAt": "2026-10-24T14:05:00.000Z" }
+      ]
+    },
+    {
+      "case": "the per-model list in a changed shape: no per-model reading, the account's windows still read",
+      "answer": {
+        "rate_limits_available": true,
+        "rate_limits": {
+          "five_hour": { "utilization": 10, "resets_at": "2026-10-24T16:00:00.000Z" },
+          "model_scoped": [{ "display_name": "model-a", "utilization": 3, "resets_at": "2026-10-29T09:00:00.000Z" }, { "name": "model-b", "utilization": 4 }]
+        }
+      },
+      "limits": [
+        { "window": "five_hour", "status": "allowed", "resetsAt": "2026-10-24T16:00:00.000Z", "usedPercentage": 10, "observedAt": "2026-10-24T14:05:00.000Z" }
       ]
     },
     {

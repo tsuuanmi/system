@@ -1905,7 +1905,7 @@ export const APP_JS = `'use strict'
             n.error && n.state !== 'FAILED' ? fold('Attempt history', el('div', { class: 'muted' }, 'An earlier attempt failed: ' + failureText(n.error))) : null,
             keptFold('step-' + runId + '-' + n.nodeId, 'Details', stepWords(n.nodeId) ? el('div', {}, 'step ', el('code', {}, n.nodeId)) : null,
               time ? el('div', { class: 'muted' }, 'started ' + absolute(time.t.startedAt) + (time.t.endedAt ? ' · ended ' + absolute(time.t.endedAt) : '')) : null,
-              el('div', { class: 'muted' }, n.worker ? (n.tier || n.minTier) + ' tier' : 'needs ' + (/^[aeiou]/.test(n.minTier) ? 'an ' : 'a ') + n.minTier + ' tier Worker'),
+              el('div', { class: 'muted' }, n.worker ? (n.tier || n.minTier) + ' tier' + (n.model ? ', model ' + n.model : '') : 'needs ' + (/^[aeiou]/.test(n.minTier) ? 'an ' : 'a ') + n.minTier + ' tier Worker'),
               made.length ? [el('div', {}, 'How it was decided (' + made.length + ')'), decisionsView(made)] : null))
         }))),
       keptFold('tech-' + runId, 'Technical details', el('p', { class: 'muted' }, 'Template ' + run.template + ' · last changed ', ago(run.updatedAt), ' · spec ', shortId(run.specHash, 'Copy spec hash'), run.sessionId ? [' · session ', shortId(run.sessionId, 'Copy session ID')] : null),

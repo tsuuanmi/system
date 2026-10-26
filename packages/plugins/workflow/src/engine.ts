@@ -22,7 +22,7 @@ import { admissionInfrastructure, executionInfrastructure, sourceGone } from './
 import { admissionKind, assignmentOf, choiceHoldEnded, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForChoice, waitForLimit } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
 import { cycleOf, missingSubject, remediate, reviewSubject, subjectGate, wordingOf } from './review.ts'
-import { riskAtAcceptance, settleRisk } from './risk.ts'
+import { riskAtAcceptance, settleRisk, tierAtRisk } from './risk.ts'
 import { leaveSession, type Moved, sessionGaps } from './session-moves.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
 import { fallbackSpent, singleFamilyBrief, singleFamilyDecision, singleFamilyRecovery } from './single-family.ts'
@@ -668,6 +668,15 @@ export class Engine {
       if (unsafe) return refuseInstructions(this, run, node, unsafe, lease)
       const record = JSON.parse(node.record) as NodeRecord
       const attempt = node.attempt + 1
+      // A board task's step takes the tier its policy gives it at its task's risk tier (ADR-0073), recorded.
+      const atRisk = await tierAtRisk(this, run, node, spec, record.requirement)
+      if (signal.aborted) return
+      // Its task or policy unreadable, its tier is unknown: never routed at its template's tier, it
+      // fails unsent and is retried with back-off, so a heavy step never runs below its minimum (INV-2).
+      if (atRisk && 'problem' in atRisk) {
+        return failAttempt(this, run, { ...node, attempt }, { kind: 'internal', disposition: 'BACKOFF', message: `${atRisk.problem}; the step is held, not routed at its template's tier` }, { sent: false, decisions: [] }, lease)
+      }
+      if (atRisk) record.requirement = atRisk.requirement
       // A node that must differ from others routes once they have Workers (ADR-0027).
       const differs = await this.diversity(run, spec, signal)
       if (differs === 'stopped') return
@@ -861,12 +870,14 @@ export class Engine {
       }
       // A review's fix on its author's session, resuming it: which path it took is recorded (./fix-sessions.ts).
       if (!moved) continued(this, run, node, spec, admitted, draft)
+      // The tier routing served it at: of a Worker that offers several, the one its run runs (ADR-0073).
+      const servedTier = admitted.tier ?? admitted.worker.tier
       const routed = {
-        worker: admitted.worker.worker, source: admitted.source, served_tier: admitted.worker.tier, quota_class: admitted.worker.quotaClass,
+        worker: admitted.worker.worker, source: admitted.source, served_tier: servedTier, quota_class: admitted.worker.quotaClass,
         // The account it runs on, so a failure of it is recovered by its group's mode (ADR-0052).
         account: admitted.worker.account ? JSON.stringify(admitted.worker.account) : null,
-        // The same-family or session-move decision first: the last two stay the tier and route decisions.
-        decisions: JSON.stringify([...(sameFamily ? [sameFamily] : []), ...(moved ? [moved.decision] : []), admitted.decisions.tier, admitted.decisions.route]),
+        // The tier-by-risk, same-family, or session-move decision first: the last two stay the tier and route decisions.
+        decisions: JSON.stringify([...(atRisk ? [atRisk.decision] : []), ...(sameFamily ? [sameFamily] : []), ...(moved ? [moved.decision] : []), admitted.decisions.tier, admitted.decisions.route]),
       }
       try {
         this.ctx.store.transaction(() => {
@@ -882,12 +893,17 @@ export class Engine {
           // The brief is recorded before the execution starts, and the execution names it; its
           // source renders the prompt from it (INV-13, INV-12).
           // Off its session (session-moves.ts), it starts without one, on the brief that carries the handoff.
-          const brief = recordBrief(this, run, node, moved ? moved.draft : draft, source.sandbox?.(admitted.worker.worker, run.run_id))
+          // A Worker that offers tiers is told in its brief the one it runs at, and the model its source runs there (ADR-0073).
+          const tiered = !!admitted.worker.tiers?.length
+          const brief = recordBrief(this, run, node, moved ? moved.draft : draft, source.sandbox?.(admitted.worker.worker, run.run_id),
+            tiered ? servedTier : undefined, tiered ? source.model?.(admitted.worker.worker, servedTier) : undefined)
           const started = source.start({
             key: executionKey(run.run_id, node, attempt),
             worker: admitted.worker.worker, brief, sessionId: moved ? undefined : spec.session.sessionId, runId: run.run_id,
             // The template step it serves, from the engine's own record: a source may record it with what the run drew (PROP-0015 E2).
             step: { template: run.template, node: node.node_id },
+            // The tier it was routed at, so its source runs that tier's model (ADR-0073).
+            tier: servedTier,
             requirement: moved ? moved.requirement : record.requirement, decisions: admitted.decisions,
           })
           this.writeNode(node, { state: 'RUNNING', execution_id: started.id, attempt, not_before: null, ...routed }, (r) => ({
@@ -896,7 +912,7 @@ export class Engine {
           }), lease)
           this.ctx.eventLog.append({
             type: 'workflow.node.started', runId: run.run_id, nodeId: node.node_id, decision: admitted.decisions.route,
-            data: { executionId: started.id, source: admitted.source, worker: admitted.worker.worker, minTier: spec.tier, attempt, brief },
+            data: { executionId: started.id, source: admitted.source, worker: admitted.worker.worker, minTier: spec.tier, tier: servedTier, attempt, brief },
           })
         })
       } catch (error) {

@@ -20,8 +20,10 @@
  * result names the decision a decision brief will summarize.
  */
 import type { Lease } from '@tsuuanmi/system-leases'
-import { type ChangePaths, changeTier, type ChangeTier, RISK_TIERS, type RiskTier, riskTierMaps, type MapOf, tierReasons } from '@tsuuanmi/system-approvals-core'
-import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
+import {
+  type ChangePaths, changeTier, type ChangeTier, RISK_TIERS, type RiskTier, riskTierMaps, type MapOf, type StepTierByRisk, stepTierByRisk, tierByRiskMaps, type TierByRiskOf, tierReasons,
+} from '@tsuuanmi/system-approvals-core'
+import { type ArtifactRef, type Tier, TIERS, type WorkRequirement } from '@tsuuanmi/system-workers-core'
 import { checksFor } from './checks.ts'
 import type { Engine } from './engine.ts'
 import { append } from './growth.ts'
@@ -306,6 +308,129 @@ export function secondFamily(risk: AcceptanceRisk | undefined, subject: string):
   const on = risk.reviews.filter((r) => r.subject === subject)
   const families = new Set(on.filter((r) => r.family !== undefined).map((r) => r.family)).size
   return { met: families >= 2, families, reviews: on }
+}
+
+/** The rule that sets a step's minimum tier at its task's risk tier (ADR-0073). */
+export const TIER_BY_RISK_RULE = 'workflow.tier-by-risk'
+
+/** A task's runs read back for its latest risk tier, newest first, at most (INV-9). */
+const RISK_LOOK_BACK = 8
+
+/**
+ * A board task's risk tier now (ADR-0071), for the tier its steps take (ADR-0073): the latest
+ * `workflow.risk-tier` decision of its newest run that has one (this run's own first, then its
+ * earlier attempts'), so a next attempt starts at the tier its change was found to need. Undefined
+ * when none of its runs has one (tiering off, or no change tiered yet).
+ */
+export function taskRisk(e: Engine, taskId: string): { tier: RiskTier; decision: ArtifactRef; runId: string } | undefined {
+  const runs = e.ctx.store.db.prepare('SELECT run_id FROM workflow_tasks WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?').all(taskId, RISK_LOOK_BACK) as Array<{ run_id: string }>
+  for (const { run_id: runId } of runs) {
+    const found = riskOf(e, runId)
+    if (found) return { tier: found.tier, decision: found.decision, runId }
+  }
+  return undefined
+}
+
+/** The tier-by-risk maps of a project's applying policies (studio first); none when no queue is loaded; a problem when they cannot be read. */
+async function tierMapsFor(e: Engine, projectId: string): Promise<TierByRiskOf[] | { problem: string }> {
+  const approvals = queueOf(e)
+  if (!approvals) return []
+  try {
+    return tierByRiskMaps((await approvals.policy(projectId)).policies)
+  } catch (error) {
+    return { problem: `the autonomy policy could not be read (${(error as Error).message.slice(0, 200)})` }
+  }
+}
+
+/** What a step's requirement becomes at its task's risk tier, and why: the risk, the entries that matched, and the tier it had. */
+export interface TierAtRisk {
+  requirement: WorkRequirement
+  risk: { tier: RiskTier; decision: ArtifactRef; runId: string }
+  step: StepTierByRisk
+  from: Tier
+  /** Why the map's tier was not taken as it is: an escalated step is never lowered; a step's maximum bounds it. */
+  kept?: string
+}
+
+/**
+ * The tier a board task's step takes at its task's risk tier (ADR-0073), looked at only: nothing is
+ * recorded. The policy's `tierByRisk` entries under the task's risk tier that name one of the step's
+ * capabilities or its kind give its minimum, the highest of them: raised (heavy → frontier) or lowered
+ * (light → economy). A step whose minimum an escalation set (its tier decided after a rejected result)
+ * is never lowered, and a step's maximum bounds it. Undefined when the policy was read and no map
+ * applies, the task has no risk tier, or no entry names the step. A policy that cannot be read is a
+ * `problem`, never undefined: the step's tier at its risk tier is unknown, so a caller holds it, never
+ * routes it at its template's tier (INV-2).
+ */
+export async function lookTierAtRisk(e: Engine, task: { taskId: string; projectId: string }, spec: Pick<ResolvedNode, 'capabilities' | 'kind'>, requirement: WorkRequirement): Promise<TierAtRisk | { problem: string } | undefined> {
+  // The policy first: with no map, nothing is read of the task's runs.
+  const maps = await tierMapsFor(e, task.projectId)
+  if ('problem' in maps) return { problem: `the tier of task ${task.taskId}'s step at its risk tier cannot be read: ${maps.problem}` }
+  if (!maps.length) return undefined
+  const risk = taskRisk(e, task.taskId)
+  if (!risk) return undefined
+  const step = stepTierByRisk(maps, risk.tier, { capabilities: spec.capabilities, kind: spec.kind })
+  if (!step) return undefined
+  const from = requirement.tier.min
+  const rank = (t: Tier): number => TIERS.indexOf(t)
+  let min: Tier = step.tier
+  let kept: string | undefined
+  if (requirement.tier.source === 'decision' && rank(min) < rank(from)) {
+    min = from
+    kept = `its minimum ${from} was set by an earlier decision (an escalation after a rejected result), which a lower tier never undoes`
+  }
+  if (requirement.tier.max !== undefined && rank(min) > rank(requirement.tier.max)) {
+    min = requirement.tier.max
+    kept = `its maximum is ${requirement.tier.max}`
+  }
+  return { requirement: { ...requirement, tier: { ...requirement.tier, min } }, risk, step, from, ...(kept ? { kept } : {}) }
+}
+
+/**
+ * Before a board task's step is routed: the tier it takes at its task's risk tier (ADR-0073), recorded
+ * as a `tier` decision of rule `workflow.tier-by-risk` (its input the risk-tier decision; its detail the
+ * maps' versions and the entries that matched), under the step. The requirement routing gets names
+ * that decision as its tier's source. Undefined when nothing applies (the step keeps its tier): no
+ * board task, no queue, or a policy read with no entry for the step. A `problem` when the board task
+ * or the policy cannot be read: the step is not routed at its template's tier (INV-2).
+ */
+export async function tierAtRisk(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, requirement: WorkRequirement): Promise<{ requirement: WorkRequirement; decision: ArtifactRef } | { problem: string } | undefined> {
+  const row = e.tasks.row(run.run_id)
+  if (!row || !e.board || !queueOf(e)) return undefined
+  let projectId: string | undefined
+  try {
+    projectId = (await e.board.task(row.task_id))?.projectId
+  } catch (error) {
+    return { problem: `board task ${row.task_id} could not be read for its step's tier at its risk tier (${(error as Error).message.slice(0, 200)})` }
+  }
+  if (projectId === undefined) return { problem: `board task ${row.task_id} could not be read for its step's tier at its risk tier (not found)` }
+  const looked = await lookTierAtRisk(e, { taskId: row.task_id, projectId }, spec, requirement)
+  if (!looked || 'problem' in looked) return looked
+  const { risk, step, from, kept } = looked
+  const to = looked.requirement.tier.min
+  const entries = step.matched.map((m) => `${m.key}: ${m.tier} (policy ${m.policy.id} v${m.policy.version}, map v${m.version})`)
+  const said = to === from ? `keeps ${from}` : TIERS.indexOf(to) > TIERS.indexOf(from) ? `raised from ${from} to ${to}` : `lowered from ${from} to ${to}`
+  const decision = e.ctx.artifacts.recordDecision({
+    decisionType: 'tier',
+    question: `What minimum tier does step ${node.node_id} of run ${run.run_id} take at its task's ${risk.tier} risk tier?`,
+    inputs: [risk.decision],
+    candidates: TIERS.map((t) => ({
+      option: t, selected: t === to,
+      reasons: t === to
+        ? [`the task's change is ${risk.tier} (decision ${risk.decision}), and the policy's tier by risk gives this step ${step.tier}: ${entries.join('; ')}`, `${said}${kept ? `: ${kept}` : ''}`]
+        : [`not ${t}: the policy's tier by risk gives the step ${step.tier} at the ${risk.tier} risk tier${kept ? `, and ${kept}` : ''}`],
+    })),
+    decider: { type: 'policy', id: TIER_BY_RISK_RULE, version: '1' },
+    outcome: {
+      option: to,
+      detail: {
+        risk: risk.tier, from, to, ...(kept ? { kept } : {}),
+        matched: step.matched.slice(0, 16).map((m) => ({ policy: m.policy.id, policyVersion: m.policy.version, mapVersion: m.version, key: m.key, tier: m.tier })),
+      },
+    },
+    deterministic: true,
+  }, { ...PRODUCER, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
+  return { requirement: { ...looked.requirement, tier: { ...looked.requirement.tier, source: 'decision', decision } }, decision }
 }
 
 /** The run's latest tier decision, and why, for `explain` and `/ui`: the acceptance's when there is one, else the latest review's. */

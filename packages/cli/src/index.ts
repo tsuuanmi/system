@@ -1116,7 +1116,7 @@ export async function parseAsk(args: readonly string[], readStdin: () => Promise
   return prompt ? { prompt, ...request } : undefined
 }
 
-interface UsageNode { nodeId: string; state: string; minTier: string; tier?: string; worker?: string; quotaClass?: string; usage?: { inputTokens: number; outputTokens: number }; usageUnknown?: string }
+interface UsageNode { nodeId: string; state: string; minTier: string; tier?: string; model?: string; worker?: string; quotaClass?: string; usage?: { inputTokens: number; outputTokens: number }; usageUnknown?: string }
 interface UsageRun { runId: string; template: string; status: string; createdAt: string; nodes: UsageNode[] }
 
 /**
@@ -1127,7 +1127,7 @@ export function formatUsage(usage: { runs: UsageRun[]; draws?: UsageDraws }): st
   return [
     ...usage.runs.flatMap((run) => [
       `${run.runId}  ${run.template}  ${run.status}  ${run.createdAt}`,
-      ...run.nodes.map((n) => `  ${n.nodeId}  ${n.state}  ${n.tier ?? '-'}  ${n.quotaClass ?? '-'}  ${n.worker ?? '-'}${n.usage ? `  ${n.usage.inputTokens} in / ${n.usage.outputTokens} out tokens` : ''}${n.usageUnknown ? `  usage unknown (${n.usageUnknown})` : ''}`),
+      ...run.nodes.map((n) => `  ${n.nodeId}  ${n.state}  ${n.tier ?? '-'}${n.model ? ` (${n.model})` : ''}  ${n.quotaClass ?? '-'}  ${n.worker ?? '-'}${n.usage ? `  ${n.usage.inputTokens} in / ${n.usage.outputTokens} out tokens` : ''}${n.usageUnknown ? `  usage unknown (${n.usageUnknown})` : ''}`),
     ]),
     ...formatDraws(usage.draws),
   ]
@@ -1183,7 +1183,7 @@ interface Explained {
   decisions?: ExplainedDecision[]
   /** The run's risk tier and why (ADR-0071), when its project's policy has a path map. */
   risk?: { tier: string; reasons: string[]; decision: string; at?: string }
-  nodes: Array<{ nodeId: string; state: string; worker?: string; quotaClass?: string; turnId?: string; decisions: ExplainedDecision[] }>
+  nodes: Array<{ nodeId: string; state: string; worker?: string; quotaClass?: string; turnId?: string; tier?: string; model?: string; decisions: ExplainedDecision[] }>
   liveness?: ExplainedLiveness[]
   livenessUnread?: Array<{ source: string; detail: string }>
   /** The run's checks stalled now: no output for their bound, still running to their deadline (T235). */
@@ -1223,7 +1223,7 @@ export function formatExplanation(explained: Explained): string[] {
     ...(explained.risk ? [`  risk tier ${explained.risk.tier}${explained.risk.at ? ` (at ${explained.risk.at})` : ''}  (${explained.risk.decision})`, ...explained.risk.reasons.map((r) => `    why   ${r}`)] : []),
     ...(explained.decisions?.length ? ['  run (decisions no step holds)', ...explained.decisions.map(line)] : []),
     ...explained.nodes.flatMap((n) => [
-      `  ${n.nodeId}  ${n.state}  ${n.worker ?? '-'}  ${n.quotaClass ?? '-'}  ${n.turnId ?? '-'}`,
+      `  ${n.nodeId}  ${n.state}  ${n.worker ?? '-'}  ${n.quotaClass ?? '-'}  ${n.turnId ?? '-'}${n.tier && n.model ? `  tier ${n.tier}, model ${n.model}` : ''}`,
       ...n.decisions.map(line),
     ]),
     ...liveness,

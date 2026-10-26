@@ -45,6 +45,7 @@ import {
   modelAnswersOf, OutcomeHistory, QUESTION_SET, type ShadowAdvice,
 } from './advisor.ts'
 import type { Engine } from './engine.ts'
+import { lookTierAtRisk } from './risk.ts'
 import { type ResolvedNode, resolve } from './spec.ts'
 import { admittedRestriction } from './teams.ts'
 import { type Config, type DispatchConfig, newId, now, type TaskDispatch, WorkflowFailure } from './types.ts'
@@ -683,7 +684,15 @@ export class Dispatcher {
         continue
       }
       const classification = project.classification ?? this.e.ctx.egress.defaultClassification
-      const requirement = this.e.requirementOf(step.node, step.node.session.persist === true, classification)
+      const own = this.e.requirementOf(step.node, step.node.session.persist === true, classification)
+      // At the tier the engine will route it at: its task's risk tier may set it (ADR-0073; looked at only, the engine records it).
+      const atRisk = await lookTierAtRisk(this.e, { taskId: task.taskId, projectId: project.projectId }, step.node, own)
+      // Its tier unknown, it is not scored at its template's (INV-2).
+      if (atRisk && 'problem' in atRisk) {
+        why(atRisk.problem)
+        continue
+      }
+      const requirement = atRisk?.requirement ?? own
       // The restriction routing will apply to that step (INV-6): the session its run would resume
       // stays on its Worker, and any other the engine derives. The Worker is chosen within it.
       const bound = await this.restrictionOf(task, task.template, step.node.nodeId, classification)
@@ -902,7 +911,11 @@ export class Dispatcher {
       const sandbox = this.e.ctx.workers.source(c.source)?.sandbox?.(w.worker)
       const repository = sandbox?.mode === 'workspace-write' ? sandbox.workspace : undefined
       if (repository) repositoryOf.set(w.worker, repository)
-      const accountPools = !account ? undefined : 'unknown' in pools ? { unknown: pools.unknown as string } : (pools as Map<string, PoolState[]>).get(account) ?? []
+      // A Worker that offers several tiers is scored at the one routing would serve it at, by that tier's pools (ADR-0073).
+      const tier = c.tier ?? w.tier
+      const only = w.tiers?.find((o) => o.tier === tier)?.pools
+      const accountPools = !account ? undefined : 'unknown' in pools ? { unknown: pools.unknown as string }
+        : ((pools as Map<string, PoolState[]>).get(account) ?? []).filter((p) => only === undefined || only.includes(p.pool))
       const busy: string[] = []
       if (w.state !== 'ready') busy.push(w.state === 'busy' && w.load ? `busy ${w.load.running} of ${w.load.slots}` : `state ${w.state}`)
       else if (!w.load) busy.push('its source reports no load, so it cannot be shown free')
@@ -916,7 +929,7 @@ export class Dispatcher {
       const metered = w.quotaClass === 'metered' || (Array.isArray(accountPools) && accountPools.some((p) => p.kind === 'api-key'))
       const refused = [...c.failed.map((f) => f.reason), ...(restrict && !restrict.workers.includes(w.worker) ? [`outside the Workers this step may take: ${restrict.reason}`] : [])]
       return {
-        worker: w.worker, ...(refused.length ? { refused } : {}), tier: w.tier, tierRank: TIERS.indexOf(w.tier), quotaClass: w.quotaClass,
+        worker: w.worker, ...(refused.length ? { refused } : {}), tier, tierRank: TIERS.indexOf(tier), quotaClass: w.quotaClass,
         quotaRank: rank(look.order.quota, w.quotaClass), metered, ...(w.load ? { load: w.load } : {}), priorityRank: rank(look.order.priority, w.worker),
         pools: accountPools as readonly QuotaPool[] | { unknown: string } | undefined, ...(busy.length ? { busy } : {}),
       }
@@ -1278,7 +1291,10 @@ export class Dispatcher {
     const choice = JSON.parse(row.choice) as AskChoice
     const step = this.writingStep(choice.template)
     if ('problem' in step) return step.problem
-    const requirement = this.e.requirementOf(step.node, step.node.session.persist === true, choice.classification)
+    const own = this.e.requirementOf(step.node, step.node.session.persist === true, choice.classification)
+    const atRisk = await lookTierAtRisk(this.e, { taskId: row.task_id, projectId: row.project_id }, step.node, own)
+    if (atRisk && 'problem' in atRisk) return atRisk.problem
+    const requirement = atRisk?.requirement ?? own
     const look = await this.e.ctx.workers.candidates(requirement, { producer: 'workflow' })
     const scored = this.score(look, await this.pools(at), resources.quota(), this.counts(row.ask_id), at)
     const mine = scored.score.candidates.find((c) => c.worker === row.worker)

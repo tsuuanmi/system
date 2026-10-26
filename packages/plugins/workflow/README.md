@@ -447,7 +447,7 @@ second execution path (INV-1).
     (`workflow.task-worktree`) made before the task is taken chooses `carry` only when that run
     failed, and only as a later step fails (`session_broken`, `provider_stalled`, `timeout`,
     `network`, `overloaded`, `quota_exhausted`, `reauth_required`, `challenge`,
-    `reconciliation_failed`, `config_error`, `internal`, `budget_spent`, `holder_lost`), nothing in
+    `reconciliation_failed`, `config_error`, `worker_changed`, `internal`, `budget_spent`, `holder_lost`), nothing in
     it was grown, no review of it judged the change other than approved, no step asked questions,
     and the task writes a `git-head` subject the tree is on (the one the run was admitted with);
     else `fresh`, with why. A carry is `due` (`carry` on the run's `workflow_tasks` row,

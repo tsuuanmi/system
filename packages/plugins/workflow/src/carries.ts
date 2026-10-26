@@ -40,7 +40,7 @@ import { type NodeRecord, type NodeRow, now, type TaskCarry, type TaskOutcome, t
  */
 export const LATER_FAILURES: ReadonlySet<string> = new Set([
   'session_broken', 'provider_stalled', 'timeout', 'network', 'overloaded', 'quota_exhausted', 'reauth_required', 'challenge',
-  'reconciliation_failed', 'config_error', 'internal', 'budget_spent', 'holder_lost',
+  'reconciliation_failed', 'config_error', 'worker_changed', 'internal', 'budget_spent', 'holder_lost',
 ])
 
 /** Earlier runs of a task looked at for its previous attempt (runs the board never recorded are skipped), at most. */

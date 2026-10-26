@@ -913,9 +913,11 @@ the trusted envelope of account choice
 - **A role** holds what the work needs (workspace, sandbox, tier, quota class, `worktreePerRun`,
   `reviewMember`, and the `kinds` of work its Workers take,
   [work kinds](routing.md#work-kinds)) and, under `runtimes.<runtime>`, what differs per runtime
-  (`tools`, `model`, `maxTurns`, `family`), never a routing input. So which runtime takes a kind
+  (`tools`, `model`, `maxTurns`, `family`, `tiers`), never a routing input. So which runtime takes a kind
   of work is the assignments': a role `code` given `kinds: [code]` and assigned to one runtime's
-  accounts keeps source-code steps on them (ADR-0057).
+  accounts keeps source-code steps on them (ADR-0057). Capability is the role's (its sandbox, kinds,
+  and review-member profile), so a Worker is chosen by capability first, then by tier
+  ([tiers per role](#tiers-per-role)).
 - **The Worker** of an account in a role is `agent:<accountId>/<role>`, derived (a pure function of
   the configuration: the same roles and assignments always give the same Workers). Its runtime is
   the account's provider, its family the role's `family` for that runtime or the runtime, its
@@ -950,6 +952,84 @@ the trusted envelope of account choice
   never closes another's.
 
 Hand-named Workers (`workers`) are the shape before phase F; one row holds one shape or the other.
+
+### Tiers per role
+
+> Decision: [ADR-0073](../decisions/adr/0073-agent-workers-offer-tiers-per-role-with-quota-per-model.md)
+> (proposed), T261. Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (`src/roles.ts`), the router ([routing](routing.md#intelligence-tiers)), and the Claude Code
+> runtime's usage report reader.
+
+A vendor's plan serves several models, and so does each account on it. A role may give its Workers
+one model per tier on a runtime, instead of one `tier`:
+
+```yaml
+providers:
+  - provider: claude-agent-sdk
+    pool: claude-plan                           # the account's own pool: its five-hour window
+    windows: { five_hour: five-hour }
+    modelPools:                                 # one more pool per account for a model that has a window of its own
+      - { model: "<frontier model>", pool: claude-frontier, windows: { "model_scoped:<frontier family>": weekly } }
+roles:
+  - id: develop
+    workspace: /home/me/src/project
+    sandbox: workspace-write
+    worktreePerRun: true
+    runtimes:
+      claude-agent-sdk:
+        tiers:
+          economy:  { model: "<economy model>" }
+          standard: { model: "<standard model>" }
+          frontier: { model: "<frontier model>", maxTurns: 40 }
+```
+
+- **What a tier sets.** `runtimes.<runtime>.tiers.<tier>` is `{ model, tools?, maxTurns? }`: the
+  model, and the options that differ at that tier (else the runtime's own). It replaces the role's
+  `tier` on that runtime; a role may leave `tier` out when every runtime it is assigned on declares
+  tiers, and a role that gives an assigned runtime neither is refused at load. Model names are the
+  operator's configuration (the live profile) only, never in code, docs, tests, or examples: these
+  docs write `<frontier model>` for one.
+- **One Worker offers them all.** The Worker `agent:<accountId>/<role>` describes every tier it offers
+  (`capability-descriptor@1.10` `tiers`), its lowest as its `tier`; capability stays the role's, so it
+  proves the same capabilities at every tier. Routing serves it at the lowest offered tier within a
+  step's bounds whose model's pool is open ([routing](routing.md#intelligence-tiers)); a session that
+  escalates stays on it, at the next tier's model.
+- **A run runs its tier's model.** The engine passes the routed tier (`WorkerStart.tier`), recorded on
+  the run (`agent_runs.tier`), with the model that tier gave it on a Worker that offers tiers
+  (`agent_runs.configured_model`); the runtime gets that tier's model, tools, and turn limit. A tier the
+  Worker does not offer refuses the start. When the run comes up after the configuration changed (a
+  restart, a live update) and its Worker no longer offers its tier (its tiers removed, or a one-tier
+  Worker's tier another), or that tier now runs another model or none of its own, the run fails
+  unsent as `worker_changed`, naming the tier it was started at and the tiers offered now: its
+  disposition is `IMMEDIATE`, so the engine routes the work again at once
+  ([recovery](workflow-engine.md#recovery)). A run never takes another tier's model, nor its tier
+  another model, in silence. With no tier given, the lowest offered at or above the requirement's
+  minimum.
+- **Recorded.** The result is `agent-result@1.4`, with `tier` and `configuredModel` (the model the
+  run asked for; `model` stays the one its runtime answered with); the brief carries the routed
+  `tier` and the model the source runs there (`brief@1.4` `tier`; `@1.5` adds `model`, from the source's
+  `WorkerSource.model`); `system explain`, the usage report, and the run's page on `/ui` show the tier
+  and the model beside the step.
+- **Quota per model.** `modelPools` on the provider entry gives a model one more pool per account,
+  `<pool>/<accountId>` of a template of the runtime's group (the ledger makes it for each declared
+  account, as it does the account's own). A run on that model reserves on both pools, and either
+  closed refuses it unsent. An observation a model pool's `windows` maps, a run's or the usage
+  report's, is a reading of that pool alone; every other one is the account's, and a limit the
+  account's pool cannot place still closes it whole. So the frontier model's weekly window at its
+  limit closes the frontier tier only: the Worker describes it `closed` with when it is back, and
+  standard work is still admitted. A model pool with no reading yet closes its tier (INV-2). A tier is
+  ranked by its own pools' headroom ([quota in every route](routing.md#quota-in-every-route)). On a
+  provider that names model pools, a one-tier role's Worker offers its one tier with the pools it
+  draws on (the account's, and its model's when it has one), so another model's pool is never read
+  as its quota. Only a limit recorded on a pool the run drew on counts as the run's own limit: a
+  run that hits a limit nothing places closes its account's pool, whatever another model's window
+  says. Per-model admission applies only where the provider reports a window per model: Codex's
+  usage report gives windows by length (300 and 10080 minutes), not per model, so a Codex role's
+  tiers name no `modelPools` and every tier of the account shares its windows; the route decision
+  says so (`its tiers share its account's windows`), as it does for any tier with no pool of its
+  model's own.
+- **A one-tier role works as before**: its Worker describes no `tiers`, runs its runtime's `model`,
+  and records `agent-result@1.2` or `@1.1`.
 
 ### Migration from hand-named rows
 
@@ -1495,7 +1575,7 @@ also reports every window of the signed-in account on request, without a model t
 
   | Runtime | Report | Windows | Versions |
   |---|---|---|---|
-  | Claude Code | the SDK's `get_usage` control request (`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })`) in a session sent no message (streaming input that never yields), with no tool, settings, MCP server, or hook, and no session written (`persistSession: false`); then closed | each window of `rate_limits` (when `rate_limits_available`) whose `utilization` is a number: `five_hour`, `seven_day`, `seven_day_oauth_apps`, and the per-model weekly windows, each under its name (the names a `rate_limit_event` uses); a window is told by its shape, an object with a `utilization` (the endpoint's body adds entries without a new Claude Code version, T111), so the entries that are not (arrays such as `model_scoped` and `limits`, objects without a `utilization` such as `spend`, booleans, strings, nulls) and `extra_usage` are skipped, while a number or a window with a field of the wrong type is `unreadable`; the plan type and the session are not read; `rate_limits_available: false` (an API key) is `unreadable` | `VERIFIED_LIMIT_VERSIONS`: 2.1.308, 2.1.309, 2.1.310 |
+  | Claude Code | the SDK's `get_usage` control request (`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })`) in a session sent no message (streaming input that never yields), with no tool, settings, MCP server, or hook, and no session written (`persistSession: false`); then closed | each window of `rate_limits` (when `rate_limits_available`) whose `utilization` is a number: `five_hour`, `seven_day`, `seven_day_oauth_apps`, and the per-model weekly windows, each under its name (the names a `rate_limit_event` uses); a window is told by its shape, an object with a `utilization` (the endpoint's body adds entries without a new Claude Code version, T111), each entry of the per-model list `model_scoped` (`{ display_name, utilization, resets_at }`) as a window `model_scoped:<display name>`, lower-cased, which a provider's `modelPools` maps to its model's pool ([tiers per role](#tiers-per-role); a list in another shape gives no per-model reading, the account's windows still read); so the entries that are not windows (arrays such as `limits`, objects without a `utilization` such as `spend`, booleans, strings, nulls) and `extra_usage` are skipped, while a number or a window with a field of the wrong type is `unreadable`; the plan type and the session are not read; `rate_limits_available: false` (an API key) is `unreadable` | `VERIFIED_LIMIT_VERSIONS`: 2.1.308, 2.1.309, 2.1.310 |
   | Codex | `codex app-server` in the account's `CODEX_HOME` (a home with no MCP server, the runtime's `--config` overrides): `initialize`, `initialized`, `account/rateLimits/read`, then ended; no thread, no turn | `primary` and `secondary`, each named by its length, `<windowDurationMins>m` (`300m`, `10080m`), since which is the five-hour window is not fixed by name; one of no stated length only when used up, as `*` | `VERIFIED_RATE_LIMITS_VERSIONS`: 0.164.0 |
   | Antigravity CLI | `agy --print=/usage --output-format json` in its own home only, which print mode answers itself (as [above](#limit-readings)) | each enabled bucket that says what is left, by its `id` | `VERIFIED_LIMIT_VERSIONS`: 1.4.6 |
 

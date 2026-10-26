@@ -6,7 +6,7 @@
   "type": "object",
   "required": ["schema", "id", "version", "scope", "rules", "default", "expiry"],
   "properties": {
-    "schema": { "enum": ["autonomy-policy@1.0", "autonomy-policy@1.1"] },
+    "schema": { "enum": ["autonomy-policy@1.0", "autonomy-policy@1.1", "autonomy-policy@1.2"] },
     "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "version": {
       "description": "Changes whenever the policy's effect changes; decisions name it.",
@@ -76,6 +76,23 @@
         }
       },
       "additionalProperties": false
+    },
+    "tierByRisk": {
+      "description": "1.2 adds the intelligence tier a board task's step takes at its task's risk tier (ADR-0073): under a risk tier, a step's capability (develop, review, validate) or kind of work (docs) mapped to the tier that becomes the step's minimum, such as heavy: { develop: frontier, review: frontier } and light: { validate: economy, docs: economy }. A step several entries match takes the highest of them; an escalated step is never lowered. Applied when the step is routed and its task has a risk tier, recorded as a decision that names the map's version. With no applying policy carrying one, steps keep their templates' tiers.",
+      "type": "object",
+      "required": ["version"],
+      "properties": {
+        "version": {
+          "description": "The map's own version: it changes whenever an entry changes, and a tier decision names it.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "light": { "$ref": "#/$defs/tierByStep" },
+        "normal": { "$ref": "#/$defs/tierByStep" },
+        "heavy": { "$ref": "#/$defs/tierByStep" }
+      },
+      "additionalProperties": false
     }
   },
   "if": { "properties": { "scope": { "const": "project" } } },
@@ -84,10 +101,22 @@
   "allOf": [
     {
       "if": { "properties": { "riskTiers": { "type": "object" } }, "required": ["riskTiers"] },
-      "then": { "description": "@1.1 fields (riskTiers) are refused before @1.1.", "properties": { "schema": { "const": "autonomy-policy@1.1" } } }
+      "then": { "description": "@1.1 fields (riskTiers) are refused before @1.1.", "properties": { "schema": { "enum": ["autonomy-policy@1.1", "autonomy-policy@1.2"] } } }
+    },
+    {
+      "if": { "properties": { "tierByRisk": { "type": "object" } }, "required": ["tierByRisk"] },
+      "then": { "description": "@1.2 fields (tierByRisk) are refused before @1.2.", "properties": { "schema": { "const": "autonomy-policy@1.2" } } }
     }
   ],
   "$defs": {
+    "tierByStep": {
+      "description": "A step's capability or kind of work, mapped to the intelligence tier it takes at this risk tier.",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 32,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9:-]{0,63}$" },
+      "additionalProperties": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/tier" }
+    },
     "riskTierRule": {
       "type": "object",
       "required": ["paths", "tier", "note"],

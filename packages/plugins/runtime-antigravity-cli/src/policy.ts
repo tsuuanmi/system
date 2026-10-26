@@ -10,7 +10,7 @@
  *   servers Antigravity would run outside every gate.
  * Tool names are as Antigravity's hooks name them: the name the model calls (`read_file`), which is
  * also the stream's `tool_name`, not the lowercased step type its hooks guide describes, as the
- * supervised live check of agy 1.4.6 with `gemini-3.8-flash` recorded
+ * supervised live check of agy 1.4.6 with its economy model (`<economy model>`) recorded
  * (`tests/fixtures/agy-1.4.6-hook-inputs.json`). That model's file tools are `read_file`,
  * `write_file`, and `edit_file`; it has no tool that lists or searches a directory (it would run a
  * command for that, which no run offers), and other models' toolsets are not verified, so their

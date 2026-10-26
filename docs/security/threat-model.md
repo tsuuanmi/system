@@ -464,7 +464,7 @@
     [ADR-0043](../decisions/adr/0043-antigravity-cli-workers-gated-on-a-version-verified-live.md)).
     An agy upgrade is unverified until checked the same way. Not covered: the
     version check trusts that one agy version runs its hooks the same on every
-    host; the check covered `gemini-3.8-flash`'s file tools, and another
+    host; the check covered its economy model's file tools, and another
     model's tools are denied, not proven; and the token is no secret from the agent's own processes, which
     share the run's user and namespaces (they can reach only the gate's
     questions, never run a call).

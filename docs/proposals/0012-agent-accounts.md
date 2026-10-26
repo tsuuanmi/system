@@ -301,7 +301,7 @@ roles:
     worktreePerRun: true
     runtimes:                     # what differs per runtime, never a routing input
       claude-agent-sdk: { maxTurns: 4 }
-      antigravity-cli: { model: gemini-3.8-flash-high }
+      antigravity-cli: { model: "<standard model>" }
   - id: develop
     workspace: /home/me/src/project
     sandbox: workspace-write

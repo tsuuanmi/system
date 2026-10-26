@@ -52,7 +52,7 @@
         runtime: antigravity-cli
         workspace: /home/tan/workspaces/system
         sandbox: read-only
-        model: gemini-3.8-flash-high
+        model: "<standard model>"                # its model's name, in the live profile only (ADR-0073)
         tier: standard
 
 # The agent-review and algorithm-development templates, off in the bundle: the live install turns

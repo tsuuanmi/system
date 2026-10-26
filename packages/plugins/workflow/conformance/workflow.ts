@@ -103,6 +103,8 @@ export class ScriptedWorkers {
   readonly worktrees = new Map<string, string>()
   /** Runs once an answer's subject was captured, before the engine checks it (an agent's later edits). */
   afterCapture: (worktree: string) => void = () => {}
+  /** The model a Worker of this runtime runs at a tier (`WorkerSource.model`, ADR-0073), by `<worker> <tier>`; none by default. */
+  readonly models = new Map<string, string>()
   private readonly worktreeOf = new Map<string, string>()
   private readonly executions = new Map<string, WorkerExecution>()
   private readonly requests = new Map<string, Rendered>()
@@ -121,6 +123,7 @@ export class ScriptedWorkers {
       get: (id) => this.get(id),
       wait: (id, timeoutMs) => this.wait(id, timeoutMs),
       cancel: (id) => this.cancel(id),
+      model: (worker, tier) => this.models.get(`${worker} ${tier}`),
       affinity: (sessionId) => {
         const session = this.sessions.get(sessionId)
         return session ? [session.worker] : undefined
