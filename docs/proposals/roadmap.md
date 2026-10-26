@@ -103,6 +103,21 @@ the order of D75: E1, then E2 and E5, then E4 and E3, then E6, with J0 in parall
 | **E6** Handoffs | accepted, not started (a step proposes child tasks under the board's gate, depth 1, at most 3 per attempt, D76; fresh-context review on tasks the lead marks, measured, D78) | `handoff@1.0`, child tasks, the `handoff` wait, fresh-context briefs | E5 |
 | **J0** to **J3** Jev advisor | accepted, not started (features only, never a task's title or goal, D73; J1 in shadow for 100 dispatched attempts with outcomes, D74) | feasibility, shadow, visible, bounded advice behind `ctx.decisions` | J0: —; J1: J0, E2, E4; J3: PROP-0011 F4 |
 
+## Operating model (PROP-0016)
+
+Proposed on 2026-10-26, from the operator's vision of that day and the T224 brainstorm; not
+accepted yet. What each increment delivers is in
+[PROP-0016](0016-operating-model.md#increments). The target is L4 by 2028 to 2029, with selective
+L5 ([maturity model](0016-operating-model.md#1-maturity-model-l0-to-l6)).
+
+| Increment | State | Delivers | Depends on |
+|---|---|---|---|
+| **I1** Handbook layers and the per-Worker slice | proposed | five layers, each with an owner, a version, and a check; each Worker's slice within a fixed bound | T220 |
+| **I2** Risk tiers and the lead-touch metric | proposed | light, normal, and heavy paths from a path map; the adversarial review; decision briefs; lead touches per task recorded | ADR-0067 |
+| **I3** Integration queue, attempt shielding, canary | proposed; in part built (T216, T218, T219) | a landing queue per repository on exact trees; a Worker health canary with rollback | T216, T218, T219 |
+| **I4** Evidence ledger and weekly scorecard | proposed | global IDs; every metric of the maturity model; the weekly level reading | the report |
+| **I5** A project template | proposed | `system project new --kind`; the attention budget; reporting up; proven by a second project | I1 to I4 |
+
 ## Done and open milestones
 
 | Milestone | State | What remains | Evidence |
