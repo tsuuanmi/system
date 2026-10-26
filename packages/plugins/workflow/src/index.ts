@@ -28,6 +28,7 @@ import { MIGRATIONS } from './migrations.ts'
 import { approve, continueRun, stop, supersede } from './operator.ts'
 import { pollMs } from './queue.ts'
 import { deleteRun, purge } from './retention.ts'
+import { renderReport, type ScheduledReviewReport, type ScheduledReviewRow, scheduledReviewProblems } from './scheduled-review.ts'
 import { retryHeldWakes, wake, wakeSafely } from './sessions.ts'
 import type { NodeTemplate } from './spec.ts'
 import { leftOutOfTeams, teamContracts, vote } from './teams.ts'
@@ -35,6 +36,8 @@ import { registerTools } from './tools.ts'
 import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, TaskLanding, TaskStartInput, TemplateStep, UsageDraws, UsageFilter } from './types.ts'
 import { draws, explain, usage } from './views.ts'
 
+export { renderReport as renderScheduledReviewReport, SCHEDULED_REVIEW, SCHEDULED_REVIEW_NODES, scheduledReviewProblems, scheduledReviewSettings } from './scheduled-review.ts'
+export type { AreaTotals, FiledTask, ScheduledReviewReport, ScheduledReviewRow, ScheduledReviewSettings } from './scheduled-review.ts'
 export { compose, DEFAULT_TEMPLATES, preflight, resolve } from './spec.ts'
 export type { Instructions, NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
 export { WorkflowFailure } from './types.ts'
@@ -45,7 +48,7 @@ export { adviceProblem, adviseInShadow, advisorStop, ANSWER_SCHEMA, brierScores,
 export type { Advice, AdviceDetail, Advisor, AdvisorCandidate, AdvisorConfig, AdvisorCounts, AdvisorFeatures, AdvisorSettings, AdvisorSignal, CandidateAdvice, OutcomeData, Question, QuestionScore } from './advisor.ts'
 export type { HoldView, StepHold, StepInFlight } from './hold.ts'
 export type { DispatchPass, DispatchPassView, DispatchPause, DispatchSettings, DispatchStarted, DispatchStatus, DispatchWindow } from './dispatch.ts'
-export type { Config, DispatchConfig, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartedBy, StartInput, TaskCarry, TaskClaim, TaskDispatch, TaskLanding, TaskOutcome, TaskRebase, TaskStartInput, TaskView, TemplateStep, UsageDraws, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
+export type { Config, DispatchConfig, ScheduledReviewConfig, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartedBy, StartInput, TaskCarry, TaskClaim, TaskDispatch, TaskLanding, TaskOutcome, TaskRebase, TaskStartInput, TaskView, TemplateStep, UsageDraws, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -98,7 +101,7 @@ export function checkConfig(config: Config = {}): string[] {
       return [`template ${name}: ${(error as Error).message}`]
     }
   })
-  return [...templates, ...checkTeams(config.teams), ...dispatchProblems(config)]
+  return [...templates, ...checkTeams(config.teams), ...dispatchProblems(config), ...scheduledReviewProblems(config)]
 }
 
 export class Workflow extends Service {
@@ -174,6 +177,21 @@ export class Workflow extends Service {
         model: z.any().description('The model adapter {worker, maxTokens}: worker, the model Worker asked (model:<id> of the models row); maxTokens, its output bound (64 to 8192, default 1024). Features only (no task text) are sent, through the Worker\'s own egress check; checked when the row loads'),
       }).description('The dispatch advisor in shadow (PROP-0015 J1; docs/design/workflow-engine.md#the-dispatch-advisor-in-shadow)'),
     }).description('Dispatch: System starts ready board tasks on free Workers chosen by quota, under the action class dispatch (docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself)'),
+    scheduledReview: z.object({
+      enabled: z.boolean().default(false).description('Review one area of the repository a day, round robin among the areas its review guides name, and propose each confirmed important finding as a board task (D93 item 8; docs/design/handbook.md#scheduled-review). Off by default: the operator turns it on, with projectId and repository'),
+      projectId: z.string().description('The board project the findings are proposed in (required when enabled)'),
+      repository: z.string().description('Absolute path of the git repository whose review guides name the areas, read at the tip of ref and never from its working tree (required when enabled)'),
+      ref: z.string().default('dev').description('The branch or ref reviewed, at its tip (default dev)'),
+      hourUtc: z.natural().max(23).default(3).description('The UTC hour from which the day\'s review may start; one scheduled review a day at most (default 3)'),
+      maxTasksPerRun: z.natural().min(1).max(20).default(5).description('The most tasks one review proposes (INV-9); the rest of its confirmed findings are counted as capped, not filed (default 5)'),
+      maxFiles: z.natural().min(1).max(400).description('Files of the area one review reads at most (default 80); an area that does not fit is read as consecutive windows, each round starting where the last ended, so every file is read in turn; the files left named'),
+      maxBytes: z.natural().min(10_000).max(4_000_000).description('Bytes of the area one review reads in all (default 400,000)'),
+      maxFileBytes: z.natural().min(1000).max(500_000).description('A larger file is listed as not read (default 60,000)'),
+      timeoutMinutes: z.natural().min(1).max(1440).description('Minutes a review run may take before the review is recorded as unfinished (default 120)'),
+      actionClass: z.string().description('The action class the proposed tasks carry (default workspace-write)'),
+      taskTemplate: z.string().description('The board task template the proposed tasks name, when the project uses one (default none)'),
+      template: z.string().description('The workflow template a review runs (default scheduled-review, which the software-development profile provides)'),
+    }).description('The scheduled review of existing code, one area a day, filing confirmed findings as proposed board tasks (docs/design/handbook.md#scheduled-review)'),
     repositories: z.object({
       hosts: z.array(z.string()).default(['github.com']).description('Hosts a review may read a public repository from'),
       maxFiles: z.natural().min(1).max(200).description('Files a review reads from a repository (default 40)'),
@@ -201,6 +219,10 @@ export class Workflow extends Service {
         // A restart is a pass (INV-4): dispatch looks once its runs are reconciled.
         void engine.dispatch.sweep()
       })
+      // The day's scheduled review, when the operator turned it on and it has not run today: the first
+      // pass is one interval after start, so a restart never starts a review on the board's first moments.
+      const reviewing = engine.scheduledReviews.enabled ? setInterval(() => void engine.scheduledReviews.tick(), 15 * 60_000) : undefined
+      reviewing?.unref()
       const daily = setInterval(() => purge(engine), 24 * 60 * 60_000)
       daily.unref()
       // Dispatch (ADR-0064): every dispatch.sweepSeconds; with dispatch.enabled false, no timer runs.
@@ -216,6 +238,7 @@ export class Workflow extends Service {
       deferrals.unref()
       return async () => {
         clearInterval(daily)
+        clearInterval(reviewing)
         clearInterval(deferrals)
         clearInterval(dispatching)
         await engine.close()
@@ -227,6 +250,8 @@ export class Workflow extends Service {
       const board = c.board
       engine.tasks.attach(board)
       c.effect(() => () => engine.tasks.detach(board))
+      // A scheduled review a stop or restart cut is settled from its durable run (INV-4), schedule on or not.
+      queueMicrotask(() => void engine.scheduledReviews.reconcile().catch((error: unknown) => ctx.logger.warn(`workflow: scheduled reviews were not reconciled: ${(error as Error)?.message ?? String(error)}`)))
     })
     ctx.on('worker-sessions/delivered', (sessionIds) => {
       for (const id of sessionIds) wakeSafely(engine, id)
@@ -440,6 +465,29 @@ export class Workflow extends Service {
    */
   sweepDispatch(at?: Date): Promise<DispatchPass> {
     return this.engine.dispatch.sweep(at)
+  }
+
+  /**
+   * The scheduled review's pass at `at` (D93 item 8): when `scheduledReview.enabled`, from its UTC hour,
+   * and none is recorded for the day, the day's area (one per day, round robin among the review guides
+   * at the tip of the configured ref) is read whole, reviewed at the frontier tier, each important
+   * finding verified by a second reviewer, and each confirmed one proposed as a board task, at most
+   * `maxTasksPerRun`, none that duplicates an open task. A test seam as `sweepDispatch(at)` is; the
+   * engine's own timer calls it every 15 minutes. Undefined when nothing was due.
+   */
+  scheduledReviewTick(at?: Date): Promise<ScheduledReviewRow | undefined> {
+    return this.engine.scheduledReviews.tick(at)
+  }
+
+  /** A scheduled review now, outside the schedule (`area` names a guide's area; else the day's): the operator's own run. Recorded as a manual review. */
+  scheduledReviewNow(at?: Date, area?: string): Promise<ScheduledReviewRow | undefined> {
+    return this.engine.scheduledReviews.now(at, area)
+  }
+
+  /** The scheduled reviews counted per area over time, and the latest `limit` reviews (default 60); a read of the engine's rows only. */
+  scheduledReviewReport(limit?: number): ScheduledReviewReport & { text: string } {
+    const report = this.engine.scheduledReviews.report(limit)
+    return { ...report, text: renderReport(report) }
   }
 
   /**

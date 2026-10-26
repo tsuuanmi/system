@@ -170,6 +170,37 @@ change and never run the project's tests or builds: a command it could not run i
 about the change, and an environment limit (a read-only sandbox, a denied or failing command) is
 at most an `info` finding, never a `blocking` one. A remediation cycle's re-review is told the same.
 
+### `scheduled-review`
+
+Provided by
+[`profile-software-development`](../../packages/plugins/profile-software-development/README.md)
+(row off by default, like `agent-review`), and started by the workflow engine's own scheduler, not by
+a caller: once a day, when `scheduledReview.enabled` is set
+([configuration](configuration.md#workflow), [the handbook](../design/handbook.md#scheduled-review)),
+with one area of a repository as its input. The area is read whole at the tip of the configured
+branch (never a diff), with its review guide and its files' lines numbered.
+
+| Node | Capabilities | Tier | Conversation | Acceptance |
+|---|---|---|---|---|
+| `review:1` | `review`, `local-data` | frontier | temporary | `acceptance.answer` |
+| `verify:1` (depends on `review:1`; differs from it, `diversity: preferred`) | `review`, `local-data` | frontier | temporary | `acceptance.answer` |
+
+- `review:1` reports `important` findings (a real defect in the code as it stands, with its file, line,
+  and evidence) and `nit`s, in the same JSON the other reviews use, naming the subject
+  `scheduled-review:<area>@<commit>`. It never uses `pre-existing`: everything it reads has landed.
+- `verify:1` is a second reviewer that prefers another provider family (the one-family case is recorded
+  as any `preferred` diversity is). It reads the same area and the first reviewer's answer as data, and
+  votes `confirm` or `reject`, with a reason, on each important finding. **Its votes count only when it
+  ran on another family than `review:1`:** the scheduler reads both Workers' families when it settles the
+  review, and with one family (or one it cannot read) every important finding stays unverified and
+  nothing is filed, the row saying why.
+- **The scheduler, not the template, files.** Each confirmed finding whose file and line are in the
+  area the reviewers were shown becomes one proposed board task (title, `file:line`, evidence, the guide
+  it broke), at most `maxTasksPerRun` (default 5) a run, the rest counted as `capped`; one that
+  duplicates an open task is counted as `duplicates` and not filed
+  ([rules](../design/handbook.md#scheduled-review)). Both nodes name no kind of work, so a reviewer the
+  operator gave kinds never takes them.
+
 ### `algorithm-development`
 
 Provided by

@@ -163,4 +163,23 @@ export const MIGRATIONS = [{
   // run of a board task has its task's project; a run with neither belongs to no project.
   version: 24,
   sql: 'ALTER TABLE workflow_runs ADD COLUMN project_id TEXT;',
+}, {
+  // Scheduled reviews (docs/design/handbook.md#scheduled-review, D93 item 8): one row per review of an
+  // area of a repository at its tip, with the counts the report sums per area over time and the board
+  // tasks it proposed (JSON `[{ taskId, key, title }]`), which later runs read to file nothing twice.
+  // At most one scheduled (not manual) review a day. `run_id` is written as soon as its run is admitted,
+  // with the subject and the files shown (JSON `{ path: lines }`), so a review a restart cut is settled
+  // from its durable run on the next start.
+  version: 25,
+  sql: `CREATE TABLE workflow_scheduled_reviews (
+    review_id TEXT PRIMARY KEY, day TEXT NOT NULL, trigger TEXT NOT NULL, area TEXT NOT NULL, guide_file TEXT NOT NULL, guide_version INTEGER NOT NULL,
+    repo_ref TEXT NOT NULL, commit_sha TEXT NOT NULL, subject TEXT, shown TEXT NOT NULL DEFAULT '{}', state TEXT NOT NULL, run_id TEXT, problem TEXT,
+    files_read INTEGER NOT NULL DEFAULT 0, files_left INTEGER NOT NULL DEFAULT 0,
+    important INTEGER NOT NULL DEFAULT 0, confirmed INTEGER NOT NULL DEFAULT 0, rejected INTEGER NOT NULL DEFAULT 0, unverified INTEGER NOT NULL DEFAULT 0,
+    nits INTEGER NOT NULL DEFAULT 0, filed INTEGER NOT NULL DEFAULT 0, duplicates INTEGER NOT NULL DEFAULT 0, capped INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0,
+    tasks TEXT NOT NULL DEFAULT '[]', started_at TEXT NOT NULL, finished_at TEXT
+  );
+  CREATE UNIQUE INDEX workflow_scheduled_reviews_day ON workflow_scheduled_reviews (day) WHERE trigger = 'schedule';
+  CREATE INDEX workflow_scheduled_reviews_area ON workflow_scheduled_reviews (area, started_at);
+  CREATE INDEX workflow_scheduled_reviews_running ON workflow_scheduled_reviews (state) WHERE state = 'running';`,
 }]
