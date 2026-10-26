@@ -66,7 +66,7 @@ const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as 
 
 type Args = Record<string, unknown>
 /** Checks the output a call would give: a tool that changes the queue runs it before its change commits. */
-export type OutputCheck = (output: object) => void
+type OutputCheck = (output: object) => void
 type Handler = (args: Args, context: ToolContext, check: OutputCheck) => Promise<object>
 
 /** The output a call would give, refused by its schema before its change committed. */
@@ -75,8 +75,8 @@ class RefusedOutput extends Error {}
 /** `approvals_decide`'s output from the verdicts' results. */
 const decided = (results: VerdictResult[]) => ({ results: results.map((r) => ({ requestId: r.requestId, state: r.state, ...(r.approval ? { approval: r.approval } : {}), ...(r.refused ? { refused: r.refused } : {}) })) })
 
-/** The tools' behavior, over a queue; exported so tests call it as a client would. */
-export function handlers(approvals: StoreApprovals): Record<ApprovalTool, Handler> {
+/** The tools' behavior, over a queue. */
+function handlers(approvals: StoreApprovals): Record<ApprovalTool, Handler> {
   // A lead's token reaches only its own project's requests (T285, ADR-0076): a request belongs to the
   // project its requester names, or a Worker's command to its board task's project (`projectOfRequest`).
   const otherProject = (lead: string, what: string, of: string | undefined): ApprovalsError =>
@@ -154,7 +154,7 @@ const LEAD_SCAN = 1000
  * changes the queue runs before its change commits; validate the structured output once more last
  * (all a read needs); and report a refusal as an MCP error.
  */
-export function tool(name: ApprovalTool, handler: Handler): ToolHandler {
+function tool(name: ApprovalTool, handler: Handler): ToolHandler {
   return async (args, context) => {
     try {
       schemas.assertDef('mcp-approvals@1.2', defOf(name, 'input'), args)

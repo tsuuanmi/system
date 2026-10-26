@@ -39,7 +39,7 @@ export interface Judgement {
 }
 
 /** The policies a set holds at most: the studio's and 100 projects' (INV-9; `policy-change@1.0`). */
-export const MAX_SET = 101
+const MAX_SET = 101
 
 /** The batch rule when no policy names one: every request is its own batch, at once. */
 const NO_BATCHING = { maxSize: 1, maxWaitSeconds: 0 } as const

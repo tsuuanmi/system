@@ -30,7 +30,7 @@ export interface RiskTierMap {
 }
 
 /** The most rules a map holds, and patterns a rule holds (INV-9). */
-export const RISK_MAP_BOUNDS = { rules: 200, paths: 64, patternChars: 200, noteChars: 500 } as const
+const RISK_MAP_BOUNDS = { rules: 200, paths: 64, patternChars: 200, noteChars: 500 } as const
 
 /** A pattern's characters: a path's, plus `*`. Never `..`, a leading `/`, or an empty segment but a trailing `/`. */
 const PATTERN = /^[A-Za-z0-9._@+*-]+(\/[A-Za-z0-9._@+*-]+)*\/?$/
@@ -104,7 +104,7 @@ export function riskMapProblems(map: unknown): string[] {
 }
 
 /** The higher of two tiers. */
-export const higher = (a: RiskTier, b: RiskTier): RiskTier => (RISK_TIERS.indexOf(a) >= RISK_TIERS.indexOf(b) ? a : b)
+const higher = (a: RiskTier, b: RiskTier): RiskTier => (RISK_TIERS.indexOf(a) >= RISK_TIERS.indexOf(b) ? a : b)
 
 /** A path's tier under one map: the highest of the rules that match it, with those rules; `unmatched` and heavy when none does. */
 export interface PathTier {

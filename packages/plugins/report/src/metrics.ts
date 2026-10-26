@@ -15,7 +15,7 @@ import { LIVENESS_EVENTS, type DecisionRead, type Period, type Recorded } from '
 /** The window the metrics read by default, and the one a level is read over (PROP-0016 §1). */
 export const METRICS_DEFAULT_DAYS = 30
 /** Finished tasks a level reading needs; fewer reads "too few" (PROP-0016 §1). */
-export const LEVEL_MIN_TASKS = 30
+const LEVEL_MIN_TASKS = 30
 /** The board's latest moves to ready one reading reads (the artifacts seam's bound per read). */
 export const READY_MOVES_READ = 1000
 /** Runs whose decisions one reading reads at most (INV-9): more refuses it. */
@@ -471,7 +471,7 @@ export function buildMetrics(period: Period, sources: MetricSources, projectId?:
 }
 
 /** Kinds of work one cost reading lists at most (INV-9); the totals still count the rest, and the reason says how many. */
-export const MAX_COST_KINDS = 32
+const MAX_COST_KINDS = 32
 
 /**
  * Cost per accepted result: the ledger's counted usage of the window, and the quota its agent runs drew
@@ -594,7 +594,7 @@ function levelOf(metrics: Metric[], finishedTasks: number, days: number): LevelR
 }
 
 /** A metric's value as a person reads it. */
-export function metricValueText(m: Metric): string {
+function metricValueText(m: Metric): string {
   if (m.value === undefined) return 'not measurable'
   const v = m.value
   const text = m.unit === 'share' ? `${round(v * 100, 2)} %` : m.unit === 'hours' ? `${v} h` : m.unit === 'per-day' ? `${v} a day` : m.unit === 'per-100-runs' || m.unit === 'per-100-landed' ? `${v} per 100` : `${v}`
