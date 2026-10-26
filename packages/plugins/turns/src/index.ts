@@ -220,6 +220,9 @@ const LEASE_TTL_MS = 60_000
 export class Turns extends Service {
   static inject = ['store', 'artifacts', 'leases', 'egress', 'turnReceipts', 'accounts', 'browser', 'providers', 'workers']
 
+  /** The clock a turn's deadlines read (milliseconds), for a test to control; the wall clock when unset. */
+  stallClock: (() => number) | undefined
+
   static Config: z<Config> = z.object({
     maxConcurrentTurnsPerAccount: z.natural().min(1).default(2).description('Parallel turns per account (different sessions)'),
     turnTimeoutMs: z.natural().default(15 * 60_000).description('Hard deadline per chat turn, in milliseconds'),
@@ -1027,9 +1030,10 @@ export class Turns extends Service {
     // Routed before a restart, then unmapped by the operator: never served by another mode (INV-2).
     const preset = view.tiers[tier]
     if (!preset) throw new ProviderError('config_error', `${accountId} no longer maps tier ${tier} to a mode; the turn is not sent`)
-    const deadlines = research
+    const limits = research
       ? { timeoutMs: this.config.researchTimeoutMs ?? 60 * 60_000, stallTimeoutMs: this.config.researchStallTimeoutMs ?? 30 * 60_000 }
       : { timeoutMs: this.config.turnTimeoutMs ?? 15 * 60_000, stallTimeoutMs: this.config.stallTimeoutMs ?? 5 * 60_000 }
+    const deadlines = this.stallClock ? { ...limits, now: this.stallClock } : limits
     // A session-bound account's persistent session keeps its tab between turns (ADR-0030). Its page
     // follows the turn's signal only until the answer is in: the turn's end must not close a page
     // that is being kept.

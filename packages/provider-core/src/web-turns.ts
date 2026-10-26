@@ -42,6 +42,7 @@ export function completionOptions(timeouts: TurnTimeouts, deadlines: AskOptions[
     stallTimeoutMs: deadlines?.stallTimeoutMs ?? timeouts.stallMs,
     stableMs: timeouts.stableMs,
     pollMs,
+    ...(deadlines?.now ? { now: deadlines.now } : {}),
     ...(signal ? { signal } : {}),
   }
 }
