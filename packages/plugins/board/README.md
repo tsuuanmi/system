@@ -41,7 +41,9 @@ charters, and their tasks.
   - Under `autoAccept` (D80, ADR-0067), for a listed project's result on a git working tree, the
     run owner's accepting decision applies only when the run's last review it names approved the
     exact tree with no blocking finding left, its `check-run@1.0` record shows each command check
-    it reports passed on that tree, and its landing target is a listed branch: the task is done on
+    it reports passed on that tree, none of those reported tests it did not run
+    (`checkRun.results[].notRun`, T247: "checks passed, browser tests not run" is held, T255), and
+    its landing target is a listed branch: the task is done on
     a `board` decision of rule `board.auto-accept` naming the acceptance, the review, the record,
     and the autonomy decision. Otherwise the review is held for the operator as above, the hold's
     decision listing every condition that failed

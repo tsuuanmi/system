@@ -1742,7 +1742,9 @@ export class StoreBoard extends Board {
    *   review (a blocking finding left at the cycle bound never passes);
    * - **checks**: every command check it reports passed (which covers every one the policy
    *   requires, since the policy saw none failed) is `passed` in its `check-run@1.0` record
-   *   (`outcome.detail.checkRun.evidence`, among its inputs) on the result's exact tree (ADR-0063);
+   *   (`outcome.detail.checkRun.evidence`, among its inputs) on the result's exact tree (ADR-0063),
+   *   and none of them reported tests it did not run (`outcome.detail.checkRun.results[].notRun`,
+   *   T247): a pass without its browser tests waits for the lead or the operator (T255);
    * - **landing**: `outcome.detail.landing.branch`, the branch the result would be merged into, is
    *   listed.
    * Otherwise every condition that does not hold, as a reason.
@@ -1783,6 +1785,13 @@ export class StoreBoard extends Board {
       else {
         const unproven = passed.filter((c) => !run.checks?.some((r) => r.check === c && r.outcome === 'passed'))
         if (unproven.length) reasons.push(`the check-run record ${evidenceRef} does not show ${unproven.join(', ')} passed`)
+      }
+      // A pass whose command reported tests it did not run (T247) says nothing of those: never accepted unattended (T255).
+      const listed: unknown = checkRun?.['results']
+      const results = Array.isArray(listed) ? listed.filter(isObject) : []
+      for (const c of passed) {
+        const notRun = results.find((r) => r['check'] === c && typeof r['notRun'] === 'string')?.['notRun'] as string | undefined
+        if (notRun !== undefined) reasons.push(`checks passed, browser tests not run: its ${c} check passed without running ${notRun}, so its pass says nothing of those`)
       }
     }
 

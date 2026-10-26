@@ -139,7 +139,7 @@ pre.diff { font-size: var(--small); overflow-x: auto; border: 1px solid var(--li
 pre.diff .add, .stat .add, .files .add, .change-stat .add { color: var(--ok); } pre.diff .del, .stat .del, .files .del, .change-stat .del { color: var(--bad); } pre.diff .hunk { color: var(--muted); } pre.diff.file { margin: var(--s1) 0; }
 pre.report { white-space: pre-wrap; font-size: var(--small); border: 1px solid var(--line); border-radius: 6px; padding: var(--s2); overflow-wrap: anywhere; }
 ul.files, ul.verdicts { list-style: none; padding: 0; margin: var(--s1) 0; } ul.files li { margin: var(--s1) 0; } ul.verdicts ul { margin: var(--s1) 0 var(--s1) var(--s3); padding: 0; list-style: none; }
-.evidence h4 { margin: var(--s3) 0 var(--s1); } p.pending-checks { color: var(--wait); border-left: 3px solid var(--wait); padding-left: var(--s2); }
+.evidence h4 { margin: var(--s3) 0 var(--s1); } p.pending-checks, p.unrun-tests { color: var(--wait); border-left: 3px solid var(--wait); padding-left: var(--s2); }
 .change-stat { border: 1px solid var(--line); border-radius: 999px; padding: 0 var(--s2); font-size: var(--small); font-weight: 600; white-space: nowrap; }
 code.exact { display: block; overflow-wrap: anywhere; }
 /* Workers: availability as chips, each account a card with its quota in one line, its Workers under one fold. */
@@ -993,8 +993,18 @@ export const APP_JS = `'use strict'
   // the checks the board holds pending, next to the verdict, in warning color: those recorded as failed apart from those not run.
   // Its state as a chip (T172), then the exit code a record gives, or why it has none.
   const CHECK_STATE = { passed: ['Passed', 'ok'], failed: ['Failed', 'bad'], 'not-run': ['Not run', 'warn'], pending: ['Pending', 'warn'] }
-  const checkLine = (c) => [chip(...(CHECK_STATE[c.state] || [c.state, 'idle'])),
-    c.state === 'passed' || c.state === 'failed' ? (c.exitCode !== undefined ? ' · exit code ' + c.exitCode : '') : ' — ' + c.why]
+  // A pass whose command reported tests it did not run (T247) is never a plain pass: it says so in warning color (T255).
+  const stateChip = (c) => c.state === 'passed' && c.notRun ? chip('Passed, browser tests not run', 'warn') : chip(...(CHECK_STATE[c.state] || [c.state, 'idle']))
+  const checkLine = (c) => [stateChip(c),
+    c.state === 'passed' || c.state === 'failed' ? (c.exitCode !== undefined ? ' · exit code ' + c.exitCode : '') + (c.notRun ? ' — ' + c.notRun + ' did not run' : '') : ' — ' + c.why]
+  // The checks that passed without their browser tests: the board's auto-accept rule held the result for them (T255).
+  const unrunWarning = (r) => {
+    const unrun = (r.checks ? r.checks.value : []).filter((c) => c.state === 'passed' && c.notRun)
+    if (!unrun.length) return null
+    return el('p', { class: 'unrun-tests', role: 'note' },
+      el('strong', {}, 'Checks passed, browser tests not run: ' + unrun.map((c) => c.check + ' (' + c.notRun + ' did not run)').join(', ') + '. '),
+      'Their pass says nothing of those tests, so the result was not accepted automatically — run them where a browser is, or accept knowing they did not run.', whatIs('checks'))
+  }
   // The warning is derived from the recorded states: a pending check the run recorded as failed is said to have failed, not
   // to be not run (T160 review).
   const pendingWarning = (r) => {
@@ -1020,7 +1030,7 @@ export const APP_JS = `'use strict'
   const changeWarning = (change, runId) => 'value' in change && !change.value.unread.length ? null
     : el('p', { class: 'state failed' }, 'What changed could not be read whole. Do not accept what you could not see. ', runId ? readAgain(runId) : null)
   const checkChips = (r) => !r.checks ? null : [
-    r.checks.value.length ? el('ul', { class: 'chips', 'aria-label': 'Required checks' }, r.checks.value.map((c) => el('li', {}, el('strong', {}, c.check + ': '), chip(...(CHECK_STATE[c.state] || [c.state, 'idle'])),
+    r.checks.value.length ? el('ul', { class: 'chips', 'aria-label': 'Required checks' }, r.checks.value.map((c) => el('li', {}, el('strong', {}, c.check + ': '), stateChip(c),
       (c.state === 'passed' || c.state === 'failed') && c.exitCode !== undefined ? ' · exit code ' + c.exitCode : ''))) : null,
     r.checks.requiredUnknown ? chip('Required checks unknown', 'warn') : null]
   const verdictChips = (assessments) => !('value' in assessments) ? chip('Verdicts unknown', 'idle')
@@ -1078,6 +1088,7 @@ export const APP_JS = `'use strict'
         evidence && evidence.error ? evidenceView(evidence) : null,
         evidenceRead ? changeWarning(evidence.change, r.run && r.run.runId) : null,
         pendingWarning(r),
+        unrunWarning(r),
         el('div', { class: 'actions' }, yes, yesDoes, no, noDoes),
         cardFold(key,
           r.goal ? el('p', {}, el('strong', {}, 'Asked: '), r.goal) : null,

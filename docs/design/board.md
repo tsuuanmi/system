@@ -378,6 +378,7 @@ holds, each read from the record the decision names, never from its own account:
 | the run owner's | the decision's envelope | a rule's decision the system produced |
 | the last review approved | `outcome.detail.review.assessment`, among its inputs | an `assessment@1.0` of the result's exact tree, verdict `approve`, no blocking finding |
 | the checks passed | `outcome.detail.checkRun.evidence`, among its inputs | a `check-run@1.0` of the result's exact tree showing each command check the decision reports passed as `passed` (every one the policy requires, since it saw none failed) |
+| every test ran | `outcome.detail.checkRun.results[].notRun` | no check it reports passed says it did not run some of its tests (its browser tests, T247): "checks passed, browser tests not run" waits for the lead or the operator (T255) |
 | it lands on a listed branch | `outcome.detail.landing.branch` | a branch `autoAccept.branches` names |
 
 - Met, the task is `done` on a `board` decision of rule `board.auto-accept`, which names the

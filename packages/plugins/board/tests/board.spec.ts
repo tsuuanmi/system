@@ -667,7 +667,7 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
       },
     }).id as ArtifactRef
     /** The engine's `acceptance` decision (`workflow.task-acceptance` 3): its checks, its last review, its check-run record, and where it lands. */
-    const engineAcceptance = (ctx: Context, taskId: string, on: ArtifactRef, named: { checks?: Action['checks']; review?: ArtifactRef; cycle?: number; evidence?: ArtifactRef; branch?: string }): ArtifactRef => ctx.artifacts.recordDecision({
+    const engineAcceptance = (ctx: Context, taskId: string, on: ArtifactRef, named: { checks?: Action['checks']; review?: ArtifactRef; cycle?: number; evidence?: ArtifactRef; results?: Array<Record<string, unknown>>; branch?: string }): ArtifactRef => ctx.artifacts.recordDecision({
       decisionType: 'acceptance', question: `Does the run's result complete its attempt of ${taskId}?`, inputs: [on, ...(named.evidence ? [named.evidence] : []), ...(named.review ? [named.review] : [])],
       candidates: [{ option: 'accept', selected: true, reasons: ['every step was accepted'] }, { option: 'reject', selected: false, reasons: ['not reject: no check failed'] }],
       decider: { type: 'rule', id: 'workflow.task-acceptance', version: '3' },
@@ -676,7 +676,7 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
         detail: {
           taskId, subject: TREE, checks: named.checks ?? {},
           ...(named.review ? { review: { assessment: named.review, cycle: named.cycle ?? 1, maxCycles: 3 } } : {}),
-          ...(named.evidence ? { checkRun: { evidence: named.evidence } } : {}),
+          ...(named.evidence ? { checkRun: { evidence: named.evidence, ...(named.results ? { results: named.results } : {}) } } : {}),
           ...(named.branch ? { landing: { repository: '/repo', branch: named.branch } } : {}),
         },
       },
@@ -760,6 +760,37 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
       const unrecorded = await inReview(ctx, 'unrecorded')
       expect(autoReasons(ctx, await ctx.board.accept(unrecorded.taskId, engineAcceptance(ctx, unrecorded.taskId, unrecorded.r, { checks: { tests: true, lint: true }, review, branch: 'dev' }), at(5))))
         .toEqual([expect.stringMatching(/have no check-run record among its inputs/)])
+    })
+
+    it('holds for the lead or the operator a result whose check passed without running its browser tests, naming the check and what did not run; a plain pass is accepted as before (T247, T255)', async () => {
+      const { ctx } = await boot({ board: AUTO, eventLog: true })
+      await active(ctx)
+      const review = assessed(ctx, 'approve')
+      const evidence = checkRun(ctx, { tests: 'passed', lint: 'passed' })
+      const checks = { review: true, tests: true, lint: true }
+      const unrun = await inReview(ctx, 'unrun')
+      const results = [
+        { check: 'tests', outcome: 'passed', exitCode: 0, notRun: 'its browser tests (12 browser tests skipped: no usable Chrome)' },
+        { check: 'lint', outcome: 'passed', exitCode: 0 },
+      ]
+      const held = await ctx.board.accept(unrun.taskId, engineAcceptance(ctx, unrun.taskId, unrun.r, { checks, review, evidence, results, branch: 'dev' }), at(5))
+      expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: [] } })
+      expect(autoReasons(ctx, held)).toEqual(['checks passed, browser tests not run: its tests check passed without running its browser tests (12 browser tests skipped: no usable Chrome), so its pass says nothing of those'])
+      const hold = ctx.artifacts.get(held.lastDecision!)!.body as { candidates: Array<{ reasons: string[] }> }
+      expect(hold.candidates[0]!.reasons[0]).toMatch(/does not apply: checks passed, browser tests not run: its tests check passed without running its browser tests/)
+      expect(ctx.eventLog.query({ type: 'board.review.held', limit: 10 })).toHaveLength(1)
+      // The same records without notRun: a plain pass, done by the rule.
+      const plain = await inReview(ctx, 'plain')
+      const accepting = engineAcceptance(ctx, plain.taskId, plain.r, { checks, review, evidence, results: [{ check: 'tests', outcome: 'passed', exitCode: 0 }, results[1]!], branch: 'dev' })
+      const done = await ctx.board.accept(plain.taskId, accepting, at(5))
+      expect(done).toMatchObject({ state: 'done', result: { acceptance: accepting } })
+      expect(ctx.artifacts.get(done.lastDecision!)?.body).toMatchObject({ decider: { id: 'board.auto-accept' } })
+      // Held, the run owner's acceptance does not accept it again; the operator's does.
+      const operator = ctx.artifacts.recordDecision({
+        decisionType: 'acceptance', question: 'Accept it?', inputs: [unrun.r], candidates: [{ option: 'accept', selected: true, reasons: ['the operator accepts it'] }],
+        decider: { type: 'operator', id: 'operator.review', version: '1' }, outcome: { option: 'accept', detail: { taskId: unrun.taskId, subject: TREE } }, deterministic: false,
+      }, { producer: { type: 'operator', ref: 'operator' } }).id as ArtifactRef
+      expect(await ctx.board.accept(unrun.taskId, operator, at(6))).toMatchObject({ state: 'done', lastDecision: operator })
     })
 
     it('holds a result that lands on another branch, or on none known; another project\'s result, and every one with the setting off, go as before', async () => {

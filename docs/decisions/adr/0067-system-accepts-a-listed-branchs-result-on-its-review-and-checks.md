@@ -94,6 +94,10 @@ What constrains a fix:
   is held even where the policy would have let it apply.
 - A check that did not run to an exit code is still pending, and the policy's own hold stands: the
   rule never accepts what the policy holds.
+- A check that passed but reported tests it did not run (its browser tests, T247; the acceptance's
+  `outcome.detail.checkRun.results[].notRun`) is a condition not met: the rule holds the result, the
+  reason naming the check and what did not run, and /ui says "checks passed, browser tests not run"
+  (T255). Read from the run owner's own decision, it can only hold, never accept.
 - A review of the exact result that requested changes is the run's own failed `review` check: the
   engine rejects it and the work goes back as another attempt, as before. The rule holds the cases the
   engine accepts though the run's last review did not approve (a review of another tree, an approval

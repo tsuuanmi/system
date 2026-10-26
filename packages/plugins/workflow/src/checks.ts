@@ -164,6 +164,7 @@ async function runRequiredChecks(
   }
   return {
     subject: tree.subject, checks, notes, ...(checked.evidence ? { evidence: checked.evidence as ArtifactRef } : {}),
-    detail: { asked: required, source: checked.source, outcome: 'checked', results: checked.results.map((r) => ({ check: r.check, outcome: r.outcome, ...(r.exitCode !== undefined ? { exitCode: r.exitCode } : {}) })), ...(checked.evidence ? { evidence: checked.evidence } : {}) },
+    // Each result keeps what its command reported it did not run: the board's auto-accept rule holds a pass with it (T255).
+    detail: { asked: required, source: checked.source, outcome: 'checked', results: checked.results.map((r) => ({ check: r.check, outcome: r.outcome, ...(r.exitCode !== undefined ? { exitCode: r.exitCode } : {}), ...(r.notRun ? { notRun: r.notRun.slice(0, 300) } : {}) })), ...(checked.evidence ? { evidence: checked.evidence } : {}) },
   }
 }

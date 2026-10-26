@@ -374,6 +374,25 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
       expect(await settled(dev.ctx, two.taskId)).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: ['lint'] } })
     })
 
+    it('holds for the lead or the operator a result whose tests check passed without running its browser tests, naming the check and what did not run (T247, T255)', async () => {
+      const checker = new Checker()
+      checker.base = 'dev'
+      checker.notRun = { tests: 'its browser tests (12 browser tests skipped: no usable Chrome)' }
+      const { ctx, task } = await boot(checker, { review: 'approve', board: AUTO })
+      const { taskId, runId } = await task('workspace-write', { template: 'reviewed' })
+      const held = await settled(ctx, taskId)
+      expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: [] } })
+      // The acceptance records what did not run with each result; the board's hold names it.
+      expect(acceptanceOf(ctx, runId).outcome.detail['checkRun']).toMatchObject({ results: [
+        { check: 'tests', outcome: 'passed', notRun: 'its browser tests (12 browser tests skipped: no usable Chrome)' },
+        { check: 'lint', outcome: 'passed' },
+      ] })
+      expect((acceptanceOf(ctx, runId).outcome.detail['checkRun'] as { results: object[] }).results[1]).not.toHaveProperty('notRun')
+      expect(ctx.artifacts.get(held.lastDecision!)?.body).toMatchObject({ outcome: { option: 'operator-review', detail: { autoAccept: [
+        'checks passed, browser tests not run: its tests check passed without running its browser tests (12 browser tests skipped: no usable Chrome), so its pass says nothing of those',
+      ] } } })
+    })
+
     it('never lands a result whose last review left a blocking finding at the cycle bound', async () => {
       const checker = new Checker()
       checker.base = 'dev'
