@@ -14,11 +14,11 @@ import { CHROME_ARGS, IGNORED_DEFAULT_ARGS, discoverChrome } from '../src/index.
  * no older than the engine, the managed build), else the same pinned build in the developer
  * cache `~/.cache/system-chrome` (same layout, e.g. from `npx @puppeteer/browsers install`).
  */
-export function findTestChrome(): string | undefined {
+function findTestChrome(): string | undefined {
   return (discoverChrome(undefined) ?? discoverChrome(undefined, { managedDir: join(homedir(), '.cache', 'system-chrome') }))?.path
 }
 
-export const hasXvfb = process.platform === 'linux' && (() => {
+const hasXvfb = process.platform === 'linux' && (() => {
   try {
     execFileSync('sh', ['-c', 'command -v Xvfb'], { stdio: 'ignore' })
     return true

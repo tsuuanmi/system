@@ -11,7 +11,7 @@ import type { Readable } from 'node:stream'
 import { registerSecretPath } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 
-export const XVFB_SCREEN = '1920x1080x24'
+const XVFB_SCREEN = '1920x1080x24'
 const MAX_DIAGNOSTIC_CHARS = 4096
 
 export type SpawnXvfb = (

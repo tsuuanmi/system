@@ -8,11 +8,9 @@
  *   marker and stable text (the event stream stays open, so it is never consulted).
  */
 import { readFileSync } from 'node:fs'
-import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type ConversationMode, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, splitAfterLastFence, waitForReport, waitForStableCompletion, withMissingSources } from '@tsuuanmi/system-provider-core'
+import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, splitAfterLastFence, waitForReport, waitForStableCompletion, withMissingSources } from '@tsuuanmi/system-provider-core'
 import { copiedMarkdown, type CopyRefusedEvent, type DriftEvent, type HealEvent, linksIn, outlineOf, preWrapText, type StallEvent, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
 import type { Frame, Locator, Page, Route } from 'patchright-core'
-
-export type { AskOptions, AskResult, AuthState, ConversationMode, ProviderMode }
 
 /** How long the logged-out home must hold, with no composer, before it counts as signed out. */
 const LOGGED_OUT_HOLD_MS = 3000

@@ -57,7 +57,7 @@ interface LedgerRow {
 }
 
 /** Attempts before a deletion is reported as failed (in health). */
-export const MAX_DELETE_ATTEMPTS = 3
+const MAX_DELETE_ATTEMPTS = 3
 const LEASE_TTL_MS = 60_000
 
 /**

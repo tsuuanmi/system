@@ -11,7 +11,7 @@ import z from '@deepseek-ai/schemastery'
 import { Display, type PreparedDisplay, ProviderError } from '@tsuuanmi/system-provider-core'
 import { type SpawnXvfb, type XvfbHandle, startXvfb } from './xvfb.ts'
 
-export { type SpawnXvfb, type XvfbExit, type XvfbHandle, type XvfbOptions, XVFB_SCREEN, startXvfb } from './xvfb.ts'
+export { type SpawnXvfb, type XvfbExit, type XvfbHandle, type XvfbOptions, startXvfb } from './xvfb.ts'
 
 export interface Config {
   /** Xvfb executable (default `Xvfb` on PATH). */

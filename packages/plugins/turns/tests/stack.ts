@@ -37,7 +37,7 @@ import { FakeGemini, type FakeOptions as FakeGeminiOptions } from '../../provide
 import Turns from '../src/index.ts'
 
 /** The drivers' answer-stable window on the fake sites, in milliseconds (`stableMs`; production keeps 1.5 s). */
-export const STABLE_MS = 300
+const STABLE_MS = 300
 
 export type CatalogEntry ={ id: string; provider: string; quotaClass: 'subscription-chat'; tiers: Record<string, string>; description?: string }
 export const account = (id: string, tiers: Record<string, string> = { economy: 'instant', standard: 'medium', frontier: 'high' }): CatalogEntry => ({ id, provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers })
