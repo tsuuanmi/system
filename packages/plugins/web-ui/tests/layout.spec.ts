@@ -51,11 +51,15 @@ describe('web UI: one spacing scale, one type scale (T239)', () => {
     for (const d of declarations(/^font$/)) expect(d).toMatch(/^font: (inherit|var\(--(small|body|large)\)\/[\d.]+ .+)$/)
   })
 
-  it('spaces margins, paddings, and gaps by the spacing scale only', () => {
+  it('spaces margins, paddings, and gaps by the spacing scale only, or by a safe-area token made of it (T240)', () => {
     expect(APP_CSS).toMatch(/--s1: 4px; --s2: 8px; --s3: 16px; --s4: 24px;/)
+    // A safe-area token is a step of the scale, or the screen's own inset where that is larger (T240).
+    for (const side of ['top', 'right', 'bottom', 'left']) expect(APP_CSS).toMatch(new RegExp(`--safe-${side}: max\\(var\\(--s[1-4]\\), env\\(safe-area-inset-${side}\\)\\);`))
+    expect(APP_CSS).toContain('--safe-bar: max(var(--s2), env(safe-area-inset-bottom)); --bar-room: calc(var(--s4) * 4 + env(safe-area-inset-bottom));')
     const spaced = declarations(/^(margin|padding|gap)(-(top|right|bottom|left))?$/)
     expect(spaced.length).toBeGreaterThan(50)
-    for (const d of spaced) expect(d).toMatch(/^[a-z-]+: (0|auto|var\(--s[1-4]\))( (0|auto|var\(--s[1-4]\))){0,3}$/)
+    const step = '(0|auto|var\\(--s[1-4]\\)|var\\(--safe-(top|right|bottom|left|bar)\\)|var\\(--bar-room\\))'
+    for (const d of spaced) expect(d).toMatch(new RegExp(`^[a-z-]+: ${step}( ${step}){0,3}$`))
   })
 
   it('takes light and dark from the system\'s preference, and stills motion when reduced motion is asked', () => {
@@ -121,8 +125,9 @@ describe('web UI: clearer at a glance (T239)', () => {
       const page = await at(browser, origin, width)
       const accept = page.getByRole('region', { name: 'Reviews' }).getByRole('button', { name: 'Accept', exact: true })
       await expect.poll(() => accept.count()).toBe(1)
-      // Out of sight until asked for: no text beside the button.
+      // Out of sight until asked for: no text beside the button; where a pointer hovers, no "?" for a row's buttons (T240).
       expect(await page.locator('.does.shown').count()).toBe(0)
+      expect(await page.locator('button.tips:visible').count()).toBe(0)
       // By keyboard: Tab from the top of the page reaches Accept, and its tooltip shows what it does. While the focus is
       // in the page, the page does not refresh: the button and its tooltip stay the ones read here.
       await page.locator('main').focus()
@@ -157,3 +162,102 @@ describe('web UI: clearer at a glance (T239)', () => {
     }
   })
 })
+
+describe('web UI: the operator\'s iPhone 16 Pro (T240)', () => {
+  it('lets Safari lay the page under the Dynamic Island and the home indicator, and follows the phone\'s light or dark', () => {
+    expect(PAGE).toContain('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">')
+    expect(PAGE).toContain('<meta name="color-scheme" content="light dark">')
+    // Text on a touch screen is 16 px, so Safari never zooms into a field it focuses; the scale keeps its three sizes.
+    expect(APP_CSS).toMatch(/@media \(pointer: coarse\) \{\s*:root \{ --small: 13px; --body: 16px; --large: 20px; \}/)
+  })
+
+  inBrowser('on the phone at 402 and 360 px: no page scrolls sideways, every target is at least 44 by 44 px, no field is under 16 px, the sticky header clears the Dynamic Island, and a table below 600 px is a list of cards', async () => {
+    const { origin, pages } = await busyBoard()
+    const browser = await launch()
+    for (const width of [402, 360]) {
+      const page = await phone(browser, origin, width)
+      for (const [name, path] of Object.entries(pages)) {
+        if (name === 'help') {
+          await page.goto(origin + path)
+          await expect.poll(() => page.getByRole('heading', { name: 'How System works', exact: true }).count()).toBe(1)
+        } else await opened(page, origin + path)
+        const where = `${name} at ${width}`
+        expect(await overflow(page), where).toBeLessThanOrEqual(0)
+        // What a finger presses: each button, fold, field, navigation link, and action link in sight (a link inside a sentence is not one).
+        const small = await page.locator('main button, main summary, main select, main input, main textarea, header nav a, main .actions > a, main .head > a, main ul.tiles a')
+          .evaluateAll((list) => list.filter((t) => t.checkVisibility()).map((t) => ({ name: (t.getAttribute('aria-label') ?? t.textContent ?? '').trim().slice(0, 40), box: t.getBoundingClientRect() }))
+            .filter(({ box }) => box.width < 44 || box.height < 44).map(({ name, box }) => `${name} ${Math.round(box.width)}×${Math.round(box.height)}`))
+        expect(small, where).toEqual([])
+        const fields = await page.locator('main input, main select, main textarea').evaluateAll((list) => list.filter((f) => f.checkVisibility()).map((f) => [f.getAttribute('aria-label') ?? f.id, parseFloat(getComputedStyle(f).fontSize)] as const))
+        for (const [field, size] of fields) expect(size, `${where}: ${field}`).toBeGreaterThanOrEqual(16)
+        // The header stays at the top, below the Dynamic Island's 62 px.
+        const header = await page.locator('header').evaluate((h) => ({ position: getComputedStyle(h).position, top: parseFloat(getComputedStyle(h).paddingTop) }))
+        expect(header, where).toEqual({ position: 'sticky', top: 62 })
+      }
+      // The policy's tables, a card per row, each cell named by its column.
+      await opened(page, origin + pages.policy)
+      const table = page.locator('main table').first()
+      expect(await table.locator('thead').evaluate((h) => h.getBoundingClientRect().height)).toBeLessThanOrEqual(1)
+      const row = table.locator('tbody > tr').first()
+      expect(await row.evaluate((r) => getComputedStyle(r).display)).toBe('block')
+      expect(await row.locator('td').first().getAttribute('data-label')).toBe('Action type')
+      if (width === 402) {
+        await opened(page, origin + pages.board)
+        await shoot(page, 'board-402')
+        await opened(page, origin + pages.home)
+        await page.locator('#reviews').evaluate((section) => section.scrollIntoView({ block: 'start' }))
+        await shoot(page, 'reviews-402')
+      }
+      await page.context().close()
+    }
+  })
+
+  inBrowser('opens a row\'s tooltips on a tap of its "?", where nothing hovers, and closes them on a second tap, a tap outside, or Escape; a word\'s "?" the same', async () => {
+    const { origin } = await busyBoard()
+    const browser = await launch()
+    const page = await phone(browser, origin)
+    const card = page.getByRole('region', { name: 'Reviews' }).getByRole('article').first()
+    const toggle = card.getByRole('button', { name: 'What these buttons do' })
+    await expect.poll(() => toggle.count()).toBe(1)
+    const tips = card.locator(':scope > .actions > .does')
+    expect(await tips.evaluateAll((list) => list.map((t) => t.checkVisibility()))).toEqual([false, false])
+    // A tap opens them under the buttons, each after its button's label.
+    await toggle.tap()
+    expect(await toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(await tips.evaluateAll((list) => list.map((t) => t.checkVisibility()))).toEqual([true, true])
+    expect(await tips.evaluateAll((list) => list.map((t) => [t.getAttribute('data-for'), t.textContent]))).toEqual([['Accept', 'marks it done'], ['Send back', 'sends it back for another attempt, if it has one left']])
+    // Under the row of buttons, never between them.
+    const [accept, back] = await card.locator(':scope > .actions > button:not(.tips)').evaluateAll((list) => list.map((b) => b.getBoundingClientRect().bottom))
+    for (const top of await tips.evaluateAll((list) => list.map((t) => t.getBoundingClientRect().top))) expect(top).toBeGreaterThanOrEqual(Math.max(accept!, back!))
+    // A second tap, a tap outside, or Escape closes them.
+    await toggle.tap()
+    expect(await tips.evaluateAll((list) => list.map((t) => t.checkVisibility()))).toEqual([false, false])
+    await toggle.tap()
+    await page.locator('main h2.page').tap()
+    expect(await toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(await tips.evaluateAll((list) => list.map((t) => t.checkVisibility()))).toEqual([false, false])
+    await toggle.tap()
+    await page.keyboard.press('Escape')
+    expect(await toggle.getAttribute('aria-expanded')).toBe('false')
+    // A word's "?" opens its sentence on a tap, and a tap outside closes it.
+    const why = page.getByRole('region', { name: 'Reviews' }).getByRole('button', { name: 'What is review?' })
+    const note = page.locator(`#${await why.getAttribute('aria-controls')}`)
+    await why.tap()
+    expect(await note.isVisible()).toBe(true)
+    await page.locator('main h2.page').tap()
+    expect(await note.isVisible()).toBe(false)
+    await page.context().close()
+  })
+})
+
+/**
+ * A page as the operator's iPhone 16 Pro shows it in Safari: 402×874 CSS px at 3 device pixels each, touch (nothing hovers,
+ * a finger points), and its safe areas, 62 px under the Dynamic Island and 34 px above the home indicator.
+ */
+async function phone(browser: Browser, origin: string, width = 402): Promise<Page> {
+  const context = await browser.newContext({ viewport: { width, height: 874 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true })
+  const page = await context.newPage()
+  await (await context.newCDPSession(page)).send('Emulation.setSafeAreaInsetsOverride' as never, { insets: { top: 62, bottom: 34, left: 0, right: 0 } } as never)
+  await opened(page, `${origin}/ui/#token=${OPERATOR}`)
+  return page
+}

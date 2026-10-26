@@ -2,8 +2,10 @@
 
 The **operator's web UI**, on the DSH webserver under `/ui` (loopback only). Its design rules
 (what needs you first as cards, a button's effect as its tooltip, the word bound on the first
-screen, one spacing and one type scale, light and dark, a 360 px phone) and its screenshots are in
-[the web UI at a glance](../../../docs/design/web-ui.md) (T239). Every page is built from the
+screen, one spacing and one type scale, light and dark, a 360 px phone; and the operator's iPhone:
+its safe areas, 44 px touch targets, tooltips on a tap, no zoom on focus, a detail page's primary
+action in a bar at the bottom, tables as cards below 600 px) and its screenshots are in
+[the web UI at a glance](../../../docs/design/web-ui.md) (T239, T240). Every page is built from the
 same few blocks (T172), one implementation each: the **status chip**, the **number with its unit**,
 the **relative time**, the **fold**, the **copy button**, and the **decision button** (T191), labelled
 by its concept's one wording (**Approve** / **Deny**, **Accept** / **Send back**, **Confirm** /
@@ -287,8 +289,13 @@ origin; and, with a browser over the store-backed composition, the Board's first
 the words it had before T239 (the numbers before recorded in [`tests/glance.ts`](tests/glance.ts);
 Home, a run, and Workers are bounded in `web-ui.spec.ts`), a heading on every section of every
 page, no page scrolling sideways at 360 px with every button within the screen, and each button's
-tooltip shown on keyboard focus and on hover and hidden by Escape. Without a browser, these tests
-are reported as not run, with why. With `SYSTEM_UI_SHOTS`, both suites write the screenshots of
+tooltip shown on keyboard focus and on hover and hidden by Escape; and, on the operator's iPhone
+16 Pro (T240, 402 and 360 px at 3 device pixels each, touch, and its safe areas emulated), the
+viewport covering the screen, no page scrolling sideways, every target at least 44 by 44 px, every
+field at 16 px, the sticky header below the Dynamic Island, a table below 600 px as cards, and a
+row's tooltips opened by a tap of its **?** and closed by a second tap, a tap outside, or Escape
+(`web-ui.spec.ts` checks a run's primary action in a bar at the bottom of the screen, above the
+home indicator). Without a browser, these tests are reported as not run, with why. With `SYSTEM_UI_SHOTS`, both suites write the screenshots of
 the [design note](../../../docs/design/web-ui.md).
 [`tests/store-backed.ts`](tests/store-backed.ts) boots the UI over the store-backed board,
 approval queue, and engine under the bundle's own default studio policy, for three suites.

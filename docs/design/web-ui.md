@@ -1,8 +1,9 @@
 # The operator's web UI at a glance
 
 > Target state. Boundary: [gateways](../architecture/components.md#gateways), plugin family
-> *surface*. Implemented in [`web-ui`](../../packages/plugins/web-ui/README.md) (T239); differs
-> from target: nothing known.
+> *surface*. Implemented in [`web-ui`](../../packages/plugins/web-ui/README.md) (T239, T240);
+> differs from target: the phone is checked in Chromium's emulation of it (its size, scale, touch,
+> and safe areas), not in Safari itself.
 
 The design rules every page of the operator's web UI follows. The operator checks it from a phone
 as often as from a desk, so each page says what needs them in few words, and keeps every other fact
@@ -78,7 +79,39 @@ checks it.
   dark`).
 - **A phone, 360 px wide:** one column, the navigation on one row under the name, no horizontal
   scroll, every button within the screen, a card's buttons sharing its width, and buttons 40 px
-  high. `tests/layout.spec.ts` checks every page at 360 px.
+  high (44 px on a touch screen, [below](#the-operators-iphone)). `tests/layout.spec.ts` checks
+  every page at 360 px.
+
+## The operator's iPhone
+
+The operator's phone is an iPhone 16 Pro: 402×874 CSS px at 3 device pixels each, Safari, portrait,
+the Dynamic Island above and the home indicator below (T240).
+
+- **Safe areas.** The page lays itself under both (`viewport-fit=cover`), and keeps its content
+  clear of them: a safe-area token is a step of the spacing scale, or the screen's own inset where
+  that is larger (`--safe-top: max(var(--s2), env(safe-area-inset-top))`, and so for each side).
+  The header, sticky at the top on a phone, the sides of every page, the bar at the bottom, and the
+  page's last row use them.
+- **Touch targets** where a finger points (`pointer: coarse`): every button, fold, field,
+  navigation link, and action link is at least 44 by 44 px; a word's **?** is a small circle in a
+  44 px target. A link inside a sentence is not a target of its own.
+- **Tooltips on a tap.** Nothing hovers on a phone, so each row of buttons whose effect is a
+  tooltip has one **?** (shown only where nothing hovers) that shows what each of its buttons does
+  under the row, *Accept: marks it done*; a second tap, a tap outside, or Escape hides it. A tap
+  on a button itself does what it says at once. A word's **?** opens its sentence the same way and
+  closes on a tap outside.
+- **No zoom on focus.** On a touch screen the type scale is 13, 16, and 20 px (still three sizes),
+  and every field is 16 px, so Safari never zooms into a field it focuses.
+- **One thumb.** A card's buttons share its width at its bottom, above its **Details**; on a
+  detail page (a run's) the primary action is a bar at the bottom of the screen, above the home
+  indicator: the plan's **Approve** and **Deny** while it waits on one, else **Stop run** or
+  **Retry failed step**. The page's last row stays above the bar.
+- **Tables** below 600 px are a list of cards, a card per row, each cell named by its column.
+- **Light and dark** follow the phone, Safari's own bars too (`theme-color`).
+- No page scrolls sideways at 402 or at 360 px.
+
+`tests/layout.spec.ts` checks each on every page at 402 and 360 px with touch and the safe areas
+(62 px and 34 px) emulated; `tests/web-ui.spec.ts` the run page's bar.
 
 ## Kept
 
@@ -90,20 +123,21 @@ and works offline (`tests/layout.spec.ts` checks the assets).
 
 ## Screenshots
 
-The first screen of each page, before T239 and now, at 1280 and 360 px wide, in
+The first screen of each page, before T239 and now, at 1280 and 360 px wide, and on the phone at
+402 px (`<page>-402.png`, with touch and the safe areas), in
 [web-ui-screenshots/](web-ui-screenshots/README.md): `<page>-<width>-before.png` and `<page>-<width>.png`. Home, a run, and Workers
 are `tests/web-ui.spec.ts`'s fixtures at a fixed clock (a run waiting on its plan); the Board and
 Reviews (Home scrolled to its reviews) are `tests/layout.spec.ts`'s store-backed composition. The
 tests write them again, and print the words each first screen holds, when `SYSTEM_UI_SHOTS` names a directory:
 
 ```sh
-SYSTEM_UI_SHOTS=docs/design/web-ui-screenshots corepack pnpm exec vitest run packages/plugins/web-ui/tests/web-ui.spec.ts packages/plugins/web-ui/tests/layout.spec.ts -t "first screen"
+SYSTEM_UI_SHOTS=docs/design/web-ui-screenshots corepack pnpm exec vitest run packages/plugins/web-ui/tests/web-ui.spec.ts packages/plugins/web-ui/tests/layout.spec.ts -t "first screen|T240"
 ```
 
-| Page | 1280 px | 360 px |
-|---|---|---|
-| Home | [before](web-ui-screenshots/home-1280-before.png) · [now](web-ui-screenshots/home-1280.png) | [before](web-ui-screenshots/home-360-before.png) · [now](web-ui-screenshots/home-360.png) |
-| Board | [before](web-ui-screenshots/board-1280-before.png) · [now](web-ui-screenshots/board-1280.png) | [before](web-ui-screenshots/board-360-before.png) · [now](web-ui-screenshots/board-360.png) |
-| A run | [before](web-ui-screenshots/run-1280-before.png) · [now](web-ui-screenshots/run-1280.png) | [before](web-ui-screenshots/run-360-before.png) · [now](web-ui-screenshots/run-360.png) |
-| Workers | [before](web-ui-screenshots/workers-1280-before.png) · [now](web-ui-screenshots/workers-1280.png) | [before](web-ui-screenshots/workers-360-before.png) · [now](web-ui-screenshots/workers-360.png) |
-| Reviews | [before](web-ui-screenshots/reviews-1280-before.png) · [now](web-ui-screenshots/reviews-1280.png) | [before](web-ui-screenshots/reviews-360-before.png) · [now](web-ui-screenshots/reviews-360.png) |
+| Page | 1280 px | 360 px | iPhone, 402 px |
+|---|---|---|---|
+| Home | [before](web-ui-screenshots/home-1280-before.png) · [now](web-ui-screenshots/home-1280.png) | [before](web-ui-screenshots/home-360-before.png) · [now](web-ui-screenshots/home-360.png) | [now](web-ui-screenshots/home-402.png) |
+| Board | [before](web-ui-screenshots/board-1280-before.png) · [now](web-ui-screenshots/board-1280.png) | [before](web-ui-screenshots/board-360-before.png) · [now](web-ui-screenshots/board-360.png) | [now](web-ui-screenshots/board-402.png) |
+| A run | [before](web-ui-screenshots/run-1280-before.png) · [now](web-ui-screenshots/run-1280.png) | [before](web-ui-screenshots/run-360-before.png) · [now](web-ui-screenshots/run-360.png) | [now](web-ui-screenshots/run-402.png) |
+| Workers | [before](web-ui-screenshots/workers-1280-before.png) · [now](web-ui-screenshots/workers-1280.png) | [before](web-ui-screenshots/workers-360-before.png) · [now](web-ui-screenshots/workers-360.png) | [now](web-ui-screenshots/workers-402.png) |
+| Reviews | [before](web-ui-screenshots/reviews-1280-before.png) · [now](web-ui-screenshots/reviews-1280.png) | [before](web-ui-screenshots/reviews-360-before.png) · [now](web-ui-screenshots/reviews-360.png) | [now](web-ui-screenshots/reviews-402.png) |

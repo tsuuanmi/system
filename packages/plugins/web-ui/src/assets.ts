@@ -4,7 +4,10 @@ export const PAGE = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1c1c1f" media="(prefers-color-scheme: dark)">
 <title>system: runs, approvals, reviews, board, Workers, and policy</title>
 <link rel="stylesheet" href="/ui/app.css">
 </head>
@@ -25,7 +28,11 @@ export const APP_CSS = `
    quiet page, the light or dark scheme the system prefers, and a layout that works from 360 px wide with no horizontal scroll. */
 :root { color-scheme: light dark;
   --fg: #1d1d1f; --page: #f5f5f7; --bg: #fff; --sunk: #ebebef; --muted: #636366; --line: #e0e0e5; --edge: #c2c2c8; --accent: #0a62bd; --on-accent: #fff; --bad: #b3261e; --ok: #1b7230; --wait: #855f00;
-  --s1: 4px; --s2: 8px; --s3: 16px; --s4: 24px; --small: 12px; --body: 14px; --large: 18px; --radius: 10px; }
+  --s1: 4px; --s2: 8px; --s3: 16px; --s4: 24px; --small: 12px; --body: 14px; --large: 18px; --radius: 10px;
+  /* The safe areas (T240): the spacing scale, or the screen's own inset where it is larger (the Dynamic Island, the home indicator). */
+  --safe-top: max(var(--s2), env(safe-area-inset-top)); --safe-right: max(var(--s4), env(safe-area-inset-right));
+  --safe-bottom: max(var(--s4), env(safe-area-inset-bottom)); --safe-left: max(var(--s4), env(safe-area-inset-left));
+  --safe-bar: max(var(--s2), env(safe-area-inset-bottom)); --bar-room: calc(var(--s4) * 4 + env(safe-area-inset-bottom)); }
 @media (prefers-color-scheme: dark) { :root { --fg: #f2f2f7; --page: #0e0e10; --bg: #1c1c1f; --sunk: #161618; --muted: #a1a1a8; --line: #2e2e33; --edge: #4c4c52; --accent: #6caeff; --on-accent: #06172b; --bad: #ff7d73; --ok: #67d477; --wait: #e9c34f; } }
 * { box-sizing: border-box; }
 body { margin: 0; font: var(--body)/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif; color: var(--fg); background: var(--page); overflow-wrap: break-word; -webkit-text-size-adjust: 100%; }
@@ -33,13 +40,13 @@ h1, h2, h3, h4 { line-height: 1.3; margin: 0; }
 h2 { font-size: var(--large); } h3, h4 { font-size: var(--body); font-weight: 600; }
 /* A section's heading: small, quiet, the same on every page; a card's title is the body size, bold. */
 main h2:not(.page) { font-size: var(--small); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: var(--s4) 0 var(--s2); }
-header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s3); padding: var(--s2) var(--s4); background: var(--bg); border-bottom: 1px solid var(--line); }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s3); padding: var(--safe-top) var(--safe-right) var(--s2) var(--safe-left); background: var(--bg); border-bottom: 1px solid var(--line); }
 header h1 { font-size: var(--large); } header a { color: inherit; text-decoration: none; } header nav { display: flex; flex-wrap: wrap; gap: 0 var(--s1); }
 header nav a { padding: var(--s1) var(--s2); white-space: nowrap; display: inline-block; border-radius: 6px; color: var(--muted); }
 header nav a[aria-current="page"] { color: var(--fg); font-weight: 600; background: var(--sunk); } header nav a:hover { color: var(--accent); }
 #status { color: var(--muted); margin-left: auto; font-size: var(--small); }
-main { padding: var(--s4); max-width: 1200px; margin: 0 auto; }
-h2.page { margin: 0 0 var(--s3); } ul.chips.availability, .status-line { margin: 0 0 var(--s3); } .overview ul.chips.availability { margin: 0; }
+main { padding: var(--s4) var(--safe-right) var(--safe-bottom) var(--safe-left); max-width: 1200px; margin: 0 auto; }
+h2.page { margin: 0 0 var(--s3); } ul.chips.availability, .status-line, .actions.run-actions { margin: 0 0 var(--s3); } .overview ul.chips.availability { margin: 0; }
 main section > details.fold, main > details.fold { margin-bottom: var(--s2); } .panel .panel { margin: var(--s3) 0 0; } h2.page:has(+ p.lead) { margin-bottom: 0; } p.lead { color: var(--muted); margin: var(--s1) 0 var(--s3); }
 section { min-width: 0; }
 a { color: var(--accent); text-underline-offset: 2px; }
@@ -79,7 +86,8 @@ th, td { text-align: left; padding: var(--s2) var(--s3); border-bottom: 1px soli
 tr:last-child > td { border-bottom: 0; }
 th { color: var(--muted); font-weight: 600; font-size: var(--small); white-space: nowrap; } td.nowrap { white-space: nowrap; }
 /* Folds: a quiet summary, closed by default. */
-details summary { cursor: pointer; color: var(--muted); }
+details summary { cursor: pointer; color: var(--muted); list-style: none; } details summary::-webkit-details-marker { display: none; }
+details > summary::before { content: '▸'; display: inline-block; width: 1em; color: var(--muted); } details[open] > summary::before { content: '▾'; }
 details.fold { margin: var(--s2) 0 0; } details.fold > summary { font-size: var(--small); } details.fold[open] > summary { margin-bottom: var(--s1); }
 details.fold.inline { display: inline-block; margin: 0 0 0 var(--s1); vertical-align: top; }
 details.card-details > .fold-body > * { margin: var(--s2) 0; }
@@ -89,11 +97,10 @@ details.card-details > .fold-body > * { margin: var(--s2) 0; }
 ul.chips { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: var(--s1) var(--s2); }
 .glance .n, .qty .n { font-weight: 600; } time.rel { white-space: nowrap; } time.rel:focus::after { content: ' (' attr(data-exact) ')'; color: var(--muted); }
 button.copy { min-height: 0; padding: 0 var(--s1); margin: 0 0 0 var(--s1); font-size: var(--small); color: var(--muted); border-radius: 6px; } code.copied { margin-left: var(--s1); }
-button.why { min-height: 0; padding: 0 var(--s1); margin: 0 0 0 var(--s1); font-size: var(--small); line-height: 1.5; border-radius: 999px; color: var(--muted); font-weight: 400; vertical-align: baseline; text-transform: none; letter-spacing: 0; }
-button.why[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+button.why { margin: 0 0 0 var(--s1); font-weight: 400; text-transform: none; letter-spacing: 0; }
 .explain-note { font-size: var(--small); font-weight: 400; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 0 var(--s1); display: inline; text-transform: none; letter-spacing: 0; } .explain-note[hidden] { display: none; }
-.stale { margin: 0; padding: var(--s2) var(--s4); border-bottom: 1px solid var(--wait); color: var(--wait); background: var(--bg); font-weight: 600; } .stale[hidden] { display: none; }
-#outcome { max-width: 1200px; margin: 0 auto; padding: 0 var(--s4); } #outcome .panel { margin: var(--s3) 0 0; }
+.stale { margin: 0; padding: var(--s2) var(--safe-right) var(--s2) var(--safe-left); border-bottom: 1px solid var(--wait); color: var(--wait); background: var(--bg); font-weight: 600; } .stale[hidden] { display: none; }
+#outcome { max-width: 1200px; margin: 0 auto; padding: 0 var(--safe-right) 0 var(--safe-left); } #outcome .panel { margin: var(--s3) 0 0; }
 .loading { color: var(--muted); } .skip { position: absolute; left: -9999px; top: var(--s2); } .skip:focus { left: var(--s2); z-index: 11; background: var(--bg); padding: var(--s1) var(--s2); }
 main p, main li, main dd, p.lead { max-width: 80ch; } ul.plain { list-style: none; padding-left: 0; }
 .status-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); }
@@ -104,7 +111,7 @@ main p, main li, main dd, p.lead { max-width: 80ch; } ul.plain { list-style: non
 .overview { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--s3); align-items: stretch; margin: var(--s3) 0 0; }
 .overview > .panel { margin: 0; } .overview h3 { color: var(--muted); font-size: var(--small); }
 .overview .head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s2); margin-bottom: var(--s2); }
-ul.tiles { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: var(--s2); }
+ul.tiles { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: var(--s2); }
 ul.tiles > li { border-radius: 8px; padding: var(--s2) var(--s3); background: var(--sunk); }
 ul.tiles > li > a:first-child { font-size: var(--large); font-weight: 600; text-decoration: none; display: block; }
 ul.tiles ul.named { padding-left: var(--s3); margin: var(--s1) 0 0; } ul.tiles .soon, ul.tiles .muted { font-size: var(--small); }
@@ -139,7 +146,6 @@ code.exact { display: block; overflow-wrap: anywhere; }
 .window { color: var(--muted); } .window.limited { color: var(--wait); font-weight: 600; }
 meter { width: 64px; height: 8px; margin-right: var(--s2); vertical-align: middle; } .no-bar { display: inline-block; width: 64px; height: 8px; margin-right: var(--s2); vertical-align: middle; border: 1px dashed var(--edge); border-radius: 4px; }
 details.right-now > summary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); } details.right-now > summary h3 { display: inline; color: var(--fg); }
-details.right-now > summary::before { content: '▸'; color: var(--muted); } details.right-now[open] > summary::before { content: '▾'; } details.right-now > summary { list-style: none; } details.right-now > summary::-webkit-details-marker { display: none; }
 section.right-now > h3 { margin: var(--s3) 0 0; font-size: var(--small); color: var(--muted); } .right-now ul { margin: var(--s1) 0 0; padding-left: var(--s3); }
 ul.alarms { margin: var(--s2) 0 0; padding-left: var(--s2); border-left: 3px solid var(--bad); } ul.alarms > li { margin: var(--s1) 0; }
 ul.capacities { list-style: none; padding: 0; margin: var(--s2) 0; } li.capacity { margin: var(--s1) 0; }
@@ -152,11 +158,38 @@ details.facts, details.workers-fold { margin: var(--s2) 0 0; } details.facts > s
 dl.glossary { margin: var(--s2) 0; } dl.glossary dt { margin-top: var(--s1); } dl.glossary dt:focus { outline: 2px solid var(--accent); outline-offset: 2px; } dl.glossary dt button.term { border: 0; min-height: 0; padding: var(--s1) 0; margin: 0; font-weight: 600; color: inherit; background: transparent; } dl.glossary dt button.term::before { content: '▸ '; color: var(--muted); } dl.glossary dt button.term[aria-expanded="true"]::before { content: '▾ '; } dl.glossary dd { margin: 0 0 var(--s2) var(--s3); } dl.glossary [hidden] { display: none; }
 table.modes select { max-width: 100%; } details.advanced { margin: var(--s2) 0; }
 /* A phone (T239): one column, no horizontal scroll, and buttons large enough to press. */
-@media (max-width: 640px) { header { padding: var(--s2) var(--s3); } header h1 { order: 1; } #status { order: 2; } header nav { order: 3; flex-basis: 100%; justify-content: space-between; } header nav a { padding: var(--s1) var(--s2); } .wide { display: none; } ul.tiles > li > a:first-child { font-size: var(--body); } main { padding: var(--s3); } #outcome { padding: 0 var(--s3); } .stale { padding: var(--s2) var(--s3); }
+@media (max-width: 640px) { :root { --safe-right: max(var(--s3), env(safe-area-inset-right)); --safe-left: max(var(--s3), env(safe-area-inset-left)); }
+  header { position: sticky; top: 0; z-index: 6; } header h1 { order: 1; } main [id] { scroll-margin-top: calc(var(--safe-top) + var(--s4) * 4); } #status { order: 2; } header nav { order: 3; flex-basis: 100%; justify-content: space-between; } header nav a { padding: var(--s1) var(--s2); } .wide { display: none; } ul.tiles > li > a:first-child { font-size: var(--body); } main { padding-top: var(--s3); }
   button { min-height: 40px; } button.why, button.copy, dl.glossary dt button.term { min-height: 0; } input { min-width: 0; width: 100%; }
-  .card .actions > button, .request > .actions > button { flex: 1 1 0; }
-  th, td.nowrap { white-space: normal; } th, td { padding: var(--s2); } table:not(.queue):not(.modes):not(.projects) th:nth-child(n+4), table:not(.queue):not(.modes):not(.projects) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; }
-  .request dl { grid-template-columns: minmax(0, 1fr); } .request dt { margin-top: var(--s1); } }
+  .card .actions > button, .request > .actions > button { flex: 1 1 0; } .actions > button.tips { flex: 0 0 auto; }
+  th, td.nowrap { white-space: normal; } th, td { padding: var(--s2); }
+  .request dl { grid-template-columns: minmax(0, 1fr); } .request dt { margin-top: var(--s1); }
+  /* A detail page's primary action in a bar at the bottom of the screen, above the home indicator, in reach of a thumb (T240). */
+  .actions.bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; margin: 0; padding: var(--s2) var(--safe-right) var(--safe-bar) var(--safe-left); background: var(--bg); border-top: 1px solid var(--line); }
+  .actions.bar > button { flex: 1 1 0; } main:has(.actions.bar) { padding-bottom: var(--bar-room); } }
+/* Below 600 px a table is a list of cards, each cell named by its column (T240). */
+@media (max-width: 599px) {
+  table, tbody, tr, td { display: block; width: 100%; } table { border: 0; background: none; overflow: visible; }
+  thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  tbody > tr { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s2) var(--s3); margin: 0 0 var(--s2); }
+  tbody > tr > td { border: 0; padding: var(--s1) 0; } tbody > tr > td[data-label] { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: var(--s2); align-items: baseline; }
+  td[data-label]::before { content: attr(data-label); font-size: var(--small); font-weight: 600; color: var(--muted); } }
+/* A touch screen (T240): text at 16 px, so focusing a field never zooms; every target at least 44 by 44 px. */
+@media (pointer: coarse) {
+  :root { --small: 13px; --body: 16px; --large: 20px; }
+  input, select, textarea { font-size: var(--body); }
+  button, select, input, summary, header nav a, ul.tiles > li > a:first-child, .actions > a, .head > a, dl.glossary dt button.term { min-height: 44px; }
+  button { min-width: 44px; } button.copy { min-height: 44px; padding: var(--s1) var(--s2); }
+  summary, header nav a, .actions > a, .head > a, ul.tiles > li > a:first-child { display: flex; align-items: center; } summary { gap: var(--s1); } header nav a, .actions > a, .head > a { display: inline-flex; }
+  details.fold.inline > summary { display: inline-flex; } }
+/* The "?" of a word, and of a row of buttons where nothing hovers: a small circle in a target a finger can press. */
+button.why, button.tips { border: 0; background: transparent; padding: 0; min-height: 0; display: inline-block; vertical-align: middle; }
+button.why .q, button.tips .q { display: inline-block; min-width: 1.6em; border: 1px solid var(--edge); border-radius: 999px; font-size: var(--small); line-height: 1.5; color: var(--muted); text-align: center; }
+button.why[aria-expanded="true"] .q, button.tips[aria-expanded="true"] .q { color: var(--accent); border-color: var(--accent); }
+@media (pointer: coarse) { button.why, button.tips { min-width: 44px; min-height: 44px; } }
+@media (hover: hover) { button.tips { display: none; } }
+.tips-open > .does, .tips-open > .does.shown { display: block; position: static; order: 2; flex-basis: 100%; max-width: none; padding: 0; background: transparent; color: var(--muted); font-size: var(--small); }
+.tips-open > .does::before { content: attr(data-for) ': '; font-weight: 600; color: var(--fg); }
 `
 
 export const APP_JS = `'use strict'
@@ -190,7 +223,7 @@ export const APP_JS = `'use strict'
   const decision = (label, consequence, props) => {
     const id = 'does-' + (++doesCount)
     const button = el('button', Object.assign({ type: 'button' }, props, { 'aria-describedby': id }), label)
-    const tip = el('span', { id, class: 'does', role: 'tooltip' }, consequence)
+    const tip = el('span', { id, class: 'does', role: 'tooltip', 'data-for': label }, consequence)
     tooltip(button, tip)
     return [button, tip]
   }
@@ -211,6 +244,31 @@ export const APP_JS = `'use strict'
     control.addEventListener('blur', hide)
     control.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide() })
   }
+  // Where nothing hovers, a touch screen (T240): each row of described buttons gets one "?" that shows what each of them
+  // does, their tooltips under the row, on a tap; a second tap, a tap outside, or Escape hides them. A tap on a button
+  // itself does what it says at once. CSS shows the "?" only where nothing hovers. Every row a render adds gets its own.
+  const setTips = (row, open) => {
+    row.classList.toggle('tips-open', open)
+    const toggle = row.querySelector(':scope > button.tips')
+    if (toggle) toggle.setAttribute('aria-expanded', String(open))
+  }
+  const tapTips = (root) => {
+    for (const row of new Set([...root.querySelectorAll('.does')].map((tip) => tip.parentElement))) {
+      if (!row || row.querySelector(':scope > button.tips')) continue
+      const tips = [...row.querySelectorAll(':scope > .does')]
+      const toggle = el('button', { type: 'button', class: 'tips', 'aria-expanded': 'false', 'aria-controls': tips.map((t) => t.id).join(' '),
+        'aria-label': tips.length > 1 ? 'What these buttons do' : 'What this button does' }, el('span', { class: 'q', 'aria-hidden': 'true' }, '?'))
+      toggle.addEventListener('click', () => setTips(row, !row.classList.contains('tips-open')))
+      row.append(toggle)
+    }
+  }
+  for (const root of [document.getElementById('main'), document.getElementById('outcome')]) new MutationObserver(() => tapTips(root)).observe(root, { childList: true, subtree: true })
+  // A tap outside closes what a tap opened: the rows' tooltips and the "?" notes.
+  document.addEventListener('pointerdown', (e) => {
+    for (const row of document.querySelectorAll('.tips-open')) if (!row.contains(e.target)) setTips(row, false)
+    for (const button of document.querySelectorAll('button.why[aria-expanded="true"]')) if (!button.parentElement.contains(e.target)) button.click()
+  }, true)
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') for (const row of document.querySelectorAll('.tips-open')) setTips(row, false) })
   // A shown tooltip follows its control as the page scrolls or resizes.
   const placers = new WeakMap()
   const replace = () => { for (const tip of document.querySelectorAll('.does.shown')) { const place = placers.get(tip); if (place) place() } }
@@ -415,7 +473,7 @@ export const APP_JS = `'use strict'
     const note = el('span', { id, class: 'explain-note', role: 'note' }, sentence + ' ', more)
     const open = openTerms.has(key)
     note.hidden = !open
-    const button = el('button', { type: 'button', class: 'why', 'aria-expanded': String(open), 'aria-controls': id, 'aria-label': 'What is ' + word + '?', title: sentence }, '?')
+    const button = el('button', { type: 'button', class: 'why', 'aria-expanded': String(open), 'aria-controls': id, 'aria-label': 'What is ' + word + '?', title: sentence }, el('span', { class: 'q', 'aria-hidden': 'true' }, '?'))
     button.addEventListener('click', () => {
       const opening = note.hidden
       note.hidden = !opening
@@ -537,7 +595,9 @@ export const APP_JS = `'use strict'
   const pageHead = (page, title, runId) => [el('h2', { class: 'page', 'data-page': page === 'run' ? 'run:' + runId : page }, title || PAGES[page][0]), PAGES[page][1] ? el('p', { class: 'lead' }, PAGES[page][1]) : null]
   // The page the address names now: what a render must be of to be shown.
   function shownPage() { return view === 'policy' || view === 'board' || view === 'workers' || view === 'help' ? view : current ? 'run:' + current : 'home' }
-  const table = (head, rows, cls) => el('table', cls ? { class: cls } : {}, el('thead', {}, el('tr', {}, head.map((h) => el('th', {}, h)))), el('tbody', {}, rows))
+  // A table; below 600 px each row is a card, each cell named by its column (data-label, T240).
+  const labelled = (head, row) => { [...row.children].forEach((cell, i) => { if (head[i]) cell.dataset.label = head[i] }); return row }
+  const table = (head, rows, cls) => el('table', cls ? { class: cls } : {}, el('thead', {}, el('tr', {}, head.map((h) => el('th', {}, h)))), el('tbody', {}, rows.map((row) => labelled(head, row))))
 
   // What the operator's last verdict did, outside the refreshed page: it stays until dismissed.
   // A verdict that was not recorded is an alert, never only a line a refresh overwrites (INV-2).
@@ -1310,12 +1370,13 @@ export const APP_JS = `'use strict'
     const workerOf = (run) => { const n = run.nodes.find((x) => x.state === 'RUNNING' && x.worker) || [...run.nodes].reverse().find((x) => x.worker); return n ? names.get(n.worker) || n.worker : undefined }
     const availability = c ? availabilityChips(roster, describing) : el('p', { class: 'unknown' }, 'Workers unknown: the roster could not be read.')
     // Recent runs: the newest 5 rows, then "Show all N" (T239, as T186's lists).
-    const [recentBody, recentMore] = capped('recent', el('tbody', { id: 'recent-list' }), runs.slice(0, RECENT), (run) => el('tr', {},
+    const RECENT_HEAD = ['Run', 'Status', 'Progress', 'Started']
+    const [recentBody, recentMore] = capped('recent', el('tbody', { id: 'recent-list' }), runs.slice(0, RECENT), (run) => labelled(RECENT_HEAD, el('tr', {},
       el('td', {}, runLink(run, runTitle(run))),
       el('td', { class: 'nowrap' }, runChip(run)),
       el('td', {}, el('div', {}, stepsText(run), workerOf(run) ? el('span', { class: 'muted' }, ' · ' + workerOf(run)) : null),
         fold('Steps', run.nodes.filter((n) => n.worker).map((n) => el('div', { class: 'muted' }, n.nodeId + ': ' + (names.get(n.worker) || n.worker))), el('div', { class: 'muted' }, 'template ' + run.template + ' · run ' + run.runId), copyId('Copy run ID', run.runId))),
-      el('td', { class: 'nowrap muted' }, ago(run.createdAt))))
+      el('td', { class: 'nowrap muted' }, ago(run.createdAt)))))
     // What needs the operator first, as count tiles beside the Workers' availability; then the decisions themselves;
     // then what happened, the Workers in full, and the recent runs (T239).
     // Right now by name, from the same capacity summary the Workers page renders (T152), by the same function (T160).
@@ -1351,7 +1412,7 @@ export const APP_JS = `'use strict'
         !rightNow && ready !== undefined ? el('p', { 'aria-label': 'Capacity' }, capacityText(c ? c.ready : undefined, ready), ' ', pageLink('board', 'Open Board')) : null),
       // Each run by its task's title (else its template), its state, its progress and current Worker; every step's Worker, its template, and its id folded (T124, T171).
       el('section', { 'aria-label': 'Recent runs' }, el('h2', {}, 'Recent runs'),
-        runs.length ? [el('table', {}, el('thead', {}, el('tr', {}, ['Run', 'Status', 'Progress', 'Started'].map((h) => el('th', {}, h)))), recentBody), recentMore]
+        runs.length ? [el('table', {}, el('thead', {}, el('tr', {}, RECENT_HEAD.map((h) => el('th', {}, h)))), recentBody), recentMore]
           : el('p', { class: 'muted' }, 'No runs yet · ', pageLink('board', 'Open Board')),
         runs.length > RECENT ? el('p', { class: 'muted' }, qty(runs.length - RECENT, 'older run') + ' not listed; open one by its link, or ask with system status.') : null))
     if (focusRequest) {
@@ -1432,6 +1493,7 @@ export const APP_JS = `'use strict'
     const stepName = (nodeId) => stepWords(nodeId) || nodeId
     const blockedIds = (b, ...more) => keptFold('blocked-' + runId, 'Details', el('div', {}, 'step ' + stepName(b.nodeId) + (stepWords(b.nodeId) ? ' (' + b.nodeId + ')' : '')), b.approvalRequest ? el('div', {}, 'request ', el('code', {}, b.approvalRequest), copyId('Copy request ID', b.approvalRequest)) : null,
       b.until ? el('div', {}, 'until ' + absolute(b.until)) : null, more)
+    const planWaits = run.blocked && !tie && !run.blocked.approvalRequest
     // A long answer shows its first lines, then "Show all", kept through the refresh (T239).
     const answerView = (text) => {
       const long = text.split('\\n').length > 6 || text.length > 480
@@ -1452,9 +1514,12 @@ export const APP_JS = `'use strict'
       pageHead('run', served ? served.title : run.template + ' run', run.runId),
       served ? el('p', { class: 'muted' }, served.project + (carry && carry.from ? ' · Attempt ' + (carry.from.attempt + 1) + ' of ' + served.attempts.max : '')) : null,
       // Its state as a chip, where it is (unless a card below says what it waits on), when it started, and Stop run or Retry.
-      el('div', { class: 'status-line' }, runChip(run), run.blocked ? null : el('span', {}, where), el('span', { class: 'muted' }, 'started ', ago(run.createdAt)),
+      el('div', { class: 'status-line' }, runChip(run), run.blocked ? null : el('span', {}, where), el('span', { class: 'muted' }, 'started ', ago(run.createdAt))),
+      // Stop run or Retry failed step under it; on a phone the page's primary action is a bar at the bottom of the screen,
+      // in reach of a thumb (T240): the plan's verdict when it waits on one, else this row.
+      run.status === 'running' || run.status === 'failed' ? el('div', { class: 'actions run-actions' + (planWaits ? '' : ' bar') },
         run.status === 'running' ? [stop, stopDoes, stopping] : null,
-        run.status === 'failed' ? [retry, retryDoes] : null),
+        run.status === 'failed' ? [retry, retryDoes] : null) : null,
       happened.length ? el('section', { class: 'panel', 'aria-label': 'What happened' }, el('h3', {}, 'What happened'), el('ul', {}, happened)) : null,
       tie ? el('div', { class: 'panel' },
         el('p', {}, chip('Team vote tied', 'warn'), ' · Decide within ' + relative(tie.until).replace(/^in /, ''), el('span', { class: 'muted' }, ' · No response: inconclusive')),
@@ -1471,9 +1536,9 @@ export const APP_JS = `'use strict'
         el('p', {}, chip('Fix awaiting approval', 'warn'), run.blocked.until ? [' · ', expires(run.blocked.until)] : null, ' · ', decideLink(run.blocked.approvalRequest, 'Review request')),
         blockedIds(run.blocked)) : null,
       // A card: what it waits on as its title, Approve / Deny (T191); its step, the plan id, and an optional note under Details (T239).
-      run.blocked && !tie && !run.blocked.approvalRequest ? el('section', { class: 'panel request', 'aria-label': 'Plan awaiting approval' },
+      planWaits ? el('section', { class: 'panel request', 'aria-label': 'Plan awaiting approval' },
         el('h3', {}, 'Plan awaiting approval'),
-        el('div', { class: 'actions' },
+        el('div', { class: 'actions bar' },
           decision('Approve', 'the step goes on with this plan', { class: 'primary', onclick: act('approve', () => ({ verdict: 'approved', note: note.value, plan: run.blocked.plan })) }),
           decision('Deny', 'this plan does not run', { onclick: act('approve', () => ({ verdict: 'rejected', note: note.value, plan: run.blocked.plan })) })),
         blockedIds(run.blocked, el('div', {}, 'plan ', el('code', {}, run.blocked.plan), copyId('Copy plan ID', run.blocked.plan)),

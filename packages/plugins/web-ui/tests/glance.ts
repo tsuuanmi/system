@@ -61,13 +61,13 @@ export const overflow = (page: Page): Promise<number> => page.evaluate(() => doc
 
 /**
  * The design note's screenshots (docs/design/web-ui-screenshots/): written only when SYSTEM_UI_SHOTS names a directory (the note's own
- * to update them), so a test run never changes the repository by itself. The first screen only, at the page's own scale.
+ * to update them), so a test run never changes the repository by itself. The first screen only, one pixel per CSS pixel.
  */
 export async function shoot(page: Page, name: string): Promise<void> {
   const dir = process.env['SYSTEM_UI_SHOTS']
   if (!dir) return
   mkdirSync(dir, { recursive: true })
-  await page.screenshot({ path: `${dir.replace(/\/?$/, '/')}${name}.png` })
+  await page.screenshot({ path: `${dir.replace(/\/?$/, '/')}${name}.png`, scale: 'css' })
 }
 
 /** The words measured on a page's first screen, said on the test's output when SYSTEM_UI_SHOTS is set (the design note's table). */

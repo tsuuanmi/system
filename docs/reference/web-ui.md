@@ -23,9 +23,13 @@ Each page opens with its title, and one short sentence of what it is for only wh
 not say it (*Control which actions need approval.*); the design rules, the bound on the words of each
 first screen, and the screenshots are in [the web UI at a glance](../design/web-ui.md) (T239). On a
 narrow screen (600 px) no page is wider than the screen: the navigation keeps whole links on one row
-under the name and the refresh line (*policy* for *Autonomy policy* on a phone), the Board's columns
-stack, each card the screen's width with its buttons sharing it, and the tables keep their first
-columns.
+under the name and the refresh line (*policy* for *Autonomy policy* on a phone), the header stays at
+the top, the Board's columns stack, each card the screen's width with its buttons sharing it, and,
+below 600 px, a table is a card per row, each cell named by its column. On the operator's iPhone
+(T240) the page lays itself under the Dynamic Island and the home indicator and keeps clear of both,
+every target is at least 44 by 44 px, every field 16 px (Safari never zooms on focus), a row of
+buttons has a **?** that shows on a tap what each does, and a run's primary action is a bar at the
+bottom of the screen.
 
 ### Shared building blocks and production states
 

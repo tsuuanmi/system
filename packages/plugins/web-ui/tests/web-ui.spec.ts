@@ -784,8 +784,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await page.goto(`${origin}/ui/?run=run_abc#token=${token}`)
     await expect.poll(() => page.locator('h2.page[data-page="run:run_abc"]').count()).toBe(1)
     const text = await page.locator('main').innerText()
-    // Its state as a chip, when it started, and Stop run; what it waits on is the card below (T239), its step under its Details.
-    expect(await page.locator('.status-line').innerText()).toMatch(/^▲ Needs your attention\s+started .+ ago\s+Stop run$/)
+    // Its state as a chip and when it started, Stop run under them (T240); what it waits on is the card below (T239), its step under its Details.
+    expect(await page.locator('.status-line').innerText()).toMatch(/^▲ Needs your attention\s+started .+ ago$/)
+    expect(await page.locator('.run-actions').getByRole('button').allInnerTexts()).toEqual(['Stop run'])
     const plan = page.getByRole('region', { name: 'Plan awaiting approval' })
     expect(await plan.getByRole('heading', { level: 3 }).innerText()).toBe('Plan awaiting approval')
     expect(await plan.textContent()).toContain('step plan:1:gate')
@@ -981,6 +982,43 @@ describe('web UI: clearer at a glance (T239)', () => {
     for (const name of ['home', 'run', 'workers'] as const) {
       expect(words[name], `${name}'s first screen: ${words[name]} words, ${BEFORE_WORDS[name]} before T239`).toBeLessThanOrEqual(Math.floor(BEFORE_WORDS[name] / 2))
     }
+  }, 90_000)
+})
+
+describe('web UI: the operator\'s iPhone 16 Pro (T240)', () => {
+  // A run waiting on its plan, on the phone in Safari: 402×874 CSS px at 3 device pixels each, touch, and the safe areas of
+  // the Dynamic Island (62 px) and the home indicator (34 px).
+  inBrowser('puts a run\'s primary action in a bar at the bottom of the phone\'s screen, in reach of a thumb and above the home indicator, the page\'s last row clear of it', async () => {
+    const { origin, token } = await boot({ approvals: true, roster: true, pools: true })
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const context = await browser.newContext({ viewport: { width: 402, height: 874 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, timezoneId: 'UTC', locale: 'en-GB' })
+    const page = await context.newPage()
+    await (await context.newCDPSession(page)).send('Emulation.setSafeAreaInsetsOverride' as never, { insets: { top: 62, bottom: 34, left: 0, right: 0 } } as never)
+    await page.clock.setFixedTime(NOW)
+    await opened(page, `${origin}/ui/#token=${token}`)
+    for (const [name, path] of [['home', '/ui/'], ['run', '/ui/?run=run_abc'], ['workers', '/ui/?view=workers']] as const) {
+      await opened(page, origin + path)
+      await shoot(page, `${name}-402`)
+    }
+    // The plan's verdict is the page's primary action: Approve and Deny in the bar, at the screen's bottom edge, its
+    // padding clear of the home indicator; Stop run stays in the page.
+    await opened(page, origin + '/ui/?run=run_abc')
+    const bar = page.locator('main .actions.bar')
+    expect(await bar.count()).toBe(1)
+    expect(await bar.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny', '?'])
+    const box = (await bar.boundingBox())!
+    expect(Math.round(box.y + box.height)).toBe(874)
+    expect(await bar.evaluate((b) => parseFloat(getComputedStyle(b).paddingBottom))).toBeGreaterThanOrEqual(34)
+    const approve = (await bar.getByRole('button', { name: 'Approve', exact: true }).boundingBox())!
+    expect(approve.y).toBeGreaterThan(874 * 2 / 3)
+    expect(approve.height).toBeGreaterThanOrEqual(44)
+    expect(await page.locator('main .run-actions').getAttribute('class')).not.toContain('bar')
+    // Scrolled to its end, the page's last row is above the bar, never under it.
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+    const last = await page.locator('main > :last-child').evaluate((e) => e.getBoundingClientRect().bottom)
+    expect(last).toBeLessThanOrEqual((await bar.boundingBox())!.y)
+    await context.close()
   }, 90_000)
 })
 
