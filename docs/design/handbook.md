@@ -531,6 +531,58 @@ lesson is. A change to a guide is reviewed as a change to a rule (the `docs` gui
 documents' own path map makes `docs/` light, so a change to a guide is light until the map names
 `docs/review/` (an operator's change to `policies/system.json`; recorded as a follow-up of T267).
 
+### Scheduled review
+
+A review of each change finds what the change introduced; a **periodic review of code already landed**
+finds what those reviews missed (D93 item 8, after Anthropic's "Solving code review"). The workflow
+engine runs one, **off by default**: the operator sets `workflow.scheduledReview.enabled`, a `projectId`
+(where findings are proposed) and a `repository`
+([configuration](../reference/configuration.md#workflow)).
+
+- **One area a day, round robin.** The areas are the guides of the repository, read at the tip of the
+  configured `ref` (default `dev`; never its working tree, as a run's guides are not): in name order,
+  the UTC day number modulo their count picks the day's area, so every area comes round in turn, whatever
+  the host's downtime. A day has at most one scheduled review, from `hourUtc` (default 3); the operator's
+  own (`scheduledReviewNow`) is recorded beside it as a manual one.
+- **The whole area, not a diff.** The files that match the guide's `paths` at that commit, each line
+  numbered, with the guide's text: at most `maxFiles` (80), `maxBytes` (400,000), a file over
+  `maxFileBytes` (60,000), or over `maxBytes`, named as not read. An area that does not fit is read as a
+  window of consecutive files in path order around a ring, each round's window starting where the one
+  before ended, whichever bound stopped it: every file is read within as many rounds as the area has
+  files. The files left are named to the reviewer and counted in the row (INV-9).
+- **Frontier tier, a second family verifies.** The `scheduled-review` template
+  ([nodes](../reference/workflow-templates.md#scheduled-review)): `review:1` at the frontier tier reports
+  `important` findings and `nit`s, as T266's classes mean them for code that has landed (it never says
+  `pre-existing`: all of it has); `verify:1`, a second reviewer, reads the same code and votes with a
+  reason on each important finding. Its votes count only when it is **of another provider family** than
+  `review:1`, both families read from the Workers listed when the review settles: the template prefers
+  another family, and when none was free (or a family cannot be read) every important finding stays
+  unverified, nothing is filed, and the row says why. An unvoted, rejected, or reasonless finding is
+  never filed, nor is one whose file and line were not in what the reviewers read.
+- **A restart never loses a review (INV-4).** The review's run is written on its row as soon as the
+  engine admits it, with the subject and the files shown. A review the host stopped while its run ran
+  stays `running`; at the next start, once the board is attached (and at every pass), it is settled
+  from that durable run: verified, filed, and counted as if nothing had stopped. Each task is written to
+  the row as soon as the board took it, so a review settled again proposes none twice. A review the
+  host stopped before its run was admitted is recorded failed, with why.
+- **A confirmed finding is a proposed board task.** Its title (`Scheduled review (<area>): <finding>`),
+  its goal (the place as `file:line`, the evidence, the verifier's reason, the guide it broke and the
+  failure class, the commit and the review that found it) and one acceptance criterion; proposed, so the
+  lead or the operator decides it. This is not the path of a pre-existing finding of a change's review
+  (ADR-0075, `Pre-existing: …`): that one is found while reviewing a task; this one is found by looking.
+- **A cap, and no duplicates.** At most `maxTasksPerRun` (default 5, at most 20) tasks a run; the rest of
+  its confirmed findings are counted as `capped` and come round again when the area does. A finding is
+  not filed while a task for it is open (not `done`, not `cancelled`): the same file and title, the same
+  file within three lines (a defect re-found in other words), or any open task of the project with the
+  same title, whoever filed it. Once the task is closed, a defect that still stands is filed again.
+- **The report counts findings per area over time.** Every review is a row (`workflow_scheduled_reviews`):
+  its area, commit, files read and left, and its counts: important, confirmed, rejected, unverified,
+  nits, filed, duplicates, capped. `scheduledReviewReport()` sums them per area and lists the latest
+  reviews, so a rising count of confirmed findings in an area, or a count of rejected ones that rises
+  with no confirmed one, tells the owner whether the guide, the code, or the reviewer needs work. A run
+  that did not finish (it failed, timed out, or answered with no readable assessment) is a row too,
+  counted as unfinished, with why.
+
 ### The author verifies before review (W19)
 
 The validation step of `algorithm-development` measured a median of 0.4 minutes and caught nothing the

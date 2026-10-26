@@ -645,6 +645,39 @@ export interface Config {
   repositories?: { hosts?: string[]; maxFiles?: number; maxBytes?: number; maxFileBytes?: number; maxSourceChars?: number }
   /** Dispatch (ADR-0064): System starts ready board tasks on free Workers chosen by quota, within these bounds (./dispatch.ts). */
   dispatch?: DispatchConfig
+  /** The scheduled review of existing code, one area a day, filing confirmed findings as proposed board tasks (D93 item 8; ./scheduled-review.ts). Off by default. */
+  scheduledReview?: ScheduledReviewConfig
+}
+
+/**
+ * The scheduled review's settings (D93 item 8), each validated when the row loads. Off unless the
+ * operator sets `enabled`; then `projectId` and `repository` are required.
+ */
+export interface ScheduledReviewConfig {
+  /** Whether the daily review runs (default false: the operator turns it on). */
+  enabled?: boolean
+  /** The board project the findings are proposed in (required when enabled). */
+  projectId?: string
+  /** Path of the git repository whose guides name the areas (required when enabled). */
+  repository?: string
+  /** The branch or ref reviewed, at its tip (default `dev`). */
+  ref?: string
+  /** The UTC hour from which the day's review may start (0 to 23, default 3). */
+  hourUtc?: number
+  /** The most tasks one run proposes (1 to 20, default 5); the rest of its confirmed findings are counted, not filed. */
+  maxTasksPerRun?: number
+  /** Files of the area one review reads at most (default 80), bytes of text in all (default 400,000), and a larger file is listed as unread (default 60,000). */
+  maxFiles?: number
+  maxBytes?: number
+  maxFileBytes?: number
+  /** Minutes a run may take before it is recorded as unfinished (default 120). */
+  timeoutMinutes?: number
+  /** The action class the proposed tasks carry (default `workspace-write`). */
+  actionClass?: string
+  /** The board task template the proposed tasks name, when the project uses one (default none). */
+  taskTemplate?: string
+  /** The workflow template a review runs (default `scheduled-review`, which the software-development profile provides). */
+  template?: string
 }
 
 /**

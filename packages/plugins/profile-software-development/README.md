@@ -8,6 +8,13 @@ holds no engine code and no rules of its own.
   `local-data`, at the caller's tier and in the caller's session. Only a
   read-only local agent Worker proves both, so it never routes to a website
   account ([nodes](../../../docs/reference/workflow-templates.md#agent-review)).
+- **`scheduled-review`** (T290, D93 item 8) is the review the workflow engine's own scheduler runs
+  once a day over one area of a repository, read whole at the tip of its branch: `review:1` at the
+  frontier tier, and `verify:1`, a second reviewer that prefers another family, voting on each
+  important finding (its votes count only when it ran on another family). The scheduler files the confirmed ones as proposed board tasks
+  ([nodes](../../../docs/reference/workflow-templates.md#scheduled-review),
+  [the handbook](../../../docs/design/handbook.md#scheduled-review)); it is off until the operator
+  sets `workflow.scheduledReview.enabled`.
 - **`algorithm-development`** (PROP-0010 B8) is one attempt of a board task that
   tests one hypothesis
   ([nodes](../../../docs/reference/workflow-templates.md#algorithm-development)):

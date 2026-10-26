@@ -514,6 +514,17 @@ second execution path (INV-1).
     rebases per landing; the view's `task.landing.rebase` tells where it stands.
   - The board is optional: with none loaded, a task's run is refused (`config_error`) and every
     other run is unchanged.
+- **Scheduled review ([the handbook](../../../docs/design/handbook.md#scheduled-review), T290, D93 item 8; `src/scheduled-review.ts`).**
+  Off unless `scheduledReview.enabled`: a timer every 15 minutes (the first pass one interval after start) reviews the day's
+  area, once a day from `hourUtc`: the repository's review guides at the tip of `ref`, round robin by
+  UTC day; the area's files read whole, to the `scheduled-review` template (`review:1`, `verify:1`, both
+  frontier, the second preferring another family; its votes count only when it ran on one). Each
+  confirmed important finding whose file and line were in what was read becomes one proposed task of
+  `scheduledReview.projectId`, at most `maxTasksPerRun`, none that duplicates an open task. Each review
+  is a `workflow_scheduled_reviews` row (migration 25), its run written on it once admitted: a review the
+  host stopped is settled from that run once the board is attached on the next start, and at every
+  pass, its tasks written one by one so none is proposed twice. `scheduledReviewReport()` counts them per area, `scheduledReviewTick(at)` and
+  `scheduledReviewNow(at, area)` are the test and operator seams.
 - **Dispatch ([design](../../../docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself),
   [ADR-0064](../../../docs/decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md), contract 1.9; D2 1.10; the advisor 1.11).**
   The engine starts ready board tasks by itself, on the operator's approval or, where the project's

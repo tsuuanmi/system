@@ -8,7 +8,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { NodeTemplate } from '@tsuuanmi/system-workflow'
+import { type NodeTemplate, SCHEDULED_REVIEW, SCHEDULED_REVIEW_NODES } from '@tsuuanmi/system-workflow'
 import { WORK_KIND } from '@tsuuanmi/system-workers-core'
 
 export const name = 'profile-software-development'
@@ -216,6 +216,16 @@ export function algorithmDevelopment(configured: Partial<StepKinds> = {}): NodeT
   ]
 }
 
+/**
+ * The review a scheduled review runs (D93 item 8, docs/design/handbook.md#scheduled-review): the
+ * workflow engine's own scheduler starts it once a day with one area of a repository, read whole at the
+ * tip of its branch, as the input. `review:1` reads the area at the frontier tier; `verify:1`, of another
+ * provider family where one is free, votes on each important finding (counted only when it did run on
+ * another family than `review:1`, which the scheduler checks). The scheduler, not this template,
+ * files the confirmed findings as proposed board tasks and holds the cap and the duplicate rule.
+ */
+export const SCHEDULED_REVIEW_TEMPLATE: NodeTemplate[] = SCHEDULED_REVIEW_NODES
+
 /** `algorithm-development` with the shipped kinds. */
 export const ALGORITHM_DEVELOPMENT: NodeTemplate[] = algorithmDevelopment()
 
@@ -224,4 +234,5 @@ export function apply(ctx: Context, config: Config = {}): void {
   if (problems.length) throw new Error(`profile-software-development: ${problems.join('; ')}`)
   ctx.effect(() => ctx.workflow.template('agent-review', AGENT_REVIEW))
   ctx.effect(() => ctx.workflow.template('algorithm-development', algorithmDevelopment(config.kinds)))
+  ctx.effect(() => ctx.workflow.template(SCHEDULED_REVIEW, SCHEDULED_REVIEW_TEMPLATE))
 }

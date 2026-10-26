@@ -169,6 +169,10 @@
       "sensitive": false
     },
     {
+      "key": "scheduledReview",
+      "sensitive": false
+    },
+    {
       "key": "repositories",
       "sensitive": false
     }

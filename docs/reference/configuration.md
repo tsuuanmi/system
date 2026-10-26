@@ -637,6 +637,20 @@ No options.
 | `dispatch.advisor.minLabelled` | number (10…2000) | `30` | Labelled dispatched attempts the local adapter needs before it answers (at most the examples it keeps); until then, insufficient data |
 | `dispatch.advisor.l2` | number (0.001…1000) | `1` | The local adapter's L2 penalty |
 | `dispatch.advisor.model` | any |  | The model adapter {worker, maxTokens}: worker, the model Worker asked (model:<id> of the models row); maxTokens, its output bound (64 to 8192, default 1024). Features only (no task text) are sent, through the Worker's own egress check; checked when the row loads |
+| `scheduledReview` | object | `{}` | The scheduled review of existing code, one area a day, filing confirmed findings as proposed board tasks (docs/design/handbook.md#scheduled-review) |
+| `scheduledReview.enabled` | boolean | `false` | Review one area of the repository a day, round robin among the areas its review guides name, and propose each confirmed important finding as a board task (D93 item 8; docs/design/handbook.md#scheduled-review). Off by default: the operator turns it on, with projectId and repository |
+| `scheduledReview.projectId` | string |  | The board project the findings are proposed in (required when enabled) |
+| `scheduledReview.repository` | string |  | Absolute path of the git repository whose review guides name the areas, read at the tip of ref and never from its working tree (required when enabled) |
+| `scheduledReview.ref` | string | `"dev"` | The branch or ref reviewed, at its tip (default dev) |
+| `scheduledReview.hourUtc` | number (0…23) | `3` | The UTC hour from which the day's review may start; one scheduled review a day at most (default 3) |
+| `scheduledReview.maxTasksPerRun` | number (1…20) | `5` | The most tasks one review proposes (INV-9); the rest of its confirmed findings are counted as capped, not filed (default 5) |
+| `scheduledReview.maxFiles` | number (1…400) |  | Files of the area one review reads at most (default 80); an area that does not fit is read as consecutive windows, each round starting where the last ended, so every file is read in turn; the files left named |
+| `scheduledReview.maxBytes` | number (10000…4000000) |  | Bytes of the area one review reads in all (default 400,000) |
+| `scheduledReview.maxFileBytes` | number (1000…500000) |  | A larger file is listed as not read (default 60,000) |
+| `scheduledReview.timeoutMinutes` | number (1…1440) |  | Minutes a review run may take before the review is recorded as unfinished (default 120) |
+| `scheduledReview.actionClass` | string |  | The action class the proposed tasks carry (default workspace-write) |
+| `scheduledReview.taskTemplate` | string |  | The board task template the proposed tasks name, when the project uses one (default none) |
+| `scheduledReview.template` | string |  | The workflow template a review runs (default scheduled-review, which the software-development profile provides) |
 | `repositories` | object | `{}` | A review's repository reads: allowed hosts and bounds (INV-9) |
 | `repositories.hosts` | string[] | `["github.com"]` | Hosts a review may read a public repository from |
 | `repositories.maxFiles` | number (1…200) |  | Files a review reads from a repository (default 40) |

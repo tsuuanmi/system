@@ -32,6 +32,7 @@ import { MATERIAL_REQUEST, runSnapshot, showsTextMaterial, sourceOf } from './so
 import { TaskRuns } from './tasks.ts'
 import { decide, expireTie, proving, restriction, runtimeOf, tally, teamGroup, teamPrompt } from './teams.ts'
 import { Dispatcher } from './dispatch.ts'
+import { ScheduledReviews } from './scheduled-review.ts'
 import { type Config, errorOf, LEASE_TTL_MS, newId, TASK_WAIT_MS, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type TaskBudget, type TaskCarry, type TaskDispatch, type WorkflowError, WorkflowFailure } from './types.ts'
 import { view } from './views.ts'
 
@@ -59,6 +60,8 @@ export class Engine {
   readonly tasks: TaskRuns = new TaskRuns(this)
   /** Dispatch (ADR-0064): ready tasks started on free Workers chosen by quota, its settings validated here. */
   readonly dispatch: Dispatcher
+  /** The scheduled review of one area a day (D93 item 8), off unless configured on; its settings validated here. */
+  readonly scheduledReviews: ScheduledReviews
   readonly templates: Record<string, NodeTemplate[]>
   /** Configured templates refused at load, with why (health reports them). */
   readonly refused = new Map<string, string>()
@@ -88,6 +91,7 @@ export class Engine {
   constructor(readonly ctx: Context, readonly config: Config) {
     // A dispatch setting out of its range refuses the row, with its path (INV-2).
     this.dispatch = new Dispatcher(this)
+    this.scheduledReviews = new ScheduledReviews(this)
     this.templates = { ...DEFAULT_TEMPLATES, ...config.templates }
     // Checked at load, not at the first call. A configured template that fails preflight is refused
     // alone, with why (INV-2): the engine and every other template keep working, and health names it.
