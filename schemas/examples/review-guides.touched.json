@@ -1,0 +1,8 @@
+{
+  "schema": "review-guides@1.0",
+  "guides": [
+    { "file": "docs/review/workflow-engine.REVIEW.md", "version": 1, "owner": "lead", "sha256": "0000000000000000000000000000000000000000000000000000000000000001" }
+  ],
+  "left": 5,
+  "text": "Review guides for the areas this change touches (1 of 6; 5 left out: no changed path is in their area). A guide says what failure looks like in its area; follow its evidence and summary rules.\n\n# Review guide: workflow engine\n\n## What failure looks like here\n- A step that hangs waiting on a dependency that can never finish."
+}

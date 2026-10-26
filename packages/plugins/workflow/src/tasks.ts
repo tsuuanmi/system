@@ -1354,6 +1354,8 @@ export class TaskRuns {
   private lastReview(done: NodeRow[]): AcceptanceReview | undefined {
     let last: AcceptanceReview | undefined
     for (const node of done) {
+      // The author's own review is never the run's last review (T267).
+      if ((JSON.parse(node.spec) as ResolvedNode).selfReview !== undefined) continue
       for (const ref of node.decisions ? JSON.parse(node.decisions) as ArtifactRef[] : []) {
         const body = this.e.ctx.artifacts.get(ref)?.body as { decisionType?: string; decider?: { id?: string }; outcome?: { option?: string; detail?: { assessment?: ArtifactRef } } } | undefined
         if (body?.decisionType !== 'gate' || body.decider?.id !== 'workflow.exact-subject' || body.outcome?.option !== 'pass' || !body.outcome.detail?.assessment) continue
@@ -1435,6 +1437,7 @@ export class TaskRuns {
     if (subject.type !== 'git-head' || subject.version === undefined) return checks
     const id = `git:${subject.ref}:${subject.version}`
     for (const node of done) {
+      if ((JSON.parse(node.spec) as ResolvedNode).selfReview !== undefined) continue
       const bound = node.subject ? (JSON.parse(node.subject) as { subject?: { ref: string; version: string } }).subject : undefined
       if (!bound || `git:${bound.ref}:${bound.version}` !== id) continue
       for (const ref of node.decisions ? JSON.parse(node.decisions) as ArtifactRef[] : []) {

@@ -160,8 +160,8 @@ For each milestone, the lead proposes tasks with `board_propose`, one hypothesis
 }
 ```
 
-- Name each validation command in the criteria exactly as the policy lists it: the validation step
-  runs what the criteria name, and nothing else.
+- Name each check command in the criteria exactly as the policy lists it: the developer runs what
+  the criteria name before its review and shows the output in the task's dossier, and nothing else.
 - `writes` binds the task's result to the exact tree its run leaves on that commit (INV-5), so the
   engine reports the review of that tree. One open task writes a commit at a time (INV-15):
   propose the next task on a commit once the one before it is done or cancelled.
@@ -173,16 +173,19 @@ For each milestone, the lead proposes tasks with `board_propose`, one hypothesis
 
 1. **The lead starts each ready task**: MCP `run` with `template: algorithm-development`, an
    `input` with what this attempt should try, and `task: { taskId }`. The input is the develop
-   step's alone: the review and the validation read the task's goal and criteria, never it
+   step's alone: the reviews read the task's goal and criteria, never it
    ([which inputs reach which step](../reference/workflow-templates.md#which-inputs-reach-which-step)).
    The run claims the task, and the board records it before anything runs. Then, in the run's own
    worktree:
-   - the developer states a hypothesis and changes the code (`develop:1`);
-   - the reviewer reviews that exact change (`review:1`); blocking findings put a fix to the queue,
-     and the fix and a re-review run once you approve it
-     ([remediation](runbooks.md#a-remediation-fix-waits-on-the-queue));
-   - the validation runs the criteria's commands, confined, and reports each command, its exit
-     code, and what it measured (`validate:1`). That report is the attempt's result;
+   - the developer states a hypothesis and changes the code (`develop:1`), runs the criteria's
+     commands, confined, and appends each command, its exit code, and what it measured to the task's
+     dossier as an evidence entry; the step is refused at its end without it;
+   - a fresh session of the developer's account reviews its own change (`selfreview:1`), and the
+     developer answers its confirmed important findings before anyone else reviews, with nothing for you to approve;
+   - the reviewer reviews that exact change (`review:1`), given the
+     [review guides](../review/README.md) of the areas it touches; important findings a second reviewer confirms put a fix to the
+     queue, and the fix and a re-review run once you approve it
+     ([remediation](runbooks.md#a-remediation-fix-waits-on-the-queue)). That review is the attempt's result;
    - when the repository's checks are configured, the run then runs `tests` and `lint` itself on
      the result's exact tree, confined ([let a run pass the required checks](runbooks.md#let-a-run-pass-the-required-checks)).
 2. **The result waits for you** in `review` (`tests` and `lint` pending) unless the run passed both
@@ -190,7 +193,7 @@ For each milestone, the lead proposes tasks with `board_propose`, one hypothesis
    digest is set on the task within minutes: the lead reads the digest, not the transcript
    (`board_task`, `board_brief`).
 3. **You decide, in batches**, on `/ui`: the queue's requests (charters, remediation fixes), and the
-   reviews held for you. For a review: read the digest and the validation's report, run the pending
+   reviews held for you. For a review: read the digest, the review, and the developer's evidence entry, run the pending
    checks in the run's worktree yourself ([worktree](runbooks.md#a-runs-worktree)), then Accept or
    Reject. A rejection makes another attempt, which resumes the developer's session from a brief
    pointing at this attempt's result and your decision; tell the lead your reason.

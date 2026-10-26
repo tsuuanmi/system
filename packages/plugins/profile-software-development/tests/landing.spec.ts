@@ -24,7 +24,7 @@ const boot = async (script: Script = {}): Promise<Pilot> => {
 type Decision = { decisionType: string; decider: { id: string }; inputs: string[]; outcome: { option: string; detail: Record<string, unknown> }; candidates: Array<{ option: string; reasons: string[] }> }
 
 /**
- * T99a's task: proposed with no `writes`, so its result's subject is the validation's report, which
+ * T99a's task: proposed with no `writes`, so its result's subject is the review's report, which
  * names the run's worktree and the exact tree there. Its attempt runs, and the result is held for the
  * operator with tests and lint pending.
  */
@@ -88,7 +88,8 @@ describe('landing an accepted result (ADR-0060)', () => {
     const message = pilot.git(pilot.repo, 'log', '-1', '--format=%B', branch)
     expect(message.split('\n')[0]).toBe(`system: land task ${task.taskId}: make add() add`)
     expect(message).toContain(`The result of run ${runId} on ${subjectId(accepted)}, accepted by the operator (acceptance decision ${acceptedTask.result!.acceptance}).`)
-    expect(message).toMatch(/Reviewed on that tree: review:1 by agent:reviewer: approve\./)
+    // The author's own review is named as such, beside the independent one.
+    expect(message).toMatch(/Reviewed on that tree: selfreview:1 by agent:reviewer, the author's own review: approve; review:1 by agent:reviewer: approve\./)
     expect(message).toContain(`System-Task: ${task.taskId}\nSystem-Run: ${runId}\nSystem-Acceptance: ${acceptedTask.result!.acceptance}\nSystem-Subject: ${subjectId(accepted)}`)
     expect(pilot.git(pilot.repo, 'show', `${branch}:calc.py`)).toBe(FIXED.trim())
     expect(pilot.git(worktree, 'status', '--porcelain')).toBe('')
@@ -100,7 +101,7 @@ describe('landing an accepted result (ADR-0060)', () => {
     const [commit] = decisionsOf(pilot, asked)
     expect(commit).toMatchObject({ decisionType: 'gate', decider: { id: 'workflow.landing' }, outcome: { option: 'commit', detail: { taskId: task.taskId, runId, step: 'commit', branch, head, committed: true, acceptance: acceptedTask.result!.acceptance } } })
     expect(commit!.inputs).toContain(acceptedTask.result!.acceptance)
-    expect(ctx.workflow.explain(runId)!.nodes.find((n) => n.nodeId === 'validate:1')!.decisions.map((d) => d.id)).toContain(asked.decisions![0])
+    expect(ctx.workflow.explain(runId)!.nodes.find((n) => n.nodeId === 'review:1')!.decisions.map((d) => d.id)).toContain(asked.decisions![0])
 
     // One merge request on the queue, bound to the base's and the branch's heads, showing the change.
     const [request, ...more] = await mergeRequests(pilot)
@@ -182,14 +183,14 @@ describe('landing an accepted result (ADR-0060)', () => {
     expect(pilot.git(pilot.repo, 'status', '--porcelain')).toBe('')
   })
 
-  it('gives the conflict to the developer that wrote the result, not to the Worker that validated it, on its task\'s brief: the resolving run reserves and draws within the task\'s and the project\'s caps (ADR-0068, ADR-0057, INV-6)', async () => {
-    const pilot = await boot({ writers: { developer: ['code', 'docs', 'tests'], tester: ['validation'] } })
+  it('gives the conflict to the developer that wrote the result, not to the Worker that reviewed it, on its task\'s brief: the resolving run reserves and draws within the task\'s and the project\'s caps (ADR-0068, ADR-0057, INV-6)', async () => {
+    const pilot = await boot({ writers: { developer: ['code', 'docs', 'tests'] } })
     const { ctx } = pilot
     const { task, runId, worktree } = await heldResult(pilot)
     const nodes = ctx.workflow.get(runId)!.nodes
-    // Both wrote in the run's worktree on a writing sandbox; only develop:1 wrote the result.
+    // Only develop:1 wrote the result; the reviews ran on the reviewer.
     expect(nodes.find((n) => n.nodeId === 'develop:1')!.worker).toBe('agent:developer')
-    expect(nodes.find((n) => n.nodeId === 'validate:1')!.worker).toBe('agent:tester')
+    expect(nodes.find((n) => n.nodeId === 'review:1')!.worker).toBe('agent:reviewer')
     commitOn(pilot, pilot.repo, 'calc.py', 'def add(a, b):\n    return b + a\n', 'operator: add the other way')
     await operatorAccepts(ctx, task.taskId)
     const asked = await landed(pilot, runId, 'asked')

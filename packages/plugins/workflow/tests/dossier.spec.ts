@@ -163,10 +163,9 @@ describe('a board task\'s dossier (ADR-0070)', () => {
     // source stands in for it, bound to the execution it started.
     const held = await until(() => workers.started.find((s) => s.worker === 'w:author'), 'the author\'s execution')
     const authorStep: DossierCaller = { runId: run.runId, nodeId: 'develop', execution: held.id }
-    // The gate: only the step's running execution appends, only what its role writes, bounded; never evidence.
+    // The gate: only the step's running execution appends, only what its role writes (an author's evidence is the output of its checks, T267), bounded.
     const append = (extra: Partial<DossierAppendInput> = {}, caller: Partial<DossierCaller> = {}) => () => ctx.workflow.appendToDossier({ ...authorStep, ...caller }, { kind: 'progress', text: 'x', ...extra })
-    expect(refusal(append({ kind: 'review' }))).toMatch(/a writing step appends plan, progress, response, not review; nothing was appended/)
-    expect(refusal(append({ kind: 'evidence' }))).toMatch(/evidence is the System's alone/)
+    expect(refusal(append({ kind: 'review' }))).toMatch(/a writing step appends plan, progress, response, evidence, not review; nothing was appended/)
     expect(refusal(append({ text: 'x'.repeat(DOSSIER_LIMITS.text + 1) }))).toMatch(/an entry holds 1 to 4000/)
     expect(refusal(append({}, { nodeId: 'review' }))).toMatch(/step review of run .* is not running/)
     expect(refusal(append({ commits: ['not-a-commit'] }))).toMatch(/commits are at most 16 hex ids/)

@@ -388,11 +388,11 @@ No options.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `kinds` | object | `{}` | The kind of work (ADR-0057) each algorithm-development step names, by step, so which Worker takes which step is the Workers' kinds: a Worker given kinds takes a step only when it lists that step's kind. The review names none |
+| `kinds` | object | `{}` | The kind of work (ADR-0057) each algorithm-development step names, by step, so which Worker takes which step is the Workers' kinds: a Worker given kinds takes a step only when it lists that step's kind. The reviews name none |
 | `kinds.develop` | string | `"code"` | The kind of work develop:1 is, and the fix a review grows from it (default code) |
 | `kinds.docs` | string | `"docs"` | The kind of work develop:1 is in the docs variant (default docs) |
 | `kinds.tests` | string | `"tests"` | The kind of work develop:1 is in the tests variant (default tests) |
-| `kinds.validate` | string | `"validation"` | The kind of work validate:1 is: it runs the checks and tests and changes nothing (default validation). A Worker given kinds takes it only when it lists this one, so a writer given tests does not run it |
+| `kinds.validate` | string |  | Retired (T267): the template has no validate step any more, so this is ignored; remove it |
 
 ## `provider-chatgpt-web`
 

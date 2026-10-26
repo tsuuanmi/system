@@ -47,13 +47,15 @@ accountable; a child gets the spec and evidence, never the author's transcript.
   decisions and why), `review` (a reviewer's findings, bound to the subject it reviewed, its result
   and assessment linked, not copied), `response` (the author per finding: fixed in which commit, or
   not and why), `evidence` (the System's: checks and acceptance, the report to the board, the
-  landing).
+  landing; and, since T267, a writing step's own: the output of the checks it ran, told by its author).
 - **Append-only and versioned.** Entries are numbered per task from 1, with no gap (`seq`), and each
   names the entry before it (`prev`): the dossier at an entry is a hash chain. The engine lists them
   in `workflow_dossiers` (migration 23), whose rows reference the artifacts (so retention keeps
   them); a trigger refuses any update. An entry is never rewritten: a correction is another entry.
 - **Who writes.**
-  - The engine writes `evidence` (acceptance, report, landing), and nobody else may.
+  - The engine writes the System's `evidence` (acceptance, report, landing); a Worker never writes
+    that, but a writing step's Worker writes its own `evidence`, the output of the checks it ran
+    (T267: its author is the Worker, so a reader never mistakes it for a check the engine ran).
   - For a step that appended nothing itself, the engine writes the step's entry when it settles: a
     review's verdict and findings from the assessment its exact-subject gate stored; a website or
     model Worker's answer as it is (it has no tool of its own); an agent Worker's answer linked, never

@@ -21,8 +21,8 @@ export interface DossierCaller {
   execution: string
 }
 
-/** The kinds a Worker appends; `evidence` is the engine's alone. */
-const WORKER_KINDS =['plan', 'progress', 'review', 'response'] as const
+/** The kinds a Worker appends: an author's `evidence` is the output of the checks it ran (T267), the Worker's report, not the System's. */
+const WORKER_KINDS = ['plan', 'progress', 'review', 'response', 'evidence'] as const
 
 /** What `dossier_append` takes, as the engine's `appendToDossier` does. */
 export interface DossierEntryInput {
@@ -63,7 +63,7 @@ export function dossierTools(dossiers: StepDossiers, caller: DossierCaller): Hos
   return [
     {
       name: 'dossier_read', readOnly: true,
-      description: `Read your board task's dossier: its append-only entries whole (plan, progress, review, response, and the System's evidence), oldest first from \`from\` (default 1), at most \`limit\` (default 20, at most ${LIMITS.pageMax}); \`next\` is where the next page starts. Your brief holds its latest entries; read the rest here.`,
+      description: `Read your board task's dossier: its append-only entries whole (plan, progress, review, response, and evidence: the System's, and the author's own pasted checks), oldest first from \`from\` (default 1), at most \`limit\` (default 20, at most ${LIMITS.pageMax}); \`next\` is where the next page starts. Your brief holds its latest entries; read the rest here.`,
       inputSchema: {
         type: 'object', additionalProperties: false,
         properties: { from: { type: 'integer', minimum: 1, description: 'The first entry to read (default 1)' }, limit: { type: 'integer', minimum: 1, maximum: LIMITS.pageMax, description: 'Entries to read (default 20)' } },
@@ -79,11 +79,11 @@ export function dossierTools(dossiers: StepDossiers, caller: DossierCaller): Hos
     },
     {
       name: 'dossier_append', readOnly: false,
-      description: 'Append one entry to your board task\'s dossier, as the Worker of the step you run; it never changes once appended. The author writes `plan` at the start (approach, files, risks), `progress` after each step (what was done, its commits, what remains, small decisions and why), and `response` per finding of a review (fixed in which commit, or not and why; `finding` names it, `inReplyTo` the review entry). A reviewer writes `review`: its findings on the subject it reviewed. The next Worker, and the reviewer, read the dossier, never your conversation.',
+      description: 'Append one entry to your board task\'s dossier, as the Worker of the step you run; it never changes once appended. The author writes `plan` at the start (approach, files, risks), `progress` after each step (what was done, its commits, what remains, small decisions and why), and `response` per finding of a review (fixed in which commit, or not and why; `finding` names it, `inReplyTo` the review entry). Before it ends, the author runs the required checks and writes `evidence`: each command, its exit code, and the real output lines that hold the result, verbatim. A reviewer writes `review`: its findings on the subject it reviewed. The next Worker, and the reviewer, read the dossier, never your conversation.',
       inputSchema: {
         type: 'object', additionalProperties: false, required: ['kind', 'text'],
         properties: {
-          kind: { type: 'string', enum: [...WORKER_KINDS], description: 'plan, progress, or response (a writing step); review (a review)' },
+          kind: { type: 'string', enum: [...WORKER_KINDS], description: 'plan, progress, response, or evidence (a writing step); review (a review)' },
           text: { type: 'string', minLength: 1, maxLength: LIMITS.text, description: 'The entry, in plain words' },
           commits: { type: 'array', maxItems: LIMITS.commits, items: { type: 'string', maxLength: 64 }, description: 'The commits it names (hex ids)' },
           refs: { type: 'array', maxItems: LIMITS.refs, items: { type: 'string', maxLength: 80 }, description: 'Stored artifacts it links (sha256:… ids)' },

@@ -24,7 +24,7 @@ type CheckRun = { subject: { ref: string; version: string }; checks: Array<{ che
 
 describe('the algorithm-development template with the repository\'s checks configured (T151)', () => {
   needsBubblewrap()
-  it('runs the required tests and lint on the validated tree once validation is done, and the task\'s result is accepted on them without the operator (REQ-WF-15, INV-5)', async () => {
+  it('runs the required tests and lint on the reviewed tree once the review is done, and the task\'s result is accepted on them without the operator (REQ-WF-15, INV-5)', async () => {
     const pilot = await boot({ checks: { tests: 'node tests.mjs', lint: 'node lint.mjs' } })
     const { ctx, agent } = pilot
     await charter(ctx, 'p1')
@@ -32,7 +32,7 @@ describe('the algorithm-development template with the repository\'s checks confi
     const run = await attempt(ctx, task.taskId)
     const done = await reported(ctx, run.runId)
     expect(done.status).toBe('completed')
-    expect(done.nodes.map((n) => n.nodeId)).toEqual(['develop:1', 'review:1', 'validate:1'])
+    expect(done.nodes.map((n) => n.nodeId)).toEqual(['develop:1', 'selfreview:1', 'review:1'])
 
     // The engine's acceptance names the checks it ran on the exact tree: the review it judged, and tests and lint by their exit codes.
     const acceptance = ctx.artifacts.get(done.task!.outcome!.decision!)!.body as Acceptance
@@ -40,7 +40,7 @@ describe('the algorithm-development template with the repository\'s checks confi
     expect(acceptance.candidates.find((c) => c.selected)!.reasons).toContainEqual('the checks it ran: review passed, tests passed, lint passed')
     const evidence = acceptance.outcome.detail.checkRun!.evidence!
     expect(acceptance.inputs).toContain(evidence)
-    const worktree = agent.runs.find((r) => r.role === 'validate')!.workspace
+    const worktree = agent.runs.find((r) => r.role === 'develop')!.workspace
     const tree = captureGitSubject(worktree)!.subject
     const ran = ctx.artifacts.get(evidence as `sha256:${string}`)!.body as CheckRun
     expect(ran.subject).toMatchObject({ ref: pilot.head, version: tree.version })

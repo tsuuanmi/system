@@ -12,8 +12,12 @@ import type { Lease } from '@tsuuanmi/system-leases'
 import { type Brief, type BriefBudgetLine, type BriefCheck, type BriefFile, BRIEF_LIMITS, type BriefPointer, NO_LOCAL_SANDBOX, QUESTION_LIMITS, renderBrief } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import type { ArtifactRef, Tier, WorkerSandbox, WorkRequirement } from '@tsuuanmi/system-workers-core'
+import { landingTargets } from './checks.ts'
+import { roleOf } from './dossiers.ts'
 import type { Engine } from './engine.ts'
 import { type Wording, wordingOf } from './review.ts'
+import { changePaths } from './risk.ts'
+import { guidesTouching, loadGuides, renderGuides } from './review-guides.ts'
 import { clampText, type Instructions, literal, type PlaceholderScope, type ResolvedNode, unfilledPlaceholders } from './spec.ts'
 import { type NodeRecord, type NodeRow, type RunRow, type WorkflowError, WorkflowFailure } from './types.ts'
 
@@ -61,16 +65,20 @@ export function instructionsOf(node: NodeRow): Instructions {
  * acceptance contract and result schema. A node on a session the Worker keeps natively names that
  * session (`resume`): its brief is the session's next message.
  */
-export function draftOf(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, requirement: WorkRequirement): Draft {
+export function draftOf(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, requirement: WorkRequirement, guides?: BriefPointer): Draft {
   const parts = instructionsOf(node)
   const task = e.tasks.frame(run.run_id)
   const own = new Set(parts.pointers.map((p) => p.ref))
+  // An author's self-review (T267) is given the goal, the diff (its instructions' subject block), and
+  // the review guides only: none of the task's pointers (earlier results, decisions, the carried work),
+  // no dossier, and no files, so nothing its author planned, did, or was told reaches it.
+  const fresh = spec.selfReview !== undefined
   // A run whose worktree starts from the previous attempt's work says so first (ADR-0061).
-  const carried = task ? e.tasks.carries.pointer(run.run_id) : undefined
+  const carried = task && !fresh ? e.tasks.carries.pointer(run.run_id) : undefined
   // The task's dossier as it stands now (ADR-0070): its slice for every step, the whole of it as a file.
-  const dossier = task ? e.tasks.dossiers.forBrief(run, node) : {}
-  const extra = [...(carried ? [carried] : []), ...(task?.pointers ?? []), ...(dossier.pointer ? [dossier.pointer] : [])].filter((p) => !own.has(p.ref)).slice(0, BRIEF_LIMITS.pointers - parts.pointers.length)
-  const files = [...(task?.files ?? []), ...(dossier.file ? [dossier.file] : [])].slice(0, BRIEF_LIMITS.files)
+  const dossier = task && !fresh ? e.tasks.dossiers.forBrief(run, node) : {}
+  const extra = [...(carried ? [carried] : []), ...(fresh ? [] : task?.pointers ?? []), ...(dossier.pointer ? [dossier.pointer] : []), ...(guides ? [guides] : [])].filter((p) => !own.has(p.ref)).slice(0, BRIEF_LIMITS.pointers - parts.pointers.length)
+  const files = [...(fresh ? [] : task?.files ?? []), ...(dossier.file ? [dossier.file] : [])].slice(0, BRIEF_LIMITS.files)
   const bound = node.subject ? (JSON.parse(node.subject) as { subject?: { type: 'git-head'; ref: string; version: string } }).subject : undefined
   const handle = spec.session.sessionId ? e.ctx.workers.handle(spec.session.sessionId) : undefined
   return {
@@ -92,6 +100,30 @@ export function draftOf(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNod
     ...(handle ? { resume: { nativeHandle: clampText(handle, 256) } } : {}),
     classification: requirement.data.classification,
   }
+}
+
+/**
+ * The review guides a review step's brief points at (T267): the REVIEW.md of the areas the run's
+ * change touches, read from the repository the run's worktree was cut from, and only those; every
+ * guide when the change's paths could not all be read (INV-2). Undefined for a step that does not
+ * review, a run no Worker source holds a worktree of, or a repository with no guides. A guide that
+ * cannot be used is named in the text, never left out in silence.
+ */
+export async function guidesFor(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode): Promise<BriefPointer | undefined> {
+  if (roleOf(spec, node) !== 'review') return undefined
+  const targets = await landingTargets(e, run.run_id)
+  const root = targets[0]?.repository
+  if (!root) return undefined
+  const { guides, problems } = loadGuides(root)
+  if (!guides.length && !problems.length) return undefined
+  const picked = guidesTouching(guides, await changePaths(e, run.run_id))
+  const rendered = renderGuides(picked.selected, picked.left, picked.all, problems)
+  if (!rendered) return undefined
+  const ref = e.ctx.artifacts.put({
+    kind: 'report', bodySchema: 'review-guides@1.0', body: rendered.body, classification: run.classification ?? e.ctx.egress.defaultClassification,
+    producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id,
+  }).id as ArtifactRef
+  return { ref, role: 'context', note: `the review guides of the areas this change touches (${picked.selected.length}): what failure looks like there, and how to report it` }
 }
 
 /** The length of what a Worker source renders from the draft, in characters (code points), for admission (ADR-0032). */

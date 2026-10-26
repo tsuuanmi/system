@@ -185,37 +185,77 @@ Worker, in the run's own git worktree when the Workers (or their role) set `work
 | `develop:1` | `develop`, `local-data` | standard | `code` | persistent (the run's session; the task's next attempt resumes it) | `acceptance.answer` |
 | `develop:1` (variant `docs`) | `develop`, `local-data` | standard | `docs` | persistent | `acceptance.answer` |
 | `develop:1` (variant `tests`) | `develop`, `local-data` | standard | `tests` | persistent | `acceptance.answer` |
-| `review:1` (depends on `develop:1`) | `review`, `local-data` | standard | none | temporary | `acceptance.answer` |
-| `validate:1` (depends on `review:1`) | `validate`, `local-data` | economy | `validation` | temporary | `acceptance.answer` |
+| `selfreview:1` (depends on `develop:1`) | `review`, `local-data` | standard | none | temporary (a new session) | `acceptance.answer` |
+| `review:1` (depends on `selfreview:1`, `develop:1`) | `review`, `local-data` | standard | none | temporary | `acceptance.answer` |
+
+**Template version 2** (T267; the profile package's version moves with it). Version 1 ended with a
+`validate:1` step, whose median was 0.4 minutes and which caught nothing the run's required checks at
+acceptance did not. It is gone: the author shows its own checks' output, a fresh session of the author
+reviews the diff, and `review:1` is the final step. A row's `kinds.validate` is still accepted and
+ignored, so an update never stops a row from loading; remove it.
 
 - **Kinds of work** ([ADR-0057](../decisions/adr/0057-route-work-by-kind.md)). With no Worker given
   kinds, every step routes as it always did. Once the operator gives Workers kinds
   ([route work by kind](../operations/runbooks.md#route-work-by-kind)), `develop:1` and its fix run
-  on a writer given `code` (or, in the `docs` and `tests` variants, `docs` or `tests`), and
-  `validate:1`, which runs the checks and tests and changes nothing, on one given `validation`: a
-  Worker given `tests` writes tests and never runs the validation unless it is given `validation`
-  too. `review:1` names none, so it needs a reviewer given no kinds. The kinds in the table are the
+  on a writer given `code` (or, in the `docs` and `tests` variants, `docs` or `tests`). `selfreview:1`
+  and `review:1` name none, so they need a reviewer given no kinds. The kinds in the table are the
   shipped ones; the row's `kinds` configuration changes the kind a step names, by step (`develop`,
-  `docs`, `tests`, `validate`; [configuration](configuration.md#profile-software-development)),
-  never the review's. The variants are this template's docs work and test work; no other template
-  carries them.
+  `docs`, `tests`; [configuration](configuration.md#profile-software-development)), never a
+  review's. The variants are this template's docs work and test work; no other template carries them.
 - `develop:1` states the hypothesis it tests, then changes the code toward the task; in the `docs`
   variant it changes documentation only, in the `tests` variant tests only. When the attempt before
   failed only after its `develop:1` completed (its review's session broke, say), no review having
   judged that change, this attempt's worktree already holds it, and its brief says so: it builds on
   it ([starting from the previous attempt's work](../design/workflow-engine.md#starting-from-the-previous-attempts-work)).
+- **The author verifies before anyone reviews** (T267). `develop:1` ends with the author running the
+  checks the task's criteria name and appending their real output, verbatim (each command, its exit
+  code, the lines that hold the result), to the task's dossier as an `evidence` entry
+  (`dossier_append`; its author is the Worker, so a reader tells it from the System's own evidence).
+  The step is refused at its end without that entry, or with one that does not show the checks'
+  output: its evidence must report an exit code for each command it ran (one at least, and one per
+  command check the criteria name, `tests`, `typecheck`, `lint`), name each of those checks, and hold
+  an output line beside the commands and exit codes (`evidenceProblem`). Refused, it fails with
+  `evidence_missing`, a `gate` decision (`workflow.evidence`, version 2) says what is missing, nothing
+  after it starts, and the board counts the attempt. A step that must show its evidence requires the
+  `dossier` capability, which a Worker offers when its runtime gives it the dossier tools: one that
+  cannot is never admitted to it, and nothing is sent. Every fix grown from it (by the self-review or
+  the review) must show the checks' output again, for the tree it leaves, under the same gate. The
+  entry is the author's report, never a check the engine reports: the run's required checks run again
+  on the exact result at acceptance
+  ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)).
+- `selfreview:1` is **the author's own review in a fresh context** (T267): a review of the exact
+  change, on the author's account (the Workers of the account `develop:1` ran on; a writer never
+  proves `review`, so it is that account's read-only role), in a session of its own. It never sees
+  the author's transcript: its brief is the task's goal and criteria, the exact diff (its requested
+  change the task's goal, never the caller's input), and the review guides of the areas the change
+  touches ([handbook](../design/handbook.md#review-guides-reviewmd)). It is given no dossier (no slice,
+  no file, and `dossier_read` is refused), none of the task's pointers (earlier results and decisions),
+  and no file in its worktree: an agent Worker's source leaves in a run's worktree (`.system/`) only
+  the files of the brief of the run starting, so the dossier and board an earlier step was given are
+  removed before the self-review's agent starts, and a later step's brief places its own again. Its
+  important findings are verified as a review's are (`selfreview:1:verify`,
+  [ADR-0075](../decisions/adr/0075-a-review-finding-has-a-severity-and-only-a-verified-important-one-blocks.md)),
+  and the confirmed ones grow a fix that continues `develop:1`'s session, answered (a
+  `response` entry) and re-reviewed before `review:1` starts, with **no approval gate**: it is the
+  author answering its own review, and `review:1` keeps every gate. It is never an independent
+  review: it counts for no risk tier, provider family, or acceptance (`approvals`, the board's last
+  review, the `review` check), and the landing's commit message names it "the author's own review".
+  With no Worker of the author's account that proves `review`, it fails admission with nothing sent
+  (INV-2).
 - `review:1` is an exact-subject review of that change: the engine appends the subject, its diff,
   and the assessment it asks for. The reviewer reads the task's goal, its criteria, and the
   change, never the developer's answer. It reads and judges, and never runs the project's tests or
-  builds: `validate:1` and the run's required checks at acceptance
-  ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)) run them. A command it
-  could not run is not a finding about the change; an environment limit (its read-only sandbox, a
-  denied command) is at most an `info` finding, so it never grows a remediation cycle that no fix
-  could satisfy. Its instructions and the engine's subject block both say so. Blocking findings grow a fix (on `develop:1`'s
-  capabilities) behind the approval queue and a re-review given the review's own instructions on
-  the fixed subject, as for any template
-  ([remediation](../design/workflow-engine.md#remediation-on-the-approval-queue)); `validate:1`
-  waits for them.
+  builds: the author showed its checks' output in the dossier, and the run's required checks at
+  acceptance ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md))
+  run them again. A command it could not run is not a finding about the change; an environment
+  limit (its read-only sandbox, a denied command) is at most a `nit`, so it never grows a
+  remediation cycle that no fix could satisfy. Its instructions and the engine's subject block both
+  say so. Its important findings are verified by a second reviewer (`review:1:verify`, ADR-0075), and
+  only the confirmed ones grow a fix (on `develop:1`'s capabilities) behind the approval queue and a
+  re-review given the review's own instructions on the fixed subject, as for any template
+  ([remediation](../design/workflow-engine.md#remediation-on-the-approval-queue)). It is the final
+  node, so the run's result is its report on the subject the task writes, after any fix: the task
+  keeps it, its digest cites it, and the next attempt's brief points at it.
 - **One task, one author session** ([review cycles](../design/workflow-engine.md#review-cycles)).
   The fix continues `develop:1`'s session on its Worker: the review's findings, the subject the
   reviewer read, and what to change are that session's next message, so the developer fixes its
@@ -226,33 +266,26 @@ Worker, in the run's own git worktree when the Workers (or their role) set `work
   The re-review stays independent, in a session of its own. The run's review history (the ref
   `refs/system/reviews/<runId>` of the repository) keeps the change the review read and each fix
   as commits of their own; the worktree's HEAD stays the commit the task writes, so the task's
-  result and checks bind to it as before. A re-review reads the change since the last reviewed
-  subject as well as the whole change.
-- `validate:1` runs the tests and benchmarks the task's acceptance criteria name, changing no
-  file, and reports each command, its exit code, and the output lines that hold the result. It
-  reads the criteria, each with what checks it, from its brief, never the caller's input (below);
-  with no criteria (a run that serves no board task) it runs nothing and says none was named. Only a
-  Worker whose commands are proven confined (`executes`) proves `validate`
-  ([ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)); with none, the
-  step fails admission and nothing is sent. Each command passes the tool gate by its exact argv: a
-  listed one runs as a workspace write, and any other is denied, since the step has no session to
-  defer it on.
-- `validate:1` is the final node, so the run's result is the validation's report on the subject
-  the task writes, after any fix: the task keeps it, its digest cites it, and the next attempt's
-  brief points at it. The engine reports the `review` check on that subject, never `tests` from the
-  validation's report: a model's account of a command is not a check. After `validate:1`, the run
-  itself runs the checks the policy requires that are commands, on that subject, with the commands
-  the operator configured for the repository, and reports those by their exit codes
+  result and checks bind to it as before. A re-review reads only the change since the last reviewed
+  subject, with the open and answered findings
+  ([severity and verification](../design/workflow-engine.md#severity-and-verification)).
+- There is no validation step. The engine reports the `review` check on the subject, never `tests`
+  from the author's pasted output: a model's account of a command is not a check. After `review:1`,
+  the run itself runs the checks the policy requires that are commands, on that subject, with the
+  commands the operator configured for the repository, and reports those by their exit codes
   ([a run's required checks](../design/workflow-engine.md#a-runs-required-checks)); with none
   configured, under a policy that requires `tests` the board holds the result for the operator.
+- **Review guides** ([handbook](../design/handbook.md#review-guides-reviewmd)). A review step
+  (`selfreview:1`, `review:1`, a re-review, a second review) is given the `docs/review/*.REVIEW.md`
+  guides of the areas its change touches, and only those, as a `review-guides@1.0` pointer in its
+  brief (every guide when the change's paths could not all be read). They are read from the
+  repository the run's worktree was cut from, never from the worktree under review.
 - **Tiered by risk** when the task's project policy has a path map
   ([process tiered by risk](../design/workflow-engine.md#process-tiered-by-risk), ADR-0071): once
   `review:1` (or a re-review) approves, the engine decides the change's tier. A **heavy** change gets
-  `review:1:second`, a review of the same change by a Worker of another provider family, before
-  `validate:1`; with one family it fails admission and the run fails. A **light** change skips
-  `validate:1` (`riskSkip: ['light']`) once every check the policy requires passed on its exact
-  tree, and the run's result is then the last review's answer. A heavy result is never accepted
-  without the operator.
+  `review:1:second`, a review of the same change by a Worker of another provider family; with one
+  family it fails admission and the run fails. The self-review never counts toward it. A heavy
+  result is never accepted without the operator.
 
 #### Which inputs reach which step
 
@@ -269,16 +302,13 @@ the decision that carried it), and the board's `TASKS.md` in the worktree.
 | Step | Reads | Never reads |
 |---|---|---|
 | `develop:1` (and its variants) | the task frame; the caller's input; on a later attempt, the session of the attempt before it when it is resumed | — |
-| `review:1` | the task frame; its own instructions; the exact subject the engine appends: the worktree's subject, its diff, and the caller's input as the requested change | the developer's answer or conversation |
+| `selfreview:1` (and its re-reviews) | the task frame's goal, criteria, and budget; its own instructions; the exact subject the engine appends (the worktree's subject, its diff, and the task's goal as the requested change); the review guides | the author's answer and conversation, the caller's input, the task's pointers, the dossier, and the worktree's files |
+| `selfreview:1:fix:<n>` | as `review:1:fix:<n>`, on the author's session, told to show the checks' output again | — |
+| `review:1` | the task frame; its own instructions; the exact subject the engine appends: the worktree's subject, its diff, and the caller's input as the requested change; the review guides; the task's dossier | the developer's answer or conversation |
 | `review:1:fix:<n>` (remediation) | the task frame; the engine's fix prompt: the caller's input, the reviewed subject, and the review's blocking findings, quoted | — |
 | `review:1:review:<n+1>` | as `review:1`, on the fixed subject | the fix's answer |
-| `validate:1` | the task frame; its own instructions; the run's worktree as the review left it | the caller's input, and any step's answer |
 
-A run of the template that serves no board task has no task frame: its validation names no
-criteria and runs nothing, so start it for a board task (MCP `run` with `task`).
-
-A step on a writing Worker (a `workspace-write` sandbox: `develop:1`, its fix, and `validate:1`,
-whose commands run) also reads, after its instructions and before its Tools section, the section
+A step on a writing Worker (a `workspace-write` sandbox: `develop:1` and its fixes) also reads, after its instructions and before its Tools section, the section
 **Lessons of this repository**: the lines of the repository's
 [`docs/engineering/lessons.md`](../engineering/lessons.md) that start with `- `, as committed at
 the HEAD of the Worker's repository (an uncommitted edit, a Worker's included, is never read), at
@@ -307,7 +337,7 @@ one fails admission, fail closed, with the capability named:
 | `ask` | runs on model Workers, in a session too: a model Worker keeps it by replay ([ADR-0031](../decisions/adr/0031-model-worker-sessions-by-replay.md)) |
 | `brainstorm`, `review` | run on model Workers, each member in its own session by replay; members of one family need `allowSameFamily` ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)); a `review` member may also be an agent Worker under the review-member profile |
 | `agent-review` | runs on agent Workers (the preset turns their rows and the software-development profile on) |
-| `algorithm-development` | runs on agent Workers, as `agent-review`; `validate:1` needs one whose commands are proven confined |
+| `algorithm-development` | runs on agent Workers, as `agent-review`; `selfreview:1` needs a Worker of the author's account that proves `review` (its read-only role) |
 | `research` | `frame:1` runs on a model Worker; `literature:1` fails: no Worker proves `web-search` (variant `deep`: `deep-research`), and `literature:2` sends nothing |
 
 ## Acceptance contracts

@@ -887,6 +887,15 @@ function exclusionShortage(team: NonNullable<ResolvedNode['team']>, listed: read
  * conversation keeps it only as this team's own in this run, recorded (see {@link ownConversation}).
  */
 export async function restriction(e: Engine, run: Pick<RunRow, 'run_id'>, spec: ResolvedNode, requirement?: WorkRequirement): Promise<Restriction | { problem: string }> {
+  // An author's self-review (T267) runs on the author's own account, in a conversation of its own:
+  // the Workers of that account (its roles; a writer never proves `review`, so the one that does is
+  // its read-only role). With none that can review, it is refused, nothing sent (INV-2).
+  if (spec.selfReview !== undefined) {
+    const author = e.nodeRow(run.run_id, spec.selfReview)?.worker
+    if (!author) return { problem: `${spec.nodeId} is the self-review of ${spec.selfReview}, which has no Worker to review on; nothing was sent` }
+    const workers = [...new Set([author, ...e.ctx.workers.siblings(author)])]
+    return { restrict: { workers, reason: `${spec.nodeId} is the self-review of ${spec.selfReview}: it runs on that step's account (${workers.join(', ')}), in a new session` } }
+  }
   const own = spec.session.sessionId ? e.ctx.workers.affinity(spec.session.sessionId) : undefined
   if (own) return ownConversation(e, run, spec, own)
   if (!spec.team?.member) return {}

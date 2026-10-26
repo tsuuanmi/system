@@ -40,7 +40,7 @@
 # change (no `approvals` row). Reads and edits run (`read`, `workspace-write: auto`, with `tests` and
 # `lint` required at acceptance, so every result waits for the operator's review); every command
 # (`Bash` for Claude Code, Codex's shell) is a `command`, which asks: in a step with a session
-# (develop:1) it waits on the approval queue, in one without (validate:1) it is denied and reported
+# (develop:1) it waits on the approval queue, in one without (review:1) it is denied and reported
 # not run. The policy lists no command, so nothing runs unasked. See the runbook before listing one:
 # a run's fresh worktree has no node_modules and the Worker has no network.
 - id: agent-workers
@@ -58,8 +58,9 @@
         tier: standard
         worktreePerRun: true
         kinds: [code, docs, tests]
-      # 2026-10-25: runs the checks and tests (`validate:1` is `validation` work) and changes
-      # nothing; it takes no writing step. Its commands run in Codex's own sandbox inside the
+      # 2026-10-25: runs the checks and tests (`validation` work) and changes nothing; it takes no
+      # writing step. Since T267 algorithm-development has no `validate:1` (its author runs the checks),
+      # so this Worker takes no step of that template. Its commands run in Codex's own sandbox inside the
       # confinement. It stays workspace-write: only such a Worker proves `validate`. Give no other
       # Worker `validation`, or list it on one more to share the validations.
       - id: codex-writer
@@ -127,7 +128,8 @@
 
 # The algorithm-development template, whose steps name their kinds: on, as in the live patch (D30).
 # `kinds` here are the shipped ones, written out: change one to move that step to the Workers given
-# the new kind (`validate: tests` would hand the validation to the Workers given `tests`).
+# the new kind (`develop: docs` would hand the code changes to the Workers given `docs`). A
+# `validate` key is retired (T267: the template has no validate step) and is ignored; leave it out.
 - id: profile-software-development
   disabled: false
   config:
@@ -135,4 +137,3 @@
       develop: code
       docs: docs
       tests: tests
-      validate: validation

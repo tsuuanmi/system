@@ -98,6 +98,7 @@ async function bootTask(agent: AgentRuntimeProvider) {
 
 const PLAN = 'Plan: make add() return a + b in calc.py; risk: a caller relying on the difference.'
 const PROGRESS = 'Changed calc.py: add() adds. Remains: a test, which I did not write.'
+const EVIDENCE = '$ npm test\nexit 0\nTests: 3 passed, 0 failed'
 const append = (input: Record<string, unknown>) => ({ tool: 'mcp__system__dossier_append', input })
 
 describe('an agent Worker\'s own dossier tools (ADR-0070)', { timeout: 60_000 }, () => {
@@ -106,39 +107,44 @@ describe('an agent Worker\'s own dossier tools (ADR-0070)', { timeout: 60_000 },
       append({ kind: 'plan', text: PLAN }),
       // The agent cannot choose the step or the run it writes for: no such argument exists, and the gate refuses it.
       append({ kind: 'progress', text: 'forged', runId: 'run_other', nodeId: 'review' }),
-      // Nor write the System's evidence.
-      append({ kind: 'evidence', text: 'all checks passed' }),
+      // Nor write a reviewer's kind.
+      append({ kind: 'review', text: 'approve' }),
+      // An author shows the output of the checks it ran as evidence (T267): its own report, by its own name.
+      append({ kind: 'evidence', text: EVIDENCE }),
       append({ kind: 'progress', text: PROGRESS, commits: ['0123abc'] }),
       { tool: 'mcp__system__dossier_read', input: { limit: 10 } },
     ])
     const { ctx, task, run, done } = await bootTask(agent)
     expect(done).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted' } } })
-    // The run was given the two tools, and told what to write with them.
+    // The run was given the two tools, and told what to write with them; its Worker offers `dossier`, which a step that must show its checks' output needs (T267).
     expect(agent.runs[0]!.hostTools?.map((t) => t.name)).toEqual(['dossier_read', 'dossier_append'])
+    expect((await ctx.workers.list()).find((w) => w.worker === 'agent:dev')!.capabilities.map((c) => c.capability)).toContain('dossier')
     expect(agent.runs[0]!.prompt).toContain('dossier_append adds your entry as this step\'s Worker')
-    const [plan, forged, evidence, progress, read] = agent.verdicts
+    const [plan, forged, review, evidence, progress, read] = agent.verdicts
     expect(plan).toEqual({ decision: 'allow' })
     expect(forged).toMatchObject({ decision: 'deny', reason: expect.stringContaining('carries "runId", a field the gate does not classify') })
-    // The gate lets the call through to the tool, which refuses the System's kind: nothing is appended.
-    expect(evidence).toEqual({ decision: 'allow' })
-    expect([progress, read]).toEqual([{ decision: 'allow' }, { decision: 'allow' }])
-    expect(agent.answers.map((a) => a.isError)).toEqual([false, true, false, false])
-    expect(agent.answers[1]!.text).toMatch(/^refused: .*evidence is the System's alone/)
-    expect(JSON.parse(agent.answers[3]!.text)).toMatchObject({ taskId: task.taskId, total: 2, entries: [{ seq: 1, kind: 'plan' }, { seq: 2, kind: 'progress' }] })
+    // The gate lets the call through to the tool, which refuses a kind the step's role does not write: nothing is appended.
+    expect(review).toEqual({ decision: 'allow' })
+    expect([evidence, progress, read]).toEqual([{ decision: 'allow' }, { decision: 'allow' }, { decision: 'allow' }])
+    expect(agent.answers.map((a) => a.isError)).toEqual([false, true, false, false, false])
+    expect(agent.answers[1]!.text).toMatch(/^refused: .*a writing step appends plan, progress, response, evidence, not review/)
+    expect(JSON.parse(agent.answers[4]!.text)).toMatchObject({ taskId: task.taskId, total: 3, entries: [{ seq: 1, kind: 'plan' }, { seq: 2, kind: 'evidence' }, { seq: 3, kind: 'progress' }] })
 
     // The entries are the step's Worker's, bound to the step and the execution this source ran it as.
     const execution = done.nodes.find((n) => n.nodeId === 'change')!.executionId!
     const page = ctx.workflow.dossier({ taskId: task.taskId })
     expect(page.entries.map((e) => [e.kind, e.author])).toEqual([
       ['plan', { type: 'worker', ref: 'agent:dev', runId: run.runId, nodeId: 'change', execution }],
+      // The author's own evidence is the Worker's, never the System's: a reader tells them apart by author.
+      ['evidence', { type: 'worker', ref: 'agent:dev', runId: run.runId, nodeId: 'change', execution }],
       ['progress', { type: 'worker', ref: 'agent:dev', runId: run.runId, nodeId: 'change', execution }],
       // The System's evidence: acceptance, then the report to the board (the landing's outcome may follow).
       ['evidence', { type: 'system', ref: 'workflow', runId: run.runId }],
       ['evidence', { type: 'system', ref: 'workflow', runId: run.runId }],
-      ...page.entries.slice(4).map(() => ['evidence', { type: 'system', ref: 'workflow', runId: run.runId }]),
+      ...page.entries.slice(5).map(() => ['evidence', { type: 'system', ref: 'workflow', runId: run.runId }]),
     ])
-    expect(page.entries.map((e) => e.text).slice(0, 2)).toEqual([PLAN, PROGRESS])
-    expect(page.entries[1]!.commits).toEqual(['0123abc'])
+    expect(page.entries.map((e) => e.text).slice(0, 3)).toEqual([PLAN, EVIDENCE, PROGRESS])
+    expect(page.entries[2]!.commits).toEqual(['0123abc'])
     // It wrote its own, so the engine added no entry for the step; its transcript is nowhere in the dossier.
     expect(page.entries.some((e) => e.text.includes('Transcript'))).toBe(false)
     // Once the step settled, the tools it held write nothing more.
@@ -152,6 +158,7 @@ describe('an agent Worker\'s own dossier tools (ADR-0070)', { timeout: 60_000 },
     expect(done).toMatchObject({ status: 'completed' })
     expect(agent.runs[0]!.hostTools).toBeUndefined()
     expect(agent.runs[0]!.prompt).not.toContain('dossier_append')
+    expect((await ctx.workers.list()).find((w) => w.worker === 'agent:dev')!.capabilities.map((c) => c.capability)).not.toContain('dossier')
     // A host tool the run was not given is no tool of System's: denied.
     expect(agent.verdicts).toEqual([expect.objectContaining({ decision: 'deny', reason: expect.stringContaining('this run was given no such host tool') })])
     const [entry] = ctx.workflow.dossier({ taskId: task.taskId }).entries

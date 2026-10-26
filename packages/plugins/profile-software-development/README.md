@@ -18,17 +18,32 @@ holds no engine code and no rules of its own.
     the change, and its brief says so ([starting from the previous attempt's work](../../../docs/design/workflow-engine.md#starting-from-the-previous-attempts-work)). Its variants `docs`
     and `tests` make it that kind of work, changing documentation only or tests
     only (`system run algorithm-development --variant docs`, MCP `run` with
-    `variant`);
+    `variant`). **It ends with the author's own checks (T267):** it runs the checks
+    the task's criteria name and appends their real output to the task's dossier as an
+    `evidence` entry; without one that shows each command's exit code and output, the
+    step is refused at its end (`evidence_missing`). It is admitted only to a Worker
+    given the dossier tools (`dossier`), and every fix grown from it shows the checks'
+    output again;
+  - `selfreview:1` (`review`, `local-data`) is the author's own review in a fresh
+    context: a new session on the author's account (its read-only role) that never saw
+    the author's transcript, given only the task's goal and criteria, the exact diff, and
+    the review guides, never the dossier, the task's pointers, or the author's orders. Its
+    confirmed important findings grow a fix in the author's session, answered before `review:1`
+    starts, with no approval gate; it counts for no tier, family, or acceptance;
   - `review:1` (`review`, `local-data`) reviews that exact change on a read-only
-    Worker. It reads the task, its criteria, and the change, never the
+    Worker, after the self-review. It reads the task, its criteria, and the change, never the
     developer's answer (its prompt points at no step's result); a remediation
-    cycle's re-review is given the same instructions, on the fixed subject. The
+    cycle's re-review is given the same instructions, on the fixed subject. It is given the
+    [review guides](../../../docs/review/README.md) of the areas the change touches. The
     reviewer reads and judges the change and never runs the project's tests or
-    builds (`validate:1` and the run's required checks at acceptance run them,
-    ADR-0063): a command it could not run is not a finding about the change, and
-    an environment limit (its read-only sandbox, a denied command) is at most a
-    `nit`. The engine's exact-subject block says the same to every bound
-    review, `agent-review`'s too;
+    builds (the author showed its checks' output, and the run's required checks at
+    acceptance run them again, ADR-0063): a command it could not run is not a finding
+    about the change, and an environment limit (its read-only sandbox, a denied command)
+    is at most a `nit`. The engine's exact-subject block says the same to every
+    bound review, `agent-review`'s too. It is the final step: its report is the run's
+    result, what the task keeps, what its digest cites, and what the next attempt reads.
+    The template had a `validate:1` step until T267 (median 0.4 minutes, nothing the
+    required checks did not catch); it is folded into the two above;
   - **Review cycles** ([ADR-0075](../../../docs/decisions/adr/0075-a-review-finding-has-a-severity-and-only-a-verified-important-one-blocks.md),
     [severity and verification](../../../docs/design/workflow-engine.md#severity-and-verification)):
     each finding of `review:1` is `important`, `nit`, or `pre-existing`, with its file, line,
@@ -36,45 +51,35 @@ holds no engine code and no rules of its own.
     important finding grows `review:1:verify`, a second reviewer (another family where one
     is free, else a fresh session) that votes on it against the code; only a confirmed one
     grows the fix (`review:1:approve:1`, `review:1:fix:1`, in the author's session) and the
-    re-review (`review:1:review:2`). Nits reach the author once, as optional notes of a fix or
+    re-review (`review:1:review:2`). The self-review's findings are verified the same way
+    (`selfreview:1:verify`), and its confirmed ones grow `selfreview:1:fix:1` and
+    `selfreview:1:review:2` with no approval gate. Nits reach the author once, as optional notes of a fix or
     a dossier entry, and never start a round or hold auto-accept; a pre-existing finding
     proposes a follow-up task. A re-review reads only the change since the last reviewed tree
     with the open and answered findings, and from its third round says whether the approach
-    should change. The bound is `maxReviewCycles` (3, the first review included);
-  - `validate:1` (`validate`, `local-data`, economy at least; `validation` work) runs the tests and
-    benchmarks the task's criteria name, in a one-shot conversation (no session),
-    on a Worker whose commands are proven confined (`executes`). It reads the task's
-    criteria, each with what checks it (`brief@1.3`), from its brief, and never the
-    caller's input, which is the develop step's orders (T99 D4), nor any step's answer;
-    with no criteria it runs nothing and says so
+    should change. The bound is `maxReviewCycles` (3, the first review included)
     ([which inputs reach which step](../../../docs/reference/workflow-templates.md#which-inputs-reach-which-step)).
-    It comes last, so its report
-    measures the subject the task leaves after any fix, and that report is the
-    run's result: what the task keeps, what its digest cites, and what the next
-    attempt reads.
   - **Kinds of work** ([ADR-0057](../../../docs/decisions/adr/0057-route-work-by-kind.md)):
     the steps name what they are, never who takes them: `develop:1` is `code`
-    work (`docs` or `tests` in those variants), and `validate:1` is `validation`
-    work, apart from test writing. A Worker the operator gives kinds takes only
-    steps of those kinds, so giving one writer `code`, `docs`, and `tests` and
-    another Worker `validation` keeps the changes on the one and the checks on
-    the other ([route work by kind](../../../docs/operations/runbooks.md#route-work-by-kind));
-    with no Worker given kinds, every step routes as before. The review names
-    none, so its reviewer must be a Worker given no kinds.
+    work (`docs` or `tests` in those variants). A Worker the operator gives kinds
+    takes only steps of those kinds, so giving one writer `code`, `docs`, and `tests`
+    keeps the changes on it
+    ([route work by kind](../../../docs/operations/runbooks.md#route-work-by-kind));
+    with no Worker given kinds, every step routes as before. The reviews name
+    none, so their reviewers must be Workers given no kinds.
   - **Config `kinds`** sets the kind each step names, by step (`develop`, `docs`,
-    `tests`, `validate`), defaulting to the shipped kinds (`DEFAULT_KINDS`), so
+    `tests`), defaulting to the shipped kinds (`DEFAULT_KINDS`), so
     which Worker takes a step is configuration
     ([configuration](../../../docs/reference/configuration.md#profile-software-development)).
     `checkConfig` (for `system check`) and the load refuse a key that is not a
-    step and a kind that is not a kind of work (INV-2); no key gives the review a
-    kind.
+    step and a kind that is not a kind of work (INV-2); no key gives a review a
+    kind. A `validate` key of an earlier version is accepted and ignored.
   - The project's charter and milestones are the board's, the exact-subject
     review, remediation through the approval queue, briefs, and digests the
     engine's, for any template ([workflow engine](../workflow/README.md)).
-  - A validation's report is evidence, not a check the engine reports: under a
-    policy that requires `tests`, the board holds each result for the operator.
-    A command the policy does not list exactly is denied (the step has no session
-    to defer it on) and reported not run ([pilot](../../../docs/operations/pilot.md)).
+  - The author's pasted output is its report, not a check the engine reports: under a
+    policy that requires `tests`, the board holds each result for the operator unless
+    the run's own checks ran ([pilot](../../../docs/operations/pilot.md)).
 - **Off by default:** the row is off in the default composition (PROP-0004),
   though the Claude Code agent rows it needs are on (PROP-0010 B3); the
   `api-first` preset turns it on
@@ -87,15 +92,19 @@ holds no engine code and no rules of its own.
   board, approval queue, ledger, digest provider, and `agents` source with a
   worktree per run, over a scratch repository, with only the agent runtime
   scripted (it asks the tool gate before every call). One attempt with a fix
-  through the queue, held for the operator with its digest, the validator given
-  the criteria and their checks but not the caller's input; validation with no
-  Worker proving `validate`; an unlisted validation command; Workers given kinds,
-  every writing step (the fix, and the `tests` variant's) on the writer given
-  `code`, `docs`, and `tests`, and `validate:1` alone on the Worker given
-  `validation`; validation failing closed when no Worker given kinds lists
-  `validation`; and a configured kind routing `validate:1` to the writer given
-  `tests`. [`tests/profile.spec.ts`](tests/profile.spec.ts) checks the shipped
-  and configured kinds, and refuses a bad `kinds`.
+  through the queue, held for the operator with its digest, the author's
+  checks' output in the dossier, the fix's again; a develop step with no such
+  output, or evidence that shows none, refused at its end; a Worker with no
+  dossier tool never admitted to it; the self-review in a new session on the
+  author's account, given no dossier, refused one, and finding none the author's step was given in the worktree, its findings answered in
+  the author's session before the review starts, with no gate;
+  the review guides of the areas the change touches in the review's brief and
+  not the writer's; Workers given kinds, every writing step (the fix, and the
+  `tests` variant's) on the writer given `code`, `docs`, and `tests`; and a
+  configured kind routing `develop:1` to the writer given `docs`.
+  [`tests/profile.spec.ts`](tests/profile.spec.ts) checks the shipped
+  and configured kinds, that the template has no validate step, and refuses a
+  bad `kinds`.
   [`tests/landing.spec.ts`](tests/landing.spec.ts) lands an accepted result (ADR-0060), rebased
   onto a base that moved, a conflict resolved by its author's Worker (ADR-0068), and
   [`tests/carry.spec.ts`](tests/carry.spec.ts) starts a task's next attempt from the work its

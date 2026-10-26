@@ -1371,11 +1371,12 @@ rebased onto it before the merge is asked:
 A policy rule's `requires` are checks the result must pass before it is accepted
 ([approvals](approvals.md#a-verdict-is-not-yet-a-permission)). Those that are commands (`tests`,
 `typecheck`, `lint`) the run runs itself, on the exact tree its result is on, before its
-acceptance is decided; a model's account of a command, such as `validate:1`'s report, is never one.
+acceptance is decided; a model's account of a command, such as the output an author pastes into the
+task's dossier as `evidence` (T267), is never one.
 
 | Step | Records | On failure |
 |---|---|---|
-| asked | once every step of a run that wrote has completed (`algorithm-development`: after `validate:1`), for a board task's run whose task writes a `git-head` subject or writes none (the tree is then its latest agent result's, as a plain run's: T165), or a plain run with a completed `develop` step, whose result is an agent's on a git working tree: `ctx.approvals.check` on the class its acceptance is judged under (the task's action class and project; `workspace-write` for a plain run), with the checks the run judged itself (`schema`, `review`); under `auto` or `notify`, its `failedChecks` that are commands are asked for | a check the run judged itself failed (the acceptance rejects), no queue, a policy that cannot be read, another mode, or none required: nothing is asked, and the checks stay as the policy says |
+| asked | once every step of a run that wrote has completed (`algorithm-development`: after `review:1`), for a board task's run whose task writes a `git-head` subject or writes none (the tree is then its latest agent result's, as a plain run's: T165), or a plain run with a completed `develop` step, whose result is an agent's on a git working tree: `ctx.approvals.check` on the class its acceptance is judged under (the task's action class and project; `workspace-write` for a plain run), with the checks the run judged itself (`schema`, `review`); under `auto` or `notify`, its `failedChecks` that are commands are asked for | a check the run judged itself failed (the acceptance rejects), no queue, a policy that cannot be read, another mode, or none required: nothing is asked, and the checks stay as the policy says |
 | run | `ctx.workers.check` with the run, the worktree, the exact subject, the checks, and the run's classification: the source that holds the worktree runs them ([a run's checks](agent-runtimes.md#a-runs-checks)) and records a `check-run@1.0` evidence artifact; first, when the result changed a dependency file against the tree the worktree's setup last ran on, it runs the setup again on the result's tree ([below](#a-result-that-changes-its-dependencies)) | no `check` on the seam, no source holding the worktree, or a refusal (`moved`, `gone`, `busy`, `dependency_unavailable`, `failed`): none ran, and each stays pending, the reason recorded |
 | reported | the acceptance decision ([board tasks](#board-tasks), or [a plain run's](#a-plain-runs-acceptance)) reports each check that ran to an exit code on that very subject, `passed` or `failed`, in `outcome.detail.checks`; names the evidence among its inputs; gives each `error` as a reason; and records what was asked and answered in `outcome.detail.checkRun` (rule version 2) | a check the source answered `error` is not reported: it stays pending (INV-2) |
 
@@ -1490,8 +1491,12 @@ everything below is skipped.
   or by the policy alone: it holds it for the operator, the reason in the hold's decision
   (`detail.heavy`), reading the tier from the `workflow.risk-tier` decision among the acceptance's
   inputs, never from the acceptance's own claim ([board](board.md#required-checks-bind-at-acceptance)).
-- **A light change's result.** With `validate:1` skipped, the run's result is its last review's
-  answer; the required checks still bind at acceptance.
+- **A light change's result.** With a final step skipped (no shipped template has one since T267),
+  the run's result is its last review's answer; the required checks still bind at acceptance.
+- **The author's own review is no review for the tier** (T267). A review step whose spec says
+  `selfReview` (the author's fresh-session review of its own change, on the author's account) is
+  left out of the approving reviews the tier, the families, the board's last review, and the
+  `review` check read: it counts for no acceptance, and the landing's commit message names it.
 - **Shown.** `explain` gives `risk`: the run's latest tier, why, and its decision (the acceptance's
   when there is one, else the latest review's); `system explain` prints it first, and the run's page
   on `/ui` lists it under *What happened*.

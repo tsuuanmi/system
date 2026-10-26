@@ -13,7 +13,8 @@ import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { acceptPlain } from './acceptance.ts'
 import { checksFor, landingTargets } from './checks.ts'
-import { type Draft, draftOf, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
+import { DOSSIER_CAPABILITY, type TaskDossiers } from './dossiers.ts'
+import { type Draft, draftOf, guidesFor, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
 import { awaitCall, settleCalls, waitsOnCall } from './continuations.ts'
 import { authorDraft, commitFixed, commitReviewed, continued, waitForAuthor } from './fix-sessions.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
@@ -308,7 +309,8 @@ export class Engine {
    */
   requirementOf(node: ResolvedNode, persistent: boolean, classification: Classification | undefined): WorkRequirement {
     const member = node.team?.kind === 'review' && node.team.member !== undefined
-    const capabilities = [...new Set([...node.capabilities, ...(persistent ? ['persistent-conversation'] : [])])]
+    // A step that must show its checks' output in the task's dossier (T267) needs a Worker given the dossier tools.
+    const capabilities = [...new Set([...node.capabilities, ...(persistent ? ['persistent-conversation'] : []), ...(node.showsEvidence ? [DOSSIER_CAPABILITY] : [])])]
     const prefers = (node.prefers ?? []).filter((c) => !capabilities.includes(c))
     return {
       schema: prefers.length ? 'work-requirement@1.3' : node.kind !== undefined ? 'work-requirement@1.2' : member ? 'work-requirement@1.1' : 'work-requirement@1.0',
@@ -580,9 +582,11 @@ export class Engine {
     if (spec.resultSchema) parts = appended(parts, `\n\n${schemaBlock(spec.resultSchema, this.schemas.schemaOf(spec.resultSchema))}`)
     // A review of an agent's change binds to the workspace's exact subject now (REQ-TEAM-5, REQ-WF-5).
     // A re-review reads the change since the subject the last review read, and the whole change (review cycles).
-    // A verification step is bound to the very tree the review it verifies read (ADR-0075).
+    // A verification step is bound to the very tree the review it verifies read (ADR-0075). An author's
+    // self-review (T267) is told the task's goal as the requested change, never the caller's input (the author's orders).
+    const request = spec.selfReview !== undefined ? this.tasks.frame(run.run_id)?.goal ?? 'the task\'s goal, in the brief above' : run.input
     const found = spec.verifies ? verificationSubject(this, spec, nodes, run.input)
-      : spec.capabilities.includes('review') ? reviewSubject(this, results, run.input, (workspace, now) => cycleOf(this, run.run_id, spec, nodes, workspace, now)) : undefined
+      : spec.capabilities.includes('review') ? reviewSubject(this, results, request, (workspace, now) => cycleOf(this, run.run_id, spec, nodes, workspace, now)) : undefined
     if (found && 'missing' in found) {
       const decision = missingSubject(this, run, node, found.missing)
       const error: WorkflowError = { kind: 'stale_subject', disposition: 'NONE', message: `exact-subject gate: the agent's working tree ${found.missing} can no longer be captured` }
@@ -695,7 +699,10 @@ export class Engine {
       // The brief this execution is given, but for the routed Worker's sandbox (docs/design/workflow-engine.md#briefs).
       let draft: Draft
       try {
-        draft = draftOf(this, run, node, spec, record.requirement)
+        // A review is given the REVIEW.md guides of the areas its change touches (./review-guides.ts).
+        const guides = await guidesFor(this, run, node, spec)
+        if (signal.aborted) return
+        draft = draftOf(this, run, node, spec, record.requirement, guides)
         // On its session after an earlier step ran off it: handed what that step's turn added (session-moves.ts).
         draft = sessionGaps(this, run, spec, draft)
         // A review's fix continues its author's session; a lost one is handed off, recorded (./fix-sessions.ts).
@@ -1050,12 +1057,18 @@ export class Engine {
     const decisions = { decisions: JSON.stringify([...execution.decisions, ...routedDecisions(node, this)]) }
     const data = { executionId: execution.id, source: node.source, worker: node.worker, tier: node.served_tier, quotaClass: node.quota_class, accepted: acceptance.accepted }
     let gate: ReturnType<typeof verificationGate> | undefined
+    let unverified: ReturnType<TaskDossiers['evidenceGate']>
     this.ctx.store.transaction(() => {
       const refused = acceptance.accepted && spec.grows ? grow(this, run, node, spec, result, lease) : undefined
       if (refused) {
         const error: WorkflowError = { kind: 'plan_rejected', disposition: 'NONE', message: refused.message }
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: refused.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: refused.decision, data: { ...data, kind: error.kind, disposition: error.disposition } })
+      } else if (acceptance.accepted && spec.showsEvidence && (unverified = this.tasks.dossiers.evidenceGate(run, node))) {
+        // A writing step that shows no output of its checks ends here, before anything reviews it (T267).
+        const error: WorkflowError = { kind: 'acceptance_rejected', disposition: 'NONE', message: `evidence_missing: ${unverified.message}` }
+        this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: unverified!.decision }), lease)
+        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: unverified.decision, data: { ...data, kind: error.kind, disposition: error.disposition } })
       } else if (acceptance.accepted && node.subject && !(gate = spec.verifies ? verificationGate(this, run, node, result, lease) : subjectGate(this, run, node, result)).passed) {
         const error: WorkflowError = { kind: 'stale_subject', disposition: 'NONE', message: `exact-subject gate: ${gate.reason}` }
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: gate!.decision }), lease)

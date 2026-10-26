@@ -90,6 +90,20 @@ export interface NodeTemplate {
    * final step, never at `heavy`; with no path map in the policy, it always runs.
    */
   riskSkip?: RiskTier[]
+  /**
+   * On a writing step of a board task's run (T267): it ends with the output of the checks the author
+   * ran, pasted into the task's dossier as an `evidence` entry of its own. A step that completes
+   * without one is refused at its end (`evidence_missing`), nothing after it starts.
+   */
+  showsEvidence?: true
+  /**
+   * On a review step (T267): the author's own review of the change, by the node named (a writing step
+   * it depends on). It runs on that step's account in a conversation of its own, so the author never
+   * reviews in its own transcript, and it is never an independent review: it counts for no tier, no
+   * provider family, and no acceptance (`approvals`, `lastReview`). Its confirmed important findings grow a fix
+   * that continues the author's session, answered before the next review starts.
+   */
+  selfReview?: string
 }
 
 /** What a variant may change of a node: what it needs, what kind of work it is, where it runs, and how it is judged. */
@@ -404,6 +418,15 @@ export function preflight(nodes: readonly NodeTemplate[]): string[] {
       throw new TypeError(`node ${node.nodeId}: diversity is required or preferred, on a node with differentFrom`)
     }
     for (const dep of node.dependsOn ?? []) if (!byId.has(dep)) throw new TypeError(`node ${node.nodeId} depends on unknown node ${dep}`)
+    if (node.showsEvidence !== undefined && (node.showsEvidence !== true || !node.capabilities.includes('develop') || node.team || node.snapshot)) {
+      throw new TypeError(`node ${node.nodeId}: showsEvidence is true, on a writing step (it needs develop)`)
+    }
+    if (node.selfReview !== undefined) {
+      const author = byId.get(node.selfReview)
+      if (!author || !author.capabilities.includes('develop') || !(node.dependsOn ?? []).includes(node.selfReview) || !node.capabilities.includes('review') || node.capabilities.includes('develop') || node.team || node.differentFrom?.length) {
+        throw new TypeError(`node ${node.nodeId}: selfReview names a writing step it depends on, and a review has no differentFrom (a self-review is the author's own)`)
+      }
+    }
     for (const other of node.differentFrom ?? []) {
       if (other === node.nodeId || !byId.has(other)) throw new TypeError(`node ${node.nodeId} differs from ${other === node.nodeId ? 'itself' : `unknown node ${other}`}`)
       if (byId.get(other)!.team) throw new TypeError(`node ${node.nodeId} differs from team ${other}, which has several Workers`)
@@ -885,12 +908,12 @@ export interface PriorFinding { review: string; finding: Finding; state: 'open' 
 
 /**
  * What every review bound to an exact subject is told about commands: it reads and judges the change,
- * and never runs the project's tests or builds, which the validation and the run's required checks at
- * acceptance run (ADR-0063). A reviewer often runs read-only, so a command it could not run says
- * nothing about the change: such an environment limit is at most a `nit`, never an important finding
- * that would grow a remediation cycle no fix can satisfy.
+ * and never runs the project's tests or builds, which the run's required checks at acceptance run
+ * (ADR-0063), and a writer's own, shown in the task's dossier, before it (T267). A reviewer often runs
+ * read-only, so a command it could not run says nothing about the change: such an environment limit is
+ * at most a `nit`, never an important finding that would grow a remediation cycle no fix can satisfy.
  */
-export const REVIEW_RUNS_NOTHING = 'Read and judge the change: never run the project\'s tests or builds, which the validation and the run\'s required checks run. A command you could not run is no finding about the change; an environment limit (a read-only sandbox, a denied or failing command) is at most a "nit", never an "important" finding.'
+export const REVIEW_RUNS_NOTHING = 'Read and judge the change: never run the project\'s tests or builds, which the run\'s required checks run. A command you could not run is no finding about the change; an environment limit (a read-only sandbox, a denied or failing command) is at most a "nit", never an "important" finding.'
 
 /**
  * How a reviewer grades a finding (ADR-0075): the three severities, the evidence an important or
@@ -1064,7 +1087,10 @@ export function parseVotes(answer: string, subject: string, ids: readonly string
  * continues its author's session (`continues`) is that session's next message: the author changed the
  * tree earlier in this conversation, and fixes it on top of its own work.
  */
-export function remediationPrompt(request: string, subject: string, findings: Assessment['findings'], review = 'the review', continues = false, notes: readonly Finding[] = []): string {
+/** What a fix of a `showsEvidence` step is told to end with (T267): the checks run again on the fixed tree, their output in the dossier. */
+export const FIX_VERIFY = 'Before you end, run the checks the task requires again on the fixed tree, and append their real output, verbatim, to the task\'s dossier as an evidence entry (dossier_append, kind evidence: each command, its exit code, and the lines that hold the result). The fix is refused at its end without it: the evidence for the tree before the fix does not hold for this one.'
+
+export function remediationPrompt(request: string, subject: string, findings: Assessment['findings'], review = 'the review', continues = false, notes: readonly Finding[] = [], showsEvidence = false): string {
   const place = (f: Finding): string => (f.file ? ` (${f.file}${f.line ? `:${f.line}` : ''})` : '')
   const classes = [...new Set(findings.map((f) => f.class).filter((c): c is string => !!c))]
   return [
@@ -1081,6 +1107,7 @@ export function remediationPrompt(request: string, subject: string, findings: As
       ...notes.map((f) => `- ${f.id ? `${f.id}: ` : ''}${f.title}${place(f)}`),
     ] : []),
     'What to change: make each blocking finding above hold no more, in the same working tree, on top of the work already there; change nothing the findings do not name. Do not commit: the engine keeps each fix as its own commit of the run\'s review history, and the next review reads only what changed since this subject, with these findings.',
+    ...(showsEvidence ? [FIX_VERIFY] : []),
   ].join('\n')
 }
 

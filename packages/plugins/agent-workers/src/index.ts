@@ -864,6 +864,8 @@ export class AgentWorkers extends Service {
               // A review is independent of the change, so only a Worker that cannot write proves it (INV-15).
               ...(worker.sandbox === 'workspace-write' ? ['develop', ...(evidence.executes ? ['validate'] : [])] : ['review']),
               ...(evidence.resume ? ['persistent-conversation'] : []),
+              // A writer whose runtime gives its runs the dossier tools (ADR-0070) can show its checks' output there (T267).
+              ...(worker.sandbox === 'workspace-write' && evidence.hostTools === true && dossiersOf(this.ctx) ? ['dossier'] : []),
             ].map((capability) => ({ capability, evidence: probed })),
             // The review-member profile (ADR-0049) grants reason for a review team member's steps only,
             // and only while it is enforced: the Worker is read-only (checked at load) and ready, so
@@ -2268,8 +2270,10 @@ export class AgentWorkers extends Service {
       if (outcome.failure) throw outcome.failure
     }
     // The brief's files go into the run's own worktree before the agent starts; nothing has reached it yet.
-    if (row.files && workspace !== worker.workspace) {
-      await this.worktrees.place(workspace, JSON.parse(row.files) as Array<{ path: string; text: string }>).catch((error: unknown) => {
+    // Its `.system/` then holds this brief's files only (T267): one a step before placed is gone, so a
+    // step given none (an author's fresh-context self-review) cannot read another step's dossier there.
+    if (workspace !== worker.workspace) {
+      await this.worktrees.place(workspace, row.files ? JSON.parse(row.files) as Array<{ path: string; text: string }> : []).catch((error: unknown) => {
         throw new ProviderError('config_error', `${row.worker}: the brief's files cannot be written into ${workspace}: ${(error as Error).message}; nothing was run`, { cause: error })
       })
     }

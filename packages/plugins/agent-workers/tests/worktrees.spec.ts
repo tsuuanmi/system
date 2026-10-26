@@ -298,6 +298,47 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     expect(readdirSync(join(agent.runs[0]!.workspace, '.system')).sort()).toEqual(['.gitignore', 'TASKS.md'])
   })
 
+  it('leaves in the run\'s worktree only the files of the brief of the run starting: one an earlier run\'s brief placed is gone before the agent starts, so a step given none (a self-review) reads none (T267)', async () => {
+    const repo = repository()
+    const seen: Array<{ files: string[]; read: string }> = []
+    const agent = developer({
+      act: (spec) => {
+        const dir = join(spec.workspace, '.system')
+        // An actual read attempt of what the step before was given, as the agent would make it.
+        const dossier = join(dir, 'DOSSIER.md')
+        seen.push({ files: existsSync(dir) ? readdirSync(dir).sort() : [], read: existsSync(dossier) ? readFileSync(dossier, 'utf8') : 'absent' })
+        return writes(spec)
+      },
+    })
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+    // The author's step is given the board and the dossier.
+    const dossier = ctx.artifacts.put({
+      kind: 'report', bodySchema: 'task-dossier@1.0', classification: 'operator-shared', producer: { type: 'system', ref: 'workflow' },
+      body: { schema: 'task-dossier@1.0', projectId: 'p1', taskId: 'task-1', entries: 1, head: `sha256:${'1'.repeat(64)}`, shown: [], maxChars: 6000, text: 'Plan: the author\'s plan.' },
+    }).id
+    const withDossier = (base: `sha256:${string}`): `sha256:${string}` => {
+      const body = ctx.artifacts.get(base)!.body as { files: unknown[] }
+      return ctx.artifacts.put({
+        kind: 'objective', bodySchema: 'brief@1.2', classification: 'operator-shared', producer: { type: 'system', ref: 'workflow' }, inputs: [dossier],
+        body: { ...body, files: [...body.files, { path: '.system/DOSSIER.md', ref: dossier, note: 'the task\'s whole dossier' }] },
+      }).id as `sha256:${string}`
+    }
+    const bare = (base: `sha256:${string}`): `sha256:${string}` => {
+      const { files: _files, ...body } = ctx.artifacts.get(base)!.body as { files: unknown[] }
+      return ctx.artifacts.put({ kind: 'objective', bodySchema: 'brief@1.2', classification: 'operator-shared', producer: { type: 'system', ref: 'workflow' }, body }).id as `sha256:${string}`
+    }
+    expect(await briefed(ctx, 'k-author', withDossier(taskBrief(ctx, '# p1\n')), 'run_fresh')).toMatchObject({ status: 'completed' })
+    // The next step of the same workflow run is given no file: the dossier and the board left by the author's step are gone.
+    expect(await briefed(ctx, 'k-self', bare(taskBrief(ctx, '# p1\n')), 'run_fresh')).toMatchObject({ status: 'completed' })
+    // A later step given the board only finds the board, never the dossier.
+    expect(await briefed(ctx, 'k-review', taskBrief(ctx, '# p1\n'), 'run_fresh')).toMatchObject({ status: 'completed' })
+    expect(seen).toEqual([
+      { files: ['.gitignore', 'DOSSIER.md', 'TASKS.md'], read: 'Plan: the author\'s plan.' },
+      { files: ['.gitignore'], read: 'absent' },
+      { files: ['.gitignore', 'TASKS.md'], read: 'absent' },
+    ])
+  })
+
   it('refuses a .system the agent replaced with a link, writing nothing through it, and its retirement leaves what the link points to (INV-15)', async () => {
     const repo = repository()
     const outside = temp('system-outside-')

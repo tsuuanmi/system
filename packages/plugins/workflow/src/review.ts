@@ -473,11 +473,14 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
   // The review's nits reach the author once, as optional notes of this fix; never a fix of their own.
   const notes = assessment.findings.filter((f) => f.severity === 'nit' && !f.repeated)
   // The review's findings as the author session's next message: the findings, the subject the reviewer read, what to change.
-  const prompt = remediationPrompt(run.input, subject, blocking, node.node_id, !!author, notes)
+  const prompt = remediationPrompt(run.input, subject, blocking, node.node_id, !!author, notes, producer?.showsEvidence === true)
   // The fix writes, so it waits for a person's approval of exactly this plan (ADR-0028, INV-15), never
   // for a policy's: the gate puts it to the approval queue as a `remediation` action, which always
   // asks (./queue.ts), or, with no queue loaded, waits for the operator's `approve`.
-  const plan = e.ctx.artifacts.put({
+  // The author's own review (T267) has no gate: its fix is the author answering its own findings in
+  // its own session, before the independent review starts, and that review keeps every gate.
+  const own = spec.selfReview !== undefined
+  const plan = own ? undefined : e.ctx.artifacts.put({
     kind: 'plan', bodySchema: 'plan@1.0',
     body: {
       schema: 'plan@1.0', runId: run.run_id, planner: node.node_id, confidence: 'medium',
@@ -488,18 +491,23 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
   const step = { tierSource: 'decision' as const, tierDecision: decision, session: {}, grownBy }
   // The re-review is worded as the review the cycles started from (wordingOf): its template's
   // prompt, composed again at promotion, or a plan step's model text, used as it is.
-  append(e, run, after, [
-    { ...step, literal: true, nodeId: gateId, objective: `Approve the fix of review cycle ${cycle}`, executor: 'gate' as const, plan, prompt: '', capabilities: ['review'],
-      tier: 'economy' as const, tierSource: 'profile' as const, acceptance: 'acceptance.answer', dependsOn: [after.node_id], operatorApproval: true as const, remediation: { subject } },
+  const steps: ResolvedNode[] = [
+    ...(plan ? [{ ...step, literal: true, nodeId: gateId, objective: `Approve the fix of review cycle ${cycle}`, executor: 'gate' as const, plan, prompt: '', capabilities: ['review'],
+      tier: 'economy' as const, tierSource: 'profile' as const, acceptance: 'acceptance.answer', dependsOn: [after.node_id], operatorApproval: true as const, remediation: { subject } }] : []),
     // The fix is the same kind of work as the change it fixes, and the re-review as the review (ADR-0057).
     // It continues its author's session, on that session's Worker; the re-review keeps a session of
     // its own (`step`'s), never the author's: the reviewer stays independent.
     { ...step, literal: true, nodeId: fixId, objective: `Fix the blocking findings of review cycle ${cycle}`, prompt,
-      capabilities: producer!.capabilities, tier: producer!.tier, ...(producer!.kind !== undefined ? { kind: producer!.kind } : {}), acceptance: 'acceptance.answer', dependsOn: [gateId],
-      fixOf: node.node_id, ...(author ? { session: { sessionId: author.sessionId }, author } : {}) },
+      capabilities: producer!.capabilities, tier: producer!.tier, ...(producer!.kind !== undefined ? { kind: producer!.kind } : {}), acceptance: 'acceptance.answer', dependsOn: [plan ? gateId : after.node_id],
+      fixOf: node.node_id, ...(author ? { session: { sessionId: author.sessionId }, author } : {}),
+      // A fix of a step that must show its checks' output must too, for the tree it leaves (T267).
+      ...(producer!.showsEvidence ? { showsEvidence: true as const } : {}) },
     { ...step, ...(reviewed.literal ? { literal: true } : {}), nodeId: recheckId, objective: `Review cycle ${cycle + 1}: review the fixed change`, prompt: reviewed.prompt,
       ...(reviewed.resultSchema ? { resultSchema: reviewed.resultSchema } : {}), ...(spec.kind !== undefined ? { kind: spec.kind } : {}),
+      ...(spec.selfReview !== undefined ? { selfReview: spec.selfReview } : {}),
       capabilities: spec.capabilities, tier: spec.tier, acceptance: spec.acceptance, dependsOn: [fixId], cycle: cycle + 1, reviewOf: base },
-  ], [gateId, fixId, recheckId], lease)
-  e.ctx.eventLog.append({ type: 'workflow.graph.grown', runId: run.run_id, nodeId: node.node_id, decision, data: { steps: [gateId, fixId, recheckId], plan, cycle: cycle + 1 } })
+  ]
+  const ids = steps.map((s) => s.nodeId)
+  append(e, run, after, steps, ids, lease)
+  e.ctx.eventLog.append({ type: 'workflow.graph.grown', runId: run.run_id, nodeId: node.node_id, decision, data: { steps: ids, ...(plan ? { plan } : {}), cycle: cycle + 1 } })
 }

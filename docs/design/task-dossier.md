@@ -24,7 +24,7 @@ critics, a human accountable). The dossier is that artifact for a board task.
 | `progress` | the author, after a step; the engine for a step that wrote none | what was done, commits, what remains, small decisions and why |
 | `review` | a reviewer; the engine from a review's assessment | the verdict and findings, bound to the exact subject reviewed; the review's result and assessment linked, not copied |
 | `response` | the author of a fix; the engine for a fix that wrote none | per finding: fixed in which commit, or not and why |
-| `evidence` | the engine only | the run's checks and acceptance, the report to the board, the landing |
+| `evidence` | the engine (the run's checks and acceptance, the report to the board, the landing); and a writing step's Worker (T267) | the System's: what it checked. The author's: the output of the checks it ran before its review, verbatim (a command, its exit code, the lines that hold the result); told from the System's by its author, and never a check the engine reports |
 
 Every entry is a content-hashed `task-dossier-entry@1.0` artifact. Its `seq` is its place in the
 task's dossier, from 1 with no gap, and `prev` names the entry before it, so the dossier at an entry
@@ -64,8 +64,8 @@ sequenceDiagram
   the engine appends its answer.
 - **The gate**. Refused, with nothing appended, unless: the run serves a board task and still holds
   it; the bound step is running now, and as the execution bound; the kind is one its role writes (a step
-  that writes the change: `plan`, `progress`, `response`; a review: `review`; any other step:
-  `progress`; `evidence` never); the text holds 1 to 4,000 characters; commits are at most 16 hex ids;
+  that writes the change: `plan`, `progress`, `response`, `evidence`; a review: `review`; any other
+  step: `progress`; the System's own `evidence` is never a Worker's: it is told by its author); the text holds 1 to 4,000 characters; commits are at most 16 hex ids;
   links are at most 16 stored artifacts; a `response`'s `inReplyTo` is an entry of this dossier.
 - **The step's own entry.** When a Worker step of a task's run settles with an accepted result and
   appended nothing itself in that attempt, the engine appends its entry: a review's verdict and

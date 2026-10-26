@@ -447,6 +447,16 @@ function notPlainFile(path: string): boolean {
   }
 }
 
+/** Whether anything is at `path`, never following a link at it. */
+function lexists(path: string): boolean {
+  try {
+    lstatSync(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** A directory opened as itself, and the path that reaches it through its descriptor. The caller closes `fd`. */
 export interface OpenedDirectory { fd: number; at: string }
 
@@ -682,15 +692,23 @@ export class Worktrees {
    * a plain directory (or file) of the worktree: a link is never followed out of the workspace.
    * `.system` is opened once, as itself, and every file is written relative to that descriptor
    * ({@link openDirectory}), so nothing is checked by name before it is used.
+   *
+   * The directory then holds exactly this brief's files (T267): a file an earlier run's brief placed
+   * there and this one's does not name (the dossier an author's step was given, say) is removed before
+   * the agent starts, so a step whose brief places none (an author's fresh-context self-review) finds
+   * none. Called for every run in a worktree of its own, with no files too.
    */
   async place(workspace: string, files: ReadonlyArray<{ path: string; text: string }>): Promise<void> {
-    if (!files.length) return
+    const dir = join(workspace, '.system')
+    // With no file to place and no `.system` there, nothing is to be done (lstat never follows a link).
+    if (!files.length && !lexists(dir)) return
     const row = this.ctx.store.db.prepare('SELECT gitdir FROM agent_worktrees WHERE path = ? AND removed_at IS NULL').get(workspace) as { gitdir: string } | undefined
     if (!row || pointer(workspace) !== row.gitdir) throw new WorktreeError(`${workspace} is not an intact worktree of a run; no file is written there`)
     for (const file of files) if (!BRIEF_FILE_PATH.test(file.path)) throw new WorktreeError(`${JSON.stringify(file.path)} is not a file under .system/; nothing is written`)
     const tracked = await git(workspace, [`--git-dir=${row.gitdir}`, `--work-tree=${workspace}`, 'ls-files', '-z', '--', '.system'])
+    // A `.system` the repository tracks is its own, never system's: with nothing to place, nothing of system's is there to remove.
+    if (tracked.length && !files.length) return
     if (tracked.length) throw new WorktreeError(`the repository tracks files under .system/ (${tracked.split('\0')[0]}); system's workspace files would change them, so none is written`)
-    const dir = join(workspace, '.system')
     // Made when absent (mkdir never follows a link at its name), then opened as itself.
     try {
       mkdirSync(dir, { mode: 0o755 })
@@ -700,6 +718,14 @@ export class Worktrees {
     const opened = openDirectory(dir)
     if (typeof opened === 'string') throw new WorktreeError(`${dir} is not a directory of the worktree; nothing is written`)
     try {
+      // What an earlier brief left and this one does not name goes first: only this run's files stay.
+      const keep = new Set(['.gitignore', ...files.map((f) => f.path.slice('.system/'.length))])
+      for (const name of readdirSync(opened.at)) {
+        if (keep.has(name)) continue
+        const path = join(opened.at, name)
+        if (lstatSync(path).isDirectory()) throw new WorktreeError(`${join(dir, name)} is a directory, never one system placed; nothing is written`)
+        rmSync(path, { force: true })
+      }
       for (const [name, text] of [['.gitignore', '# Written by system: this directory is never part of the work.\n*\n'], ...files.map((f) => [f.path.slice('.system/'.length), f.text])] as const) {
         const path = join(opened.at, name)
         if (notPlainFile(path)) throw new WorktreeError(`${join(dir, name)} is not a plain file; nothing more is written`)

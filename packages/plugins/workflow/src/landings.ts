@@ -789,7 +789,8 @@ export class TaskLandings {
         const body = this.e.ctx.artifacts.get(ref)?.body as { decisionType?: string; decider?: { id?: string }; outcome?: { option?: string; detail?: { assessment?: ArtifactRef } } } | undefined
         if (body?.decisionType !== 'gate' || body.decider?.id !== 'workflow.exact-subject' || body.outcome?.option !== 'pass' || !body.outcome.detail?.assessment) continue
         const verdict = (this.e.ctx.artifacts.get(body.outcome.detail.assessment)?.body as { verdict?: string } | undefined)?.verdict
-        reviews.push(`${node.node_id} by ${workers.get(node.node_id) ?? 'an unknown Worker'}: ${verdict ?? 'no verdict'}`)
+        const own = (JSON.parse(node.spec) as { selfReview?: string }).selfReview !== undefined ? ', the author\'s own review' : ''
+        reviews.push(`${node.node_id} by ${workers.get(node.node_id) ?? 'an unknown Worker'}${own}: ${verdict ?? 'no verdict'}`)
       }
     }
     return [

@@ -6,7 +6,7 @@
  * workspace its run spec names. The report plugin's tests run their pilot on it too.
  */
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context, type Fiber, type Plugin } from '@deepseek-ai/cordis'
@@ -35,8 +35,10 @@ export const ORIGINAL = 'def add(a, b):\n    return a - b\n'
 export const FIXED = 'def add(a, b):\n    return a + b\n'
 /** The repository's validation command, listed on the policy's commands, so a run of it is judged a workspace write. */
 export const TESTS = 'npm test'
-/** What the scripted validation prints: the lines a digest quotes. */
+/** What the author's scripted checks print, pasted into the dossier as evidence (T267). */
 export const MEASURED = 'Tests: 3 passed, 0 failed'
+/** The evidence entry the scripted developer appends: the command, its exit code, and the lines that hold the result. */
+export const EVIDENCE = `$ ${TESTS}\nexit 0\n${MEASURED}`
 
 /**
  * The bundle's studio policy (packages/system-bundle/cordis.patch.yml): reads run, workspace writes
@@ -55,20 +57,25 @@ export const POLICY: AutonomyPolicy = {
 export const POOL = 'plan.agents'
 
 /** A run's part in the template, from what its brief asks. */
-export type Role = 'develop' | 'review' | 'verify' | 'fix' | 'validate' | 'digest'
+export type Role = 'develop' | 'selfreview' | 'review' | 'verify' | 'fix' | 'digest'
 const roleOf = (spec: RunSpec): Role => spec.prompt.includes('Digest the raw artifacts below') ? 'digest'
   // The review's verification (ADR-0075): a second reviewer, read-only too, that votes on its important findings.
   : spec.sandbox === 'read-only' && spec.prompt.includes('## Verify these findings') ? 'verify'
-  : spec.sandbox === 'read-only' ? 'review'
-    : spec.prompt.includes('Fix the blocking findings') ? 'fix'
-      : spec.prompt.includes('Validate the change in this worktree') ? 'validate' : 'develop'
+  : spec.sandbox === 'read-only' ? (spec.prompt.includes('You wrote this change in an earlier session') ? 'selfreview' : 'review')
+    : spec.prompt.includes('Fix the blocking findings') ? 'fix' : 'develop'
 
 export interface Script {
   /** How many reviews request changes with a blocking finding before one approves (default 0). */
   changes?: number
-  /** The command the validation runs (default {@link TESTS}, the listed one). */
-  validate?: string
-  /** Whether the runtime proves its commands confined (default true): without it, no Worker proves `validate`. */
+  /** How many of the author's own reviews request changes with an important finding before one approves (default 0). */
+  selfChanges?: number
+  /** Whether the developer appends the output of its checks to the dossier as evidence before it ends (default true; T267). */
+  evidence?: boolean
+  /** The text of that evidence entry (default {@link EVIDENCE}): what an author that pastes no real output would write instead. */
+  evidenceText?: string
+  /** Whether the runtime gives its runs the dossier tools, as host tools (default true). */
+  hostTools?: boolean
+  /** Whether the runtime proves its commands confined (default true). */
   executes?: boolean
   /**
    * Route by kind of work (ADR-0057): the writers by id, each with the kinds the operator gives it,
@@ -88,6 +95,8 @@ export interface Script {
    * worktree setup and lists them in the studio policy. The repository then holds {@link CHECK_FILES}.
    */
   checks?: { tests?: string; lint?: string }
+  /** Review guides (T267) the repository holds under `docs/review/`, by file name, committed before any worktree is cut. */
+  guides?: Record<string, string>
   /** Seconds a check may print nothing before it is reported as stalled (the setup's `checkStallSeconds`, T235). */
   checkStallSeconds?: number
 }
@@ -114,14 +123,21 @@ export class PilotAgent implements AgentRuntimeProvider {
   readonly calls: Array<{ role: Role; tool: string; verdict: ToolVerdict }> = []
   /** What calc.py held in its worktree when each develop run started. */
   readonly found: string[] = []
+  /** What the dossier tool answered each time the developer (or its fix) appended evidence. */
+  readonly appended: Array<{ text: string; isError: boolean }> = []
+  /** What `dossier_read` answered each self-review that tried it. */
+  readonly selfReads: Array<{ text: string; isError: boolean }> = []
+  /** What each self-review found when it read the files an earlier step was given in the worktree (`.system/`). */
+  readonly selfFiles: Array<{ dossier: boolean; tasks: boolean }> = []
   private reviews = 0
+  private selfReviews = 0
   private brokenReviews = 0
   constructor(readonly script: Script = {}) {}
 
   async probe() {
     return {
       available: true, detail: 'scripted 1.0', version: '1.0', sandboxes: ['read-only', 'workspace-write'] as Array<'read-only' | 'workspace-write'>,
-      resume: true, executes: this.script.executes ?? true, readsConfined: true, gatesToolCalls: true,
+      resume: true, executes: this.script.executes ?? true, readsConfined: true, gatesToolCalls: true, ...(this.script.hostTools === false ? {} : { hostTools: true }),
     }
   }
 
@@ -139,18 +155,47 @@ export class PilotAgent implements AgentRuntimeProvider {
       if (verdict.decision === 'defer') throw new ProviderError('config_error', `scripted: stopped at ${tool} (approval request ${verdict.requestId})`)
       return verdict.decision === 'allow'
     }
+    /** Append the checks' output to the task's dossier, as a writing step must before it ends (T267). */
+    const verify = async (): Promise<void> => {
+      if (this.script.evidence === false || !spec.hostTools?.length) return
+      const tool = spec.hostTools.find((t) => t.name === 'dossier_append')!
+      const entry = { kind: 'evidence', text: this.script.evidenceText ?? EVIDENCE }
+      if (await call('mcp__system__dossier_append', entry)) this.appended.push(await tool.call(entry))
+    }
     let text: string
     switch (role) {
       case 'develop':
         this.found.push(readFileSync(join(spec.workspace, 'calc.py'), 'utf8'))
         if (await call('Write', { file_path: join(spec.workspace, 'calc.py'), content: FIXED })) writeFileSync(join(spec.workspace, 'calc.py'), FIXED)
         if (this.script.commits) git(spec.workspace, 'commit', '-q', '-a', '-m', 'developer: add adds')
+        // The author verifies before anyone reviews it: it shows the checks' output in the task's dossier (T267).
+        await verify()
         text = 'Hypothesis: add() returns the difference, so the tests that sum fail. Changed calc.py; criterion a1 should now be met.'
         break
       case 'fix':
         if (await call('Write', { file_path: join(spec.workspace, 'test_calc.py'), content: 'assert True\n' })) writeFileSync(join(spec.workspace, 'test_calc.py'), 'assert True\n')
+        // The fix shows the checks' output for the fixed tree, as the step it fixes did (T267).
+        await verify()
         text = 'Added test_calc.py, the test the review asked for.'
         break
+      case 'selfreview': {
+        await call('Read', { file_path: join(spec.workspace, 'calc.py') })
+        // It tries to read what its author wrote in the dossier: the engine refuses it (T267).
+        const read = spec.hostTools?.find((t) => t.name === 'dossier_read')
+        if (read && await call('mcp__system__dossier_read', {})) this.selfReads.push(await read.call({}))
+        // And the files the author's step was given in the shared worktree, looked for directly on disk,
+        // as a read inside the workspace would find them (whatever the gate says of the call).
+        this.selfFiles.push({ dossier: existsSync(join(spec.workspace, '.system', 'DOSSIER.md')), tasks: existsSync(join(spec.workspace, '.system', 'TASKS.md')) })
+        const subject = /^Subject: (\S+)$/m.exec(spec.prompt)![1]!
+        const changes = this.selfReviews++ < (this.script.selfChanges ?? 0)
+        text = '```json\n' + JSON.stringify({
+          subject, verdict: changes ? 'changes-requested' : 'approve',
+          findings: [changes
+            ? { severity: 'important', title: 'a stray debug line', file: 'calc.py', line: 2, evidence: 'calc.py line 2 holds a line the task does not need' }
+            : { severity: 'nit', title: 'nothing the author is blind to', file: 'calc.py' }],
+        }) + '\n```'
+        break
+      }
       case 'review': {
         if (this.brokenReviews < (this.script.reviewFails ?? 0)) {
           this.brokenReviews++
@@ -173,13 +218,6 @@ export class PilotAgent implements AgentRuntimeProvider {
         const subject = /^Verified subject: (\S+)$/m.exec(spec.prompt)![1]!
         const votes = [...spec.prompt.matchAll(/^- (f\d+) important:/gm)].map((m) => ({ finding: m[1], vote: 'confirm', reason: 'calc.py has no test of add()' }))
         text = '```json\n' + JSON.stringify({ subject, votes }) + '\n```'
-        break
-      }
-      case 'validate': {
-        const command = this.script.validate ?? TESTS
-        text = await call('Bash', { command })
-          ? `${command}: exit 0\n${MEASURED}\nCriterion a1: met (${command}).`
-          : `${command}: not run (the gate denied it)\nCriterion a1: not measured.`
         break
       }
       case 'digest': {
@@ -218,6 +256,10 @@ export async function bootPilot(script: Script = {}, extra: Plugin[] = []): Prom
   execFileSync('git', ['init', '-q', '-b', 'main', repo])
   writeFileSync(join(repo, 'calc.py'), ORIGINAL)
   if (script.checks) for (const [name, text] of Object.entries(CHECK_FILES)) writeFileSync(join(repo, name), text)
+  if (script.guides) {
+    mkdirSync(join(repo, 'docs', 'review'), { recursive: true })
+    for (const [name, text] of Object.entries(script.guides)) writeFileSync(join(repo, 'docs', 'review', name), text)
+  }
   git(repo, 'add', '.')
   git(repo, 'commit', '-q', '-m', 'init')
   const agent = new PilotAgent(script)

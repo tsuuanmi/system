@@ -46,15 +46,27 @@ describe('the profiles seam (REQ-WF-9)', () => {
 })
 
 describe('the inputs each step of algorithm-development reads (docs/reference/workflow-templates.md#algorithm-development)', () => {
-  it('gives the caller\'s input to the writing step only: the review and the validation read the task and the change, never the develop step\'s orders (T99 D4)', () => {
+  it('gives the caller\'s input to the writing step only: the self-review and the review read the task and the change, never the develop step\'s orders (T99 D4)', () => {
     const steps = new Map(SoftwareDevelopment.ALGORITHM_DEVELOPMENT.map((n) => [n.nodeId, n]))
     expect(steps.get('develop:1')!.prompt).toContain('{{input}}')
     for (const variant of Object.values(steps.get('develop:1')!.variants ?? {})) expect(variant.prompt).toContain('{{input}}')
-    for (const id of ['review:1', 'validate:1']) {
-      expect(steps.get(id)!.prompt, id).not.toContain('{{')
-      expect(steps.get(id)!.dependsOn, id).toHaveLength(1)
-    }
-    expect(steps.get('validate:1')!.prompt).toContain('acceptance criteria')
+    for (const id of ['selfreview:1', 'review:1']) expect(steps.get(id)!.prompt, id).not.toContain('{{')
+  })
+
+  it('has no validate step any more (T267): the author shows its checks\' output in the dossier, a fresh session of its account reviews the change first, and the review is the final step', () => {
+    const steps = SoftwareDevelopment.ALGORITHM_DEVELOPMENT
+    expect(steps.map((n) => n.nodeId)).toEqual(['develop:1', 'selfreview:1', 'review:1'])
+    expect(steps.some((n) => n.capabilities.includes('validate') || n.riskSkip)).toBe(false)
+    const [develop, selfreview, review] = steps as [NodeTemplate, NodeTemplate, NodeTemplate]
+    expect(develop.showsEvidence).toBe(true)
+    // The self-review is the author's own: a review on the author's account, in a conversation of its own, depending on the writer only.
+    expect(selfreview).toMatchObject({ selfReview: 'develop:1', conversation: 'temporary', dependsOn: ['develop:1'] })
+    expect(selfreview.capabilities).toContain('review')
+    expect(selfreview.differentFrom).toBeUndefined()
+    // The independent review waits for it, and reads the change from the writer's result (the last it depends on).
+    expect(review.dependsOn).toEqual(['selfreview:1', 'develop:1'])
+    expect(review.selfReview).toBeUndefined()
+    for (const prompt of [develop.prompt, ...Object.values(develop.variants ?? {}).map((v) => v.prompt!)]) expect(prompt).toContain('evidence entry')
   })
 })
 
@@ -63,29 +75,30 @@ describe('the kind of work each step of algorithm-development names (ADR-0057)',
     [n.nodeId, n.kind ?? null], ...Object.entries(n.variants ?? {}).map(([variant, v]) => [`${n.nodeId} (${variant})`, v.kind ?? null]),
   ]))
 
-  it('ships three writing kinds and validation for the step that only runs the checks; the review names none', () => {
+  it('ships three writing kinds; the two reviews name none', () => {
     expect(kinds(SoftwareDevelopment.ALGORITHM_DEVELOPMENT)).toEqual({
-      'develop:1': 'code', 'develop:1 (docs)': 'docs', 'develop:1 (tests)': 'tests', 'review:1': null, 'validate:1': 'validation',
+      'develop:1': 'code', 'develop:1 (docs)': 'docs', 'develop:1 (tests)': 'tests', 'selfreview:1': null, 'review:1': null,
     })
     expect(SoftwareDevelopment.Config({})).toEqual({ kinds: SoftwareDevelopment.DEFAULT_KINDS })
   })
 
-  it('takes each step\'s kind from the row\'s configuration, the rest keeping theirs, and the review still none', async () => {
-    expect(kinds(SoftwareDevelopment.algorithmDevelopment({ validate: 'tests', docs: 'writing' }))).toEqual({
-      'develop:1': 'code', 'develop:1 (docs)': 'writing', 'develop:1 (tests)': 'tests', 'review:1': null, 'validate:1': 'tests',
+  it('takes each step\'s kind from the row\'s configuration, the rest keeping theirs, and the reviews still none; a retired validate kind is ignored', async () => {
+    expect(kinds(SoftwareDevelopment.algorithmDevelopment({ docs: 'writing' }))).toEqual({
+      'develop:1': 'code', 'develop:1 (docs)': 'writing', 'develop:1 (tests)': 'tests', 'selfreview:1': null, 'review:1': null,
     })
+    expect(SoftwareDevelopment.algorithmDevelopment({ validate: 'tests' } as never)).toEqual(SoftwareDevelopment.ALGORITHM_DEVELOPMENT)
     const ctx = await boot()
-    await ctx.plugin(SoftwareDevelopment, { kinds: { validate: 'checks' } })
-    expect(ctx.workflow.templateSteps('algorithm-development')!.find((s) => s.nodeId === 'validate:1')).toMatchObject({ kind: 'checks' })
+    await ctx.plugin(SoftwareDevelopment, { kinds: { validate: 'checks', tests: 'checks' } })
+    expect(ctx.workflow.templateSteps('algorithm-development')!.map((s) => s.nodeId)).toEqual(['develop:1', 'selfreview:1', 'review:1'])
   })
 
   it('refuses a key that is not a step and a kind that is not a kind of work, at the check and at load (INV-2)', async () => {
     expect(SoftwareDevelopment.checkConfig({})).toEqual([])
     expect(SoftwareDevelopment.checkConfig({ kinds: { develop: 'code', validate: 'validation' } })).toEqual([])
-    expect(SoftwareDevelopment.checkConfig({ kinds: { review: 'code' } } as never)).toEqual(['kinds.review is not a step; kinds takes develop, docs, tests, validate'])
+    expect(SoftwareDevelopment.checkConfig({ kinds: { review: 'code' } } as never)).toEqual(['kinds.review is not a step; kinds takes develop, docs, tests'])
     expect(SoftwareDevelopment.checkConfig({ kinds: { validate: '' } })).toEqual([`kinds.validate: "" is not a kind of work (${String(/^[a-z][a-z0-9-]{0,31}$/)})`])
     expect(SoftwareDevelopment.checkConfig({ kinds: { develop: 'Code' } })).toHaveLength(1)
-    expect(SoftwareDevelopment.checkConfig({ kinds: ['code'] } as never)).toEqual(['kinds must be an object of steps (develop, docs, tests, validate), each naming a kind of work'])
+    expect(SoftwareDevelopment.checkConfig({ kinds: ['code'] } as never)).toEqual(['kinds must be an object of steps (develop, docs, tests), each naming a kind of work'])
     expect(() => SoftwareDevelopment.Config({ kinds: { validate: '' } })).toThrow(/kinds\.validate/)
     const ctx = await boot()
     await expect(ctx.plugin(SoftwareDevelopment, { kinds: { validation: 'validation' } } as never)).rejects.toThrow(/kinds\.validation is not a step/)

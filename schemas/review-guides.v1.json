@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:review-guides:v1",
+  "title": "Review guides of a change",
+  "description": "Body of a `report` artifact: the REVIEW.md guides of the areas a change touches, as a reviewer's brief points at them (docs/design/handbook.md#review-guides-reviewmd). Rendered by the engine from the repository's `docs/review/` at the run's landing target, never by a model; only the guides whose area paths a changed path matches are in `text`, or every guide when the change's paths could not be read (INV-2).",
+  "type": "object",
+  "required": ["schema", "guides", "text"],
+  "properties": {
+    "schema": { "const": "review-guides@1.0" },
+    "guides": {
+      "description": "The guides `text` holds, in file order.",
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": ["file", "version", "owner", "sha256"],
+        "properties": {
+          "file": { "description": "Repository-relative path of the guide.", "type": "string", "minLength": 1, "maxLength": 200 },
+          "version": { "type": "integer", "minimum": 1 },
+          "owner": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "sha256": { "description": "Hash of the guide's text as read.", "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "left": {
+      "description": "How many guides of the repository were left out because no changed path is in their area.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 32
+    },
+    "problems": {
+      "description": "Guides that could not be used, and why (a malformed guide is named, never silently dropped).",
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string", "maxLength": 300 }
+    },
+    "text": { "type": "string", "minLength": 1, "maxLength": 65536 }
+  },
+  "additionalProperties": false
+}

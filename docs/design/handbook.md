@@ -11,7 +11,10 @@
 > nowhere as rules; its role's text is its template's prompt (profile plugins); nothing is measured
 > against a bound, and no brief names the version of any rule it carried. The lead's playbook is
 > written ([lead's playbook](../operations/lead-playbook.md), T252), and the lead reads it as a file:
-> no slice is built from it.
+> no slice is built from it. One part of layer 4 is built ahead of the slice (T267): the
+> [review guides](#review-guides-reviewmd), which a review step's brief carries as a pointer for the
+> paths its change touches, and the author's own checks and fresh-context self-review before the
+> independent review (W19, V6).
 
 System's rules are written in many places: the invariants and ADRs, the autonomy policy and its path
 map, the board's charters, the templates' prompts, `AGENTS.md`, `CONTRIBUTING.md`, the engineering
@@ -139,6 +142,7 @@ the repository.
 | W16 | a user-visible change adds a changeset | CONTRIBUTING; [releasing](../engineering/releasing.md) | **none** (the release refuses a version with no changelog, not a change with no changeset) |
 | W17 | take the next free ADR, proposal, and migration number; the change landing second renumbers | CONTRIBUTING; testing.md "What parallel changes collide on"; lesson L2; development.md | `check:docs`, `check:migrations` (`scripts/collisions.spec.ts`) |
 | W18 | how a schema changes (minor or major) | reference/schemas.md; CONTRIBUTING; lesson L3; AGENTS.md | in part: `check:schemas` (that a version moved), a `*.v2.json` and above heavy in the map; a major written in place: the review. See [contradiction X1](#contradictions) |
+| W19 | before its review, a writing step of a board task's run runs the required checks and appends their real output, verbatim, to the task's dossier as an `evidence` entry; a fresh session of its account then reviews the diff and the author answers the findings (T267) | `VERIFY` in the profile's writing prompts ([template](../reference/workflow-templates.md#algorithm-development)) | `workflow.evidence` gate: a step whose template says `showsEvidence` is refused at its end without an entry that shows an exit code and output for each required command check (`evidence_missing`), and is admitted only to a Worker with the dossier tools; its fixes are held to the same; the self-review is a graph step, so it cannot be skipped, and its brief holds no dossier; that the output is real: **none** (the acceptance checks run again) |
 | Q1 | a package imports from its layer or a lower one | code quality | **none** (`check:packages` makes a new upward seam edge visible, it does not refuse it) |
 | Q2 | a file past about 800 lines is a smell | code quality | **none** |
 | Q3 | typed failures; no bare strings thrown | code quality | **none** |
@@ -164,11 +168,15 @@ the repository.
 | V3 | never run the project's tests or builds; a command it could not run is at most `info` | `REVIEW_PROMPT` | in part: a review member's read-only, empty workspace (ADR-0049) |
 | V4 | the review names the exact subject it was given | the brief's `exact-subject` criterion | the exact-subject gate |
 | V5 | a heavy change's second review is by another provider family, independent of the developer and of the first review | `SECOND_REVIEW` (workflow `src/risk.ts`), ADR-0071 | routing (`differentFrom`) and acceptance version 4 |
+| V6 | a review follows the [review guides](#review-guides-reviewmd) of the areas its change touches: its evidence rule, nit cap, and summary rule (T267) | the guides (`docs/review/`); the review prompts point at them | the guides are in the review's brief by the engine (a test); that the review follows them: **none** |
 
-**Validator** (`validate:1`): **Y1** run each criterion's check exactly as written, change no file,
-report verbatim, estimate nothing (`VALIDATE_PROMPT`). Check: in part; nothing checks "change no
-file" or "verbatim", but the run's required checks run again on the exact result at acceptance
-(ADR-0063). A light change may skip the step (`riskSkip`, ADR-0071).
+**Validator** (a `validate` step; `algorithm-development` has none since T267): **Y1** run each
+criterion's check exactly as written, change no file, report verbatim, estimate nothing. Check: in
+part; nothing checks "change no file" or "verbatim", but the run's required checks run again on the
+exact result at acceptance (ADR-0063). The one template that had a validator measured its step at a
+median of 0.4 minutes, catching nothing the acceptance checks did not, and folded it into W19; a
+template that needs a separate validation Worker can still name the step (a final step may be
+skipped at a light tier, `riskSkip`, ADR-0071).
 
 **Researcher** (`profile-scientific-research`: frame, two literature reviews, evidence, critique,
 conclusion): **S1** hypotheses as a `hypothesis-set@1.0`, citations, independent reviews (the
@@ -239,9 +247,9 @@ is written at all **none** (the engine writes the step's entry when a Worker wro
 | 1 | 23 (and the ADRs) | 11 | 1 | 11 |
 | 2 | 13 | 8 | 1 | 4 |
 | 3 | 5 | 4 | 0 | 1 |
-| 4 | 73 | 13 | 20 | 40 |
+| 4 | 75 | 14 | 20 | 41 |
 | 5 | 6 | 2 | 2 | 2 |
-| **All** | **120** | **38** | **24** | **58** |
+| **All** | **122** | **39** | **24** | **59** |
 
 "In part" counts INV-3, P10, W8, W11, W18, Q5, V3, Y1, S1, LD1, LD3, LD12, LD14, LD16 to LD19,
 LD22, LD25, LD26, LD30, B2, L3, and L6. INV-2, 6, 8, 9, and 13 count as **none**: each mechanism
@@ -334,7 +342,7 @@ How each layer's parts carry the keys (I1 part 2 builds them; nothing is rewritt
 | **develop** (`code`) | the pointer; `heavy`: invariant titles, ADRs of touched packages | the gate view; the tier's lines; probation's line | objective, required checks, constraints | the writer's playbook: `DEVELOP_PROMPT`'s rules and the keyed writing rules | every lesson that applies |
 | **develop** (`docs`) | as `code` | as `code` | as `code` | the `docs` variant's rules; of the keyed rules, docs and schema ones only (W4, W8, W13, W17, K4 to K7) | lessons that apply to `docs` or its paths, else all of `develop`'s |
 | **develop** (`tests`) | as `code` | as `code` | as `code` | the `tests` variant's rules, T1 to T8, W3 | as `code` |
-| **review** | as `develop` | the tier's review lines (a heavy change's second review: V5; the adversarial review, I2's later part); a review member has no gate view (it makes no call) | objective, required checks, constraints (to judge them) | the reviewer's playbook (V1 to V5) | every lesson that applies to `review`, so a lesson whose check is the review reaches it (X3) |
+| **review** | as `develop` | the tier's review lines (a heavy change's second review: V5; the adversarial review, I2's later part); a review member has no gate view (it makes no call) | objective, required checks, constraints (to judge them) | the reviewer's playbook (V1 to V6), with the [review guides](#review-guides-reviewmd) of the paths the change touches | every lesson that applies to `review`, so a lesson whose check is the review reaches it (X3) |
 | **validate** | the pointer | the gate view (it runs commands) | required checks | the validator's playbook (Y1) | lessons whose `Applies` names `validate` only |
 | **research** | the pointer | egress: what may leave for which Worker (INV-12), from the gate view where it has one | objective | the template's step text (S1) | lessons whose `Applies` names `research` only |
 | **lead** | the pointer, what needs an ADR (K1 to K3) | §7's table, the path map's tiers and what each means, the decision brief's form, the budgets (P8 to P12) | each led project's whole charter | the [lead's playbook](../operations/lead-playbook.md) whole (LD1 to LD30) | every lesson (the lead owns them) |
@@ -460,12 +468,100 @@ dropped (layer 5, as lessons.md says), in the same change that lands the check. 
 another is retired in the change that adds the other (an ADR supersedes; a policy change replaces).
 The weekly report tells a lesson added or dropped (PROP-0016 §7).
 
+## Review guides (REVIEW.md)
+
+A reviewer is told what failure looks like **in the area it is reviewing**, by the people who own the
+area, and only for the paths the change touches (after Anthropic's "Solving code review": guides
+written by code owners say what failure looks like, cap nits, list paths to skip, require
+`file:line` evidence, and ask for a summary that opens with a count). A guide is a part of **layer 4,
+the reviewer's playbook**, keyed by **touched paths** (the key above): it is in the slice of a
+`review` step for exactly the paths its front matter names, never in a writer's.
+
+**The format.** One file per area, `docs/review/<area>.REVIEW.md` (the files of this repository are
+listed in [its README](../review/README.md)):
+
+```markdown
+---
+paths:
+  - packages/plugins/workflow/
+owner: lead
+version: 1
+---
+# Review guide: the workflow engine
+
+## What failure looks like here
+## What to check first
+## Paths to skip
+## Nit cap
+## Evidence rule
+## Summary rule
+```
+
+| Part | Holds |
+|---|---|
+| `paths` (front matter) | the area: path patterns exactly as the autonomy policy's path map reads them (`docs/` is a directory and everything below it; `*` within a segment; `**` whole segments): a guide applies when a changed path matches one |
+| `owner` | who writes and approves changes to the guide (`lead`, `operator`): a change to a guide is a change to a rule |
+| `version` | a positive integer the owner raises when the guide's meaning changes; the brief records it with the guide's hash |
+| What failure looks like here | what has gone wrong in this area before, written as the failure, not the rule: a hang, a leak, a guard that drifted |
+| What to check first | the order a reviewer reads in: the part most likely to be wrong |
+| Paths to skip | what is generated, recorded, or covered by a check, so no reviewer spends its words on it |
+| Nit cap | the most style or wording findings in all; the rest are counted, and a nit is never blocking |
+| Evidence rule | what a finding names (a file and a line, the input that triggers it); one without is a `nit` at most (ADR-0075) |
+| Summary rule | how the summary opens: the count of findings by severity (`important`, `nit`, `pre-existing`), then one line per important finding |
+
+Each guide is at most 6,000 characters, so a change touching several areas reads each in full; the six
+sections are required, and a file that does not parse is named in the brief, never dropped in silence.
+
+**Selection and delivery.** A review step's brief points at a `review-guides@1.0` report
+([schema](../reference/schemas.md#review-guides)) that holds the guides whose `paths` match a path of
+the run's change, as `ctx.workers.changes` reads it (the same read the risk tier makes), and says how
+many it left out. When the change's paths are unknown, or any part of them could not be read, **every**
+guide is given, never none (INV-2). The brief records each guide's file, version, and hash, so a
+result traces to the rules it was reviewed by (INV-13). The step is any review of a run: the author's
+self-review, the review, a re-review, and a heavy change's second review.
+
+**Where they are read from.** The `docs/review/` directory of the repository the run's worktree was cut
+from (its checked-out branch, as the landing target says), never from the worktree: a change cannot
+rewrite the rules it is reviewed by. A repository with no such directory has no guides, which is no
+error. Reading never follows a link and is bounded (32 files, 6,000 characters each).
+
+**Writing and changing one.** The owner writes a guide from what reviews and salvages found, one failure
+per line, with the incident when there is one; a rule a check now enforces is dropped from it, as a
+lesson is. A change to a guide is reviewed as a change to a rule (the `docs` guide says so). The
+documents' own path map makes `docs/` light, so a change to a guide is light until the map names
+`docs/review/` (an operator's change to `policies/system.json`; recorded as a follow-up of T267).
+
+### The author verifies before review (W19)
+
+The validation step of `algorithm-development` measured a median of 0.4 minutes and caught nothing the
+acceptance checks did not. It is replaced by two things that run before the independent review:
+
+1. **The author runs the required checks and shows their output.** `develop:1` ends with its Worker
+   appending the commands, their exit codes, and the output lines that hold the result, verbatim, to
+   the task's dossier as an `evidence` entry. The step is refused at its end without one, or with one
+   whose shape shows no checks' output: an exit code per command (one at least, one per command check
+   the criteria name), each such check named, and an output line (`evidence_missing`; a
+   `workflow.evidence` `gate` decision says what is missing). The step requires the `dossier`
+   capability, so a Worker that could not write the entry is never admitted to it. Every fix grown
+   from it shows the checks' output again, for the tree it leaves, under the same gate. The entry is
+   the author's report, told from the System's own evidence by its author; the gate reads its shape,
+   never whether the commands ran, so the run's required checks run again on the exact result at
+   acceptance (ADR-0063).
+2. **A fresh session of the author's account reviews the diff** (`selfreview:1`): it never sees the
+   author's transcript, and is given only the task's goal and criteria, the exact diff (the goal as its
+   requested change), and the review guides: no dossier (no slice, no file, `dossier_read` refused, and none left in the shared worktree: a run's
+   `.system/` holds only its own brief's files when its agent starts), no
+   earlier results or decisions, and not the caller's input. Its important findings are verified as a
+   review's are (ADR-0075), and the confirmed ones grow a fix that continues the author's session, answered and re-reviewed before the independent review starts,
+   with no approval gate (the author answering its own review). It counts for no tier, provider
+   family, or acceptance.
+
 ## Measures (I1)
 
 | Metric | From |
 |---|---|
 | slice size per run, per layer | the `handbook` field of each brief and the execution's source half |
-| rules without a check | this inventory's **none** rows, counted again from the layers' homes once rules carry ids (58 today, after the lead's playbook; 45 before it) |
+| rules without a check | this inventory's **none** rows, counted again from the layers' homes once rules carry ids (59 today, after the lead's playbook and the review guides; 45 before them) |
 | reads fetched per run | the run's recorded `read` gate decisions on a handbook home (invariants, ADRs, lessons, AGENTS.md, the engineering docs): whether Workers read what the slice left out, or read too much |
 | overflows | `handbook.bound` decisions, by layer, in warn and refuse mode |
 

@@ -1038,7 +1038,7 @@ guesses.
   `schema`, `quote-check`, `review`, `operator`): what checks it, as the board task names it
   (`board-task` acceptance `check`). Rendered, the criterion says it (`- a1: pnpm test passes
   (check: tests)`), so a step that measures the change, such as `algorithm-development`'s
-  `validate:1`, knows which criteria are its to run without the caller's input
+  `develop:1` before its review (T267), knows which criteria are its to run without the caller's input
   ([workflow templates](workflow-templates.md#algorithm-development)). The workflow engine writes
   `@1.3` for a board task's run when one of its criteria names a check, `@1.2` otherwise; a `check`
   before 1.3 is refused. Example: [`brief.task-checks.json`](../../schemas/examples/brief.task-checks.json).
@@ -1070,7 +1070,8 @@ guesses.
   one; `attempt` is the task's attempt it was written in.
 - `author` is the Worker that wrote it (by its step's gated tool, or as the step's own entry the
   engine appended for it), with the run, step, and execution, or the engine (`system`, `workflow`),
-  which alone writes `evidence`.
+  which writes the System's `evidence` (its checks, acceptance, and landing). A writing step's Worker
+  also writes `evidence`: the output of the checks it ran (T267), told from the System's by `author`.
 - `refs` link (never copy) what the entry is about: a step's result, a review's assessment, a
   decision; `subject` is the exact subject a review reviewed or a step left; `commits`,
   `finding`, and `inReplyTo` say what a response fixed, in which commit, and which review entry it
@@ -1085,6 +1086,17 @@ guesses.
   brief points at one within 6,000 characters (role `context`); a run's workspace holds one within
   200,000 as `.system/DOSSIER.md`. At least as strict as the entries it holds. Example:
   [`task-dossier.slice.json`](../../schemas/examples/task-dossier.slice.json).
+
+### `review-guides`
+
+- The body of a `report` artifact: the review guides (`docs/review/*.REVIEW.md`) of the areas a
+  change touches, as a review step's brief points at them (role `context`; T267,
+  [the handbook](../design/handbook.md#review-guides-reviewmd)). `guides` names each by file, version,
+  owner, and the hash of its text, so a result traces to the rules it was reviewed by; `left` counts
+  the guides no changed path is in the area of; `problems` names a guide that could not be used.
+  `text` is what the reviewer reads. Read from the repository the run's worktree was cut from, never
+  from the worktree. Example:
+  [`review-guides.touched.json`](../../schemas/examples/review-guides.touched.json).
 
 ### `check-run`
 

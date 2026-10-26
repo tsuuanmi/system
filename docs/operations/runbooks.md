@@ -437,28 +437,20 @@ What names a kind today ([templates](../reference/workflow-templates.md#algorith
 | Step | Kind |
 |---|---|
 | `algorithm-development` `develop:1`, and the fix a review grows from it | `code`; `docs` in the `docs` variant, `tests` in the `tests` variant |
-| `algorithm-development` `validate:1`: it runs the checks and tests and changes nothing | `validation` |
 | `research` `literature:1` and `literature:2`, which a [research role](#turn-on-the-research-worker) takes | `research` |
-| every review (`algorithm-development` `review:1` and its re-reviews, `agent-review`), a planner's steps, every other website step (`ask`, `brainstorm`, `review` teams, `research`'s frame, evidence, critique, and conclusion), digests | none |
+| every review (`algorithm-development` `selfreview:1`, `review:1` and their re-reviews, `agent-review`), a planner's steps, every other website step (`ask`, `brainstorm`, `review` teams, `research`'s frame, evidence, critique, and conclusion), digests | none |
 
 A Worker given kinds takes only steps of those kinds, and never a step that names none; a Worker
 given none takes any step it proves the capabilities for. With no Worker given kinds, everything
 routes as before.
 
 These are the shipped kinds. The `profile-software-development` row's `kinds` sets the kind a step
-names, by step (`develop`, `docs`, `tests`, `validate`), so moving a step to other Workers is a
-configuration change, never a code change; the review names none, whatever is set
+names, by step (`develop`, `docs`, `tests`), so moving a step to other Workers is a
+configuration change, never a code change; a review names none, whatever is set
 ([configuration](../reference/configuration.md#profile-software-development)). For example,
-`kinds: { validate: tests }` makes the validation test work again, taken by the Workers given
-`tests`. `system check` refuses a key that is not a step and a kind that is not a kind of work.
-
-**Workers given kinds take validation only when they list `validation`** (since 2026-10-25;
-before, `validate:1` was `tests` work). A writer given `[docs, tests]` no longer runs the
-validation. Once every Worker that proves `validate` is given kinds, give one of them `validation`,
-or `validate:1` fails admission, nothing sent, and `system explain <runId>` says
-`no Worker that proves validate, local-data takes validation work`. Before a start, the start
-form on `/ui` already says of the step (`… for validation work`) `No Worker can take it now`. A
-Worker given no kinds takes it as before.
+`kinds: { docs: writing }` makes the `docs` variant's develop step `writing` work, taken by the
+Workers given `writing`. `system check` refuses a key that is not a step and a kind that is not a
+kind of work. (A `validate` key of an earlier version is accepted and ignored: T267 removed the step.)
 
 **The live install's split** (operator decisions D35 and D36, 2026-10-24, and the operator's
 request of 2026-10-25): Claude Code changes the codebase (source code, docs, and tests), Codex runs
@@ -479,15 +471,17 @@ the system repository with a worktree per run. The rows are in
       - { account: <the Codex account>, roles: [develop-2, review] }
 ```
 
-Keep each role's other settings as they are; only `kinds` changes. `develop-2` keeps
-`workspace-write`: `validate:1` needs a Worker that proves `validate`, which a read-only one never
-does.
+Keep each role's other settings as they are; only `kinds` changes. (Before T267 `develop-2` took
+`validate:1`, the validation step, on a Worker given `validation`; the template has no such step now,
+so that role is free for other work, and a `validation` kind names nothing in `algorithm-development`.)
+`selfreview:1`, the author's own review, runs on the author's account: give each writing account a
+read-only role given no kinds (`review` above), or it fails admission with nothing sent.
 
 1. **Before:** Claude Code's commands are proven confined on this host
    ([confined commands](#agent-workers): `bubblewrap` and `socat`); otherwise the writing Claude
    Code Worker is unavailable and nothing takes `code` work. Codex is installed and signed in inside
    its Worker home ([Codex Workers](#codex-workers)); its commands are confined by its own sandbox,
-   which the probe proves (`executes`), or no Worker takes `validate:1`. Back up (`system backup`).
+   which the probe proves (`executes`). Back up (`system backup`).
 2. **Merge the example's rows** into `~/.dsh/profiles/system/cordis.patch.yml` by row id
    (`runtime-codex-sdk`, `runtime-antigravity-cli`, `agent-workers`,
    `profile-software-development`). What it sets:
@@ -496,8 +490,8 @@ does.
      `docs` and `tests` variants. Each workflow run writes in its own worktree on the branch
      `system/run/<runId>`, never in the checkout ([a run's worktree](#a-runs-worktree)); an accepted
      task's branch is merged on your approval ([land an accepted result](#land-an-accepted-result)).
-   - `codex-writer`: the same on Codex, `kinds: [validation]`: it runs `validate:1`, the checks and
-     tests, and takes no writing step.
+   - `codex-writer`: the same on Codex, `kinds: [validation]`: it takes no writing step, and, since
+     T267, no step of `algorithm-development` at all (its `validate:1` is gone).
    - The reviewers (`claude-research`, `codex-review`, `agy-review`) are given no kinds, so they take
      every review. Each now sets `worktreePerRun: true`: every Worker on a workspace must
      agree, so a reviewer reads the writer's worktree, and the load refuses a row that disagrees.
@@ -515,13 +509,13 @@ does.
    ([let a run pass the required checks](#let-a-run-pass-the-required-checks))), and every command
    asks. In a
    step with a session (`develop:1`) a command waits on the approval queue
-   ([a deferred tool call](#a-workers-tool-call-is-deferred-on-an-approval)); in `validate:1`, which
-   has none, it is denied and reported not run. Listing a command
+   ([a deferred tool call](#a-workers-tool-call-is-deferred-on-an-approval)); in a step with none
+   (a review, a one-shot step), it is denied and reported not run. Listing a command
    ([change the autonomy policy](#change-the-autonomy-policy)) lets it run unasked, as the exact
    argv. Before you list one for this repository, check it runs in a fresh worktree with no
    network: a run's worktree has no `node_modules`, so `corepack pnpm check` fails there until its
-   dependencies are present; until then every validation of this repository reports its commands not
-   run, and you run the checks in the worktree yourself.
+   dependencies are present; until then a developer's checks of this repository report their commands
+   not run (its evidence entry says so), and you run the checks in the worktree yourself.
 4. **Check, then restart:** `system check` until it says `ok` (it names a malformed kind, kinds on a
    review member, or Workers of one workspace that disagree on `worktreePerRun`), then
    `system shutdown`, `system start`. `system explain` (or `/ui`) shows each Worker ready, or why
@@ -530,7 +524,7 @@ does.
    `task`: source-code work with no variant, docs work with `variant: docs`, test work with
    `variant: tests` (CLI: `system run algorithm-development --variant docs …`). `system explain
    <runId>` names each step's Worker; its route decision says `takes code work, one of its kinds`,
-   and a Worker that lost says `takes validation work only; this work is code work`.
+   and a Worker that lost says, for example, `takes docs work only; this work is code work`.
 
 What this split does not reach, and why:
 
@@ -540,15 +534,15 @@ What this split does not reach, and why:
   or Antigravity CLI to brainstorms needs a decision of its own, not configuration. A `review` team
   can already take them as review members ([above](#agent-workers-as-review-team-members)).
 - **The Antigravity CLI reviews, and writes nothing here.** `develop:1` keeps a conversation, which
-  agy cannot resume, and `validate:1` runs commands, which agy has none of; a writing agy Worker given
-  `docs` would never be admitted to either. It stays a reviewer.
+  agy cannot resume; a writing agy Worker given `docs` would never be admitted to it. It stays a
+  reviewer.
 - **A step that names no kind needs a Worker given none.** Once every writer has kinds, a writing
   step that names none (a planner's `develop` step, where a template's growth policy allows one, or
   a configured template's) finds no writer and fails admission, saying `no Worker that proves
   develop … takes work that names no kind`; give one writer no kinds to take such steps.
-- **`validate:1` is validation work, apart from test writing.** With Codex unable to confine its
-  commands on this host, it fails admission; giving `claude-code` `validation` too moves the
-  validation to Claude Code, and test writing stays where it is.
+- **There is no validation step** (T267). The developer runs the checks itself before its review and
+  shows the output in the task's dossier, and the run's required checks run again on the exact result
+  at acceptance, so there is no step to move between Workers.
 - **After the move to accounts × roles** ([below](#migrate-agent-workers-to-accounts--roles)), the
   kinds go on the roles (`roles: [{ id: develop, …, kinds: [code, docs, tests] }]`, as above), and
   the assignments decide which accounts take them; `system account migrate` keeps each row's kinds on
@@ -2649,7 +2643,7 @@ on](#turn-an-off-row-back-on)), and a policy that asks. Under the bundle's studi
 Code Worker's reads and edits are `read` and `workspace-write`, both `auto`; a `workspace-write`
 run's `Bash` command asks unless the policy lists its exact argv, and the runtime offers no
 `WebFetch` or `WebSearch`. Only a run in a session can wait: in a run with none (a step whose
-conversation is temporary, such as `algorithm-development`'s `validate:1`), a call the policy asks
+conversation is temporary, such as `algorithm-development`'s `review:1`), a call the policy asks
 about is denied, nothing is queued, and the agent goes on without it
 ([pilot](pilot.md#name-the-repository-and-the-workers)).
 

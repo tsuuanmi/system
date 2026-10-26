@@ -133,6 +133,8 @@ export function approvals(e: Engine, nodes: readonly NodeRow[]): Approval[] {
   const found: Approval[] = []
   for (const node of nodes) {
     if (node.state !== 'COMPLETED' || !node.subject) continue
+    // The author's own review is no independent review: it counts for no tier, no family, no acceptance (T267).
+    if ((JSON.parse(node.spec) as ResolvedNode).selfReview !== undefined) continue
     // The step's latest passed gate decides, as the board's last review does.
     let last: Approval | undefined
     for (const ref of node.decisions ? JSON.parse(node.decisions) as ArtifactRef[] : []) {

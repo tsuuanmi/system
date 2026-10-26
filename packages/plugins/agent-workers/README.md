@@ -362,7 +362,12 @@ The **`agents` Worker source**: agent runtimes as Workers
     descriptor (through `/proc/self/fd`), so nothing is checked by name before
     it is used and nothing swapped in at the name meanwhile is written through.
     Each file is written whole, read-only (0444), beside its name and renamed
-    over it, never through a link; edits are never read back. A repository
+    over it, never through a link; edits are never read back. The directory
+    then holds exactly this brief's files (T267): a file an earlier run's brief
+    placed and this one's does not name (the dossier, the board) is removed
+    before the agent starts, also for a run whose brief places none, so an
+    author's fresh-context self-review never finds the author's dossier there
+    (a `.system` the repository tracks is its own, and is left alone then). A repository
     that tracks anything under `.system/`, a `.system`
     that is not a plain directory, or a file of it that is not a plain file,
     fails the run unsubmitted (`config_error`). The prompt names the files

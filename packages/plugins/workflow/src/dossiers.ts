@@ -22,7 +22,7 @@
  *   author's conversation: the dossier holds no transcript, only what was appended to it.
  */
 import type { Classification, Subject } from '@tsuuanmi/system-board-core'
-import { bodyText, type BriefFile, type BriefPointer } from '@tsuuanmi/system-libs'
+import { bodyText, type BriefCheck, type BriefFile, type BriefPointer } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { writes } from './review.ts'
@@ -65,9 +65,13 @@ const VIEW_ROWS = 2000
 /** The artifact kind of an entry of each kind. */
 const ARTIFACT_KIND = { plan: 'plan', progress: 'report', review: 'finding', response: 'report', evidence: 'evidence' } as const
 
-/** What each step's role may append itself: a reviewer reviews; an author plans, reports progress, and answers findings. Nobody writes evidence. */
+/**
+ * What each step's role may append itself: a reviewer reviews; an author plans, reports progress,
+ * answers findings, and pastes the output of the checks it ran as `evidence` (T267: its author is the
+ * Worker, so a reader tells it from the System's own evidence, which is checked; this is reported).
+ */
 export const ROLE_KINDS: Readonly<Record<StepRole, readonly DossierKind[]>> = {
-  author: ['plan', 'progress', 'response'],
+  author: ['plan', 'progress', 'response', 'evidence'],
   review: ['review'],
   other: ['progress'],
 }
@@ -152,6 +156,39 @@ const COMMIT = /^[0-9a-f]{7,64}$/
 const CONTENT_ID = /^sha256:[0-9a-f]{64}$/
 const chars = (text: string): number => [...text].length
 const describe = (s: Subject): string => `${s.type} ${s.ref}${s.version ? ` at ${s.version}` : ''}`
+
+/**
+ * The capability a Worker offers when its runtime gives its runs the dossier tools (agent Workers:
+ * host tools, ADR-0070). A `verifies` step requires it (T267): a Worker that could not show its
+ * checks' output is never admitted to a step that must.
+ */
+export const DOSSIER_CAPABILITY = 'dossier'
+
+/** The checks a task's criteria name that are commands its author runs: their output is what its evidence shows. */
+const COMMAND_CHECKS: readonly BriefCheck[] = ['tests', 'typecheck', 'lint']
+/** A reported exit code: `exit 0`, `exit code: 1`, `exited 2`, `exit status 0`. */
+const EXIT_CODE = /\bexit(?:ed)?(?:\s+(?:code|status))?\s*[:=]?\s*-?\d+\b/gi
+
+/**
+ * Why the evidence a writing step appended does not show its checks' output (T267), or undefined when
+ * it does: some evidence; at least one reported exit code, and one for each command check the task's
+ * criteria name (`tests`, `typecheck`, `lint`), each named; and output beside the exit codes (a line
+ * that is neither a command nor an exit code). A shape the engine can read, never proof the commands
+ * ran: the run's required checks run again on the exact result at acceptance (ADR-0063).
+ */
+export function evidenceProblem(texts: readonly string[], checks: readonly BriefCheck[]): string | undefined {
+  const text = texts.join('\n').trim()
+  if (!text) return 'the step\'s dossier holds no evidence entry by its Worker in this attempt'
+  const required = COMMAND_CHECKS.filter((c) => checks.includes(c))
+  const exits = text.match(EXIT_CODE)?.length ?? 0
+  if (exits < Math.max(1, required.length)) return `its evidence reports ${exits} exit code${exits === 1 ? '' : 's'}; each command it ran is shown with its exit code (${Math.max(1, required.length)} at least)`
+  const missing = required.filter((c) => !new RegExp(`\\b${c === 'tests' ? 'tests?' : c}\\b`, 'i').test(text))
+  if (missing.length) return `its evidence does not name the check${missing.length > 1 ? 's' : ''} ${missing.join(', ')} the task's criteria require`
+  // Output: a line that is no command (`$ …`) and holds more than an exit code.
+  const output = text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('$') && l.replace(EXIT_CODE, '').replace(/[\s:,.;()-]/g, '') !== '')
+  if (!output.length) return 'its evidence holds no output line beside the commands and their exit codes'
+  return undefined
+}
 
 /** A step's role in its task's work: a review (bound to a subject, or offering review), a writing step, or another. */
 export function roleOf(spec: ResolvedNode, node: Pick<NodeRow, 'subject'>): StepRole {
@@ -296,6 +333,8 @@ export class TaskDossiers {
   forBrief(run: RunRow, node: NodeRow): { pointer?: BriefPointer; file?: BriefFile } {
     const frame = this.e.tasks.frame(run.run_id)
     if (!frame) return {}
+    // An author's self-review (T267) is given no dossier: only the goal, the diff, and the review guides.
+    if ((JSON.parse(node.spec) as ResolvedNode).selfReview !== undefined) return {}
     const meta = { classification: run.classification ?? this.e.ctx.egress.defaultClassification, runId: run.run_id, nodeId: node.node_id }
     const slice = this.view(frame, DOSSIER_LIMITS.sliceChars, meta)
     if (!slice) return {}
@@ -307,9 +346,46 @@ export class TaskDossiers {
     }
   }
 
+  /**
+   * The texts of the `evidence` entries the step's Worker appended in its current attempt: the output
+   * of the checks its author ran (T267), oldest first.
+   */
+  evidenceOf(node: NodeRow): string[] {
+    const rows = this.e.ctx.store.db.prepare("SELECT entry FROM workflow_dossiers WHERE run_id = ? AND node_id = ? AND step = ? AND author_type = 'worker' AND kind = 'evidence' ORDER BY seq").all(node.run_id, node.node_id, stepOf(node)) as Array<{ entry: ArtifactRef }>
+    return rows.map((r) => (this.e.ctx.artifacts.get(r.entry)?.body as DossierEntry | undefined)?.text ?? '')
+  }
+
+  /**
+   * The gate at the end of a `verifies` step of a board task's run (T267): it passes (undefined) when
+   * the step's author pasted the output of the checks the task requires into the dossier as `evidence`,
+   * in the shape {@link evidenceProblem} reads; otherwise the step is refused, with a `gate` decision
+   * (INV-13) that says what is missing. A run that serves no board task has no dossier, so it asks
+   * nothing. A Worker with no dossier tool never gets here: the step requires the `dossier` capability
+   * at admission ({@link DOSSIER_CAPABILITY}).
+   */
+  evidenceGate(run: RunRow, node: NodeRow): { message: string; decision: ArtifactRef } | undefined {
+    const frame = this.e.tasks.frame(run.run_id)
+    if (!frame) return undefined
+    const checks = [...new Set(frame.acceptance.map((a) => a.check).filter((c): c is BriefCheck => c !== undefined))]
+    const why = evidenceProblem(this.evidenceOf(node), checks)
+    if (!why) return undefined
+    const message = `step ${node.node_id} ended without the output of the checks its author ran in the task's dossier (${why}): run the required checks, append their real output as an evidence entry (dossier_append: each command, its exit code, and the lines that hold the result), then finish`
+    const decision = this.e.ctx.artifacts.recordDecision({
+      decisionType: 'gate',
+      question: `May step ${node.node_id} of run ${run.run_id} end, with the output of its author's checks in the task's dossier?`,
+      inputs: [],
+      candidates: [
+        { option: 'refuse', selected: true, reasons: [why] },
+        { option: 'end', selected: false, reasons: ['not end: the author shows the checks\' output before anyone reviews its change (T267)'] },
+      ],
+      decider: { type: 'rule', id: 'workflow.evidence', version: '2' }, outcome: { option: 'refuse', detail: { checks } }, deterministic: true,
+    }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
+    return { message, decision }
+  }
+
   /** Whether the step appended an entry of its own in its current attempt (through `dossier_append`). */
   private appendedBy(node: NodeRow): boolean {
-    return !!this.e.ctx.store.db.prepare("SELECT 1 FROM workflow_dossiers WHERE run_id = ? AND node_id = ? AND step = ? AND author_type = 'worker' LIMIT 1").get(node.run_id, node.node_id, stepOf(node))
+    return !!this.e.ctx.store.db.prepare("SELECT 1 FROM workflow_dossiers WHERE run_id = ? AND node_id = ? AND step = ? AND author_type = 'worker' AND kind != 'evidence' LIMIT 1").get(node.run_id, node.node_id, stepOf(node))
   }
 
   /**
@@ -424,7 +500,7 @@ export class TaskDossiers {
     const role = roleOf(spec, node)
     if (!DOSSIER_KINDS.includes(input.kind)) refuse(`${String(input.kind).slice(0, 40)} is not a kind of entry (${DOSSIER_KINDS.join(', ')})`)
     if (!ROLE_KINDS[role].includes(input.kind)) {
-      refuse(input.kind === 'evidence' ? 'evidence is the System\'s alone (checks, acceptance, landing)' : `a ${role === 'other' ? 'step that neither writes nor reviews' : role === 'review' ? 'review' : 'writing step'} appends ${ROLE_KINDS[role].join(', ')}, not ${input.kind}`)
+      refuse(input.kind === 'evidence' ? 'only a writing step reports evidence (the output of the checks it ran); the System\'s own is its checks, acceptance, and landing' : `a ${role === 'other' ? 'step that neither writes nor reviews' : role === 'review' ? 'review' : 'writing step'} appends ${ROLE_KINDS[role].join(', ')}, not ${input.kind}`)
     }
     const text = typeof input.text === 'string' ? input.text.trim() : ''
     if (!text || chars(text) > DOSSIER_LIMITS.text) refuse(`the text holds ${chars(text)} characters; an entry holds 1 to ${DOSSIER_LIMITS.text}`)
@@ -451,9 +527,16 @@ export class TaskDossiers {
     return { id: ref, seq }
   }
 
-  /** `dossier_read` as a step's Worker uses it: its own task's dossier, while `caller` is the step's running execution ({@link read}). */
+  /**
+   * `dossier_read` as a step's Worker uses it: its own task's dossier, while `caller` is the step's
+   * running execution ({@link read}). An author's self-review (T267) reads none: it is given only the
+   * goal, the diff, and the review guides, never what its author planned, did, or was told.
+   */
   readByWorker(caller: DossierCaller, page: { from?: number | undefined; limit?: number | undefined }): DossierPage {
-    this.running(caller, 'nothing was read')
+    const { node } = this.running(caller, 'nothing was read')
+    if ((JSON.parse(node.spec) as ResolvedNode).selfReview !== undefined) {
+      throw new WorkflowFailure('invalid_input', `step ${caller.nodeId} is the author's self-review: it reads only the goal, the diff, and the review guides, never the task's dossier; nothing was read`)
+    }
     return this.read({ runId: caller.runId, from: page.from, limit: page.limit })
   }
 
