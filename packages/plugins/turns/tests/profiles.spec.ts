@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto'
+import { contentId } from '@tsuuanmi/system-libs'
 import { describe, expect, it } from 'vitest'
 import { canRunBrowser } from '../../browser-patchright/tests/support.ts'
 import { phase } from '../src/index.ts'
@@ -93,6 +94,28 @@ describe.runIf(canRunBrowser)('ctx.turns: a session-bound account works in its o
     expect(fake.sent.map((s) => s.conversationId)).toEqual([undefined, undefined])
     // Both are the session's: the abandoned one is deleted with it once its run releases it.
     expect(ctx.turns.conversations({ sessionId }).map((c) => c.binding).sort()).toEqual([erred, again.binding].sort())
+  }, 180_000)
+
+  it('saves and verifies the account while the page hides its button, read from the hidden button; a turn still needs it shown (live 2026-10-26)', async () => {
+    // The button is a link with role button, hidden: the map's second candidate finds it, as live.
+    const { ctx, fake } = await bootBound({ fake: { accountHidden: 'button' } })
+    const saved = await ctx.accounts.get('gemini-main')
+    expect(saved).toMatchObject({ status: 'ready' })
+    expect(ctx.eventLog.query({ type: 'ui.drift', limit: 10 })).toEqual([])
+    // The identity Save stored is the account the hidden button names: re-verifying as it is accepted.
+    await ctx.accounts.markSignedOut('gemini-main', 'login-surface', saved.revision)
+    const marked = await ctx.accounts.get('gemini-main')
+    expect(await ctx.accounts.reverify('gemini-main', contentId({ provider: 'gemini-web', identity: 'Test User (test@example.test)' }), marked.revision)).toMatchObject({ status: 'ready' })
+    expect(fake.sent).toEqual([])
+  }, 180_000)
+
+  it('saves nothing when the page names no account, shown or hidden: a ui.drift of auth.account, and the sign-in unknown', async () => {
+    const { ctx, fake, saveError } = await bootBound({ fake: { accountMissing: true }, saveFails: true })
+    expect(saveError).toMatchObject({ kind: 'session_broken', message: expect.stringMatching(/could not confirm the sign-in/) })
+    expect(await ctx.accounts.get('gemini-main')).toMatchObject({ status: 'new' })
+    expect(await ctx.accounts.portableState('gemini-main')).toBeUndefined()
+    expect(ctx.eventLog.query({ type: 'ui.drift', limit: 10 }).map((e) => e.data)).toEqual([expect.objectContaining({ provider: 'gemini-web', element: 'auth.account', kind: 'unresolved' })])
+    expect(fake.sent).toEqual([])
   }, 180_000)
 
   describe('background checks spread over their interval (PROP-0007)', () => {

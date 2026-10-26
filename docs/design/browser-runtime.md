@@ -98,7 +98,7 @@ generic. Everything provider-specific comes from the provider driver
 interface ProviderAccountSupport {          // part of ProviderDriver
   loginUrl: string;
   stateOrigins: string[];                   // origins whose cookies, localStorage, IndexedDB are kept
-  checkAuth(page): Promise<AuthState>;      // signed-in | signed-out (with evidence) | unknown
+  checkAuth(page, { save? }?): Promise<AuthState>;  // signed-in | signed-out (with evidence) | unknown; save: a Save's check
   identity(page): Promise<string>;          // stable identity hint; only its hash is stored
 }
 ```
@@ -180,7 +180,9 @@ flowchart TD
 
 1. Close Chrome gracefully and wait for the profile lock to release.
 2. Reopen the profile headed in the invisible display.
-3. Capture the state for `stateOrigins`, including IndexedDB.
+3. Capture the state for `stateOrigins`, including IndexedDB, and check the sign-in and read
+   `identity()` in the profile (`checkAuth(page, { save: true })`: the
+   [driver interface](provider-turns.md#driver-interface)).
 4. Verify it with `checkAuth` in a **fresh** context built from the captured state.
    A session-bound account skips this step: its sign-in and identity were already
    verified in the profile in step 3, and a copy is not how it works.

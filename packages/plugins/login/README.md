@@ -12,7 +12,8 @@
   1. Reopen the login profile headed on the invisible display
      (`ctx.browser.captureProfile`). A profile still held by a live browser is
      refused.
-  2. The driver confirms the sign-in and reads its identity hint.
+  2. The driver confirms the sign-in, as a Save's check (`checkAuth(page, { save: true })`:
+     it may count an account its page names but hides, Gemini's), and reads its identity hint.
   3. Capture the state for the driver's `stateOrigins`, in memory only.
   4. Verify that state signs in, in a fresh context. A session-bound account skips
      this step: step 2 already verified it in the profile, and loading a copy

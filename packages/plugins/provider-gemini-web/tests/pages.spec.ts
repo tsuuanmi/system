@@ -117,6 +117,98 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site: sign-in, c
     expect(JSON.stringify(drifts[0]!.outline)).not.toMatch(/Test User|test@example/)
   })
 
+  it('reads the account for a Save from its hidden button, by the map\'s own candidates, while a turn still needs it shown (live 2026-10-26)', async () => {
+    const { page, fake } = await open({ accountHidden: 'button' })
+    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { ...TIMEOUTS, readyMs: 1500, accountMs: 500 } })
+    const drifts: DriftEvent[] = []
+    driver.onDrift = (event) => void drifts.push(event)
+    await page.goto(`${fake.origin}/app`)
+    expect(await driver.checkAuth(page, { save: true })).toBe('signed-in')
+    expect(await driver.identity(page)).toBe('Test User (test@example.test)')
+    expect(drifts).toEqual([])
+    // A button the page hides that is not the account's ("Google Account: …") names no one.
+    await page.evaluate(() => {
+      const button = document.querySelector('[aria-label^="Google Account:"]')!
+      button.setAttribute('aria-label', 'Google Accounts help')
+    })
+    expect(await driver.checkAuth(page, { save: true })).toBe('unknown')
+    // A turn's check is unchanged: a hidden button is drift there.
+    await page.evaluate(() => document.querySelector('[aria-label="Google Accounts help"]')!.setAttribute('aria-label', 'Google Account: Test User (test@example.test)'))
+    expect(await driver.checkAuth(page)).toBe('unknown')
+  })
+
+  it('names no one when two shown account buttons name different accounts: the hidden fallback is never read past them, nor past two hidden ones', async () => {
+    const { page, fake } = await open()
+    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { ...TIMEOUTS, readyMs: 1500, accountMs: 500 } })
+    await page.goto(`${fake.origin}/app`)
+    expect(await driver.identity(page)).toBe('Test User (test@example.test)')
+    // A second shown link naming another account, and a hidden one naming the first: ambiguous, never the hidden one's or the first shown one's.
+    await page.evaluate(() => document.querySelector('header')!.insertAdjacentHTML('beforeend', '<a href="#" aria-label="Google Account: Other User (other@example.test)">O</a><a href="#" aria-label="Google Account: Test User (test@example.test)" hidden>T</a>'))
+    const saving = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { ...TIMEOUTS, readyMs: 1500, accountMs: 500 } })
+    const drifts: DriftEvent[] = []
+    saving.onDrift = (event) => void drifts.push(event)
+    await expect(saving.identity(page)).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/exactly one account/) })
+    expect(drifts).toEqual([expect.objectContaining({ element: 'auth.account', kind: 'unresolved', matches: [{ found: 3, shown: 2 }, { found: 0, shown: 0 }] })])
+    expect(await saving.checkAuth(page, { save: true })).toBe('unknown')
+    // All hidden, naming two accounts: no one either.
+    await page.evaluate(() => { for (const link of document.querySelectorAll('header a')) link.setAttribute('hidden', '') })
+    await expect(saving.identity(page)).rejects.toMatchObject({ kind: 'ui_drift' })
+    expect(await saving.checkAuth(page, { save: true })).toBe('unknown')
+    // Hidden and naming one account only (the other removed): that account.
+    await page.evaluate(() => document.querySelector('[aria-label^="Google Account: Other"]')!.remove())
+    expect(await saving.identity(page)).toBe('Test User (test@example.test)')
+  })
+
+  it('masks every account the buttons name in a drift outline, though they are ambiguous and name no one', async () => {
+    const { page, fake } = await open({ accountHidden: true })
+    await page.goto(`${fake.origin}/app`)
+    await page.evaluate(() => {
+      document.querySelector('header')!.insertAdjacentHTML('beforeend', '<a href="#" aria-label="Google Account: Other User (other@example.test)" hidden>O</a>')
+      document.querySelector('header')!.insertAdjacentHTML('afterend', '<div><button class="settings first" aria-label="Settings for Test User">s</button><button class="settings second" aria-label="Settings for Other User">s</button></div>')
+    })
+    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { ...TIMEOUTS, readyMs: 1500, accountMs: 500 } })
+    const drifts: DriftEvent[] = []
+    driver.onDrift = (event) => void drifts.push(event)
+    await expect(driver.identity(page)).rejects.toMatchObject({ kind: 'ui_drift' })
+    expect(drifts).toEqual([expect.objectContaining({ element: 'auth.account', kind: 'unresolved', matches: [{ found: 2, shown: 0 }, { found: 0, shown: 0 }] })])
+    // Both settings buttons are in the outline (unlike classes, so not folded into one), masked.
+    expect(drifts[0]!.outline!.nodes.filter((n) => n.classes?.includes('settings')).map((n) => n.label)).toEqual(['[redacted]', '[redacted]'])
+    expect(JSON.stringify(drifts[0]!.outline)).not.toMatch(/Test User|Other User|example\.test/)
+  })
+
+  it('saves an account whose button is hidden beside a "Sign in" offer, and is signed out with the offer and no account', async () => {
+    const { page, fake } = await open({ accountHidden: 'button', signInOffer: true })
+    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { ...TIMEOUTS, readyMs: 1500, accountMs: 500 } })
+    const drifts: DriftEvent[] = []
+    driver.onDrift = (event) => void drifts.push(event)
+    await page.goto(`${fake.origin}/app`)
+    expect(await driver.checkAuth(page, { save: true })).toBe('signed-in')
+    expect(await driver.identity(page)).toBe('Test User (test@example.test)')
+    // No drift of the account (the fake's "Sign in" is a button, the map's second candidate of auth.login: a fallback).
+    expect(drifts.filter((event) => event.element === 'auth.account')).toEqual([])
+    // A turn's check is unchanged: the offer with no account shown is signed out.
+    expect(await driver.checkAuth(page)).toBe('signed-out')
+    // With no account named at all, the offer is a signed-out page for a Save too.
+    await page.evaluate(() => document.querySelector('[aria-label^="Google Account:"]')!.remove())
+    expect(await driver.checkAuth(page, { save: true })).toBe('signed-out')
+  })
+
+  it('fails the identity as drift, outlined, when the page names no account, shown or hidden; a Save\'s sign-in check is unknown', async () => {
+    const { page, fake } = await open({ accountMissing: true })
+    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { ...TIMEOUTS, readyMs: 1500, accountMs: 500 } })
+    const drifts: DriftEvent[] = []
+    driver.onDrift = (event) => void drifts.push(event)
+    await page.goto(`${fake.origin}/app`)
+    expect(await driver.checkAuth(page, { save: true })).toBe('unknown')
+    expect(drifts).toEqual([expect.objectContaining({ element: 'auth.account', kind: 'unresolved', matches: [{ found: 0, shown: 0 }, { found: 0, shown: 0 }] })])
+    // The identity on its own, with a driver of its own (a driver reports one element's drift once per page).
+    const saving = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { ...TIMEOUTS, readyMs: 1500, accountMs: 500 } })
+    const identityDrifts: DriftEvent[] = []
+    saving.onDrift = (event) => void identityDrifts.push(event)
+    await expect(saving.identity(page)).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/shown or hidden/) })
+    expect(identityDrifts).toEqual([expect.objectContaining({ element: 'auth.account', kind: 'unresolved', matches: [{ found: 0, shown: 0 }, { found: 0, shown: 0 }] })])
+  })
+
   it('fails a page that shows neither signed in nor signed out once, as drift, never as a session to retry', async () => {
     const { page, fake } = await open({ interstitial: true })
     const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 1500 } })

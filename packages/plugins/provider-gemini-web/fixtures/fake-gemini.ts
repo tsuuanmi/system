@@ -91,8 +91,12 @@ export interface FakeOptions {
   /**
    * The Google Account button is in the page but hidden, so it does not resolve while the app
    * renders (live 2026-10-24: a new chat whose account never showed; 2026-10-16: with a terms notice).
+   * `button`: hidden, and a link with role button, so the map's second candidate finds it (live
+   * 2026-10-26: a Save whose drift's matches were `[{found:0,shown:0},{found:1,shown:0}]`).
    */
-  accountHidden?: boolean
+  accountHidden?: boolean | 'button'
+  /** No Google Account button at all: the page names no account, shown or hidden. */
+  accountMissing?: boolean
   /** Clicking Temporary chat does nothing (the driver must refuse to send). */
   temporaryBroken?: boolean
   /** A "Sign in" control shows beside the account's button (an offer to add an account): still signed in. */
@@ -446,7 +450,7 @@ function html(options: Required<FakeOptions>, missing = false, history: string[]
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Gemini</title>
 <style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}[hidden]{display:none}</style></head>
 <body>
-<header><a href="#" aria-label="Google Account: Test User (test@example.test)"${options.accountHidden ? ' hidden' : ''}>T</a>${options.signInOffer ? '<button>Sign in</button>' : ''}</header>
+<header>${options.accountMissing ? '' : `<a href="#"${options.accountHidden === 'button' ? ' role="button"' : ''} aria-label="Google Account: Test User (test@example.test)"${options.accountHidden ? ' hidden' : ''}>T</a>`}${options.signInOffer ? '<button>Sign in</button>' : ''}</header>
 <bard-sidenav><ol aria-label="Recent chats">${history.map((id) => `<li><a href="/app/${id}">chat</a><button class="row-options" data-id="${id}" aria-label="Open menu for conversation actions" aria-haspopup="menu">⋮</button></li>`).join('')}</ol></bard-sidenav>
 <bard-sidenav-content>
 <nav><button aria-label="Temporary chat" id="temp">t</button>${options.paneMenu ? '<button aria-label="Open menu for conversation actions" aria-haspopup="menu" id="conv-options" hidden>⋮</button>' : ''}</nav>
@@ -505,7 +509,7 @@ export class FakeGemini {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, thinkMs: 0, thoughts: true, thinkTimer: false, promptLagMs: 0, rewritePaste: false, draftPersist: false, dropOver: 0, signInOffer: false, termsNotice: false, accountHidden: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
+      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, thinkMs: 0, thoughts: true, thinkTimer: false, promptLagMs: 0, rewritePaste: false, draftPersist: false, dropOver: 0, signInOffer: false, termsNotice: false, accountHidden: false, accountMissing: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, researchHidesLevels: false, planHangs: false, answer: 'OK', clarify: '',
       researchMs: 1500, researchHeld: false, researchActivity: false, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }

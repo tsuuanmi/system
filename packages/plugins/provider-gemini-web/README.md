@@ -125,8 +125,28 @@ driver, its operations are data: a UI map,
     no account control (a "Sign in" offer beside the account is still signed in).
     Google's traffic check and a terms notice come first: each is `challenge`
     whether or not the account shows (Readiness, below).
-  - `identity` reads the account from that control's name; only its hash is
-    stored.
+  - `identity` reads the account from that control's name ("Google Account:",
+    then the name and address); only its hash is stored. When no candidate of
+    `auth.account` shows it, the same candidates of the map are read with
+    hidden matches included (a collapsed side panel: live 2026-10-24, and a Save
+    that failed on 2026-10-26 with `matches` `[{found:0,shown:0},{found:1,shown:0}]`).
+    Only a name that starts "Google Account:" counts. Hidden matches are read
+    only when no candidate shows any match: shown matches that do not resolve
+    (two shown buttons, say) are ambiguous and name no one, and so do hidden
+    matches that name more than one account. The identity, a Save's sign-in
+    check, and the masking of drift outlines read the same buttons, hidden ones
+    included: authentication needs exactly one account, while an outline masks
+    every account any of them names, ambiguous or not. With
+    neither a shown nor a hidden button, or an ambiguous one, it is outlined as
+    a `ui.drift` of `auth.account` and fails as `ui_drift`.
+  - A Save (`checkAuth(page, { save: true })`, which `ctx.login.save` passes)
+    counts that hidden, named button as signed in, so the account is saved and
+    verified as the account it names, also beside a "Sign in" offer (read before
+    the signed-out state, which counts that offer as signed out while the
+    button is hidden). Google's sign-in page, the traffic check, and a terms
+    notice still come first. A page that names no account is still a
+    `ui.drift` of `auth.account`, `unknown`, and nothing is saved. A turn's
+    check is unchanged: it needs the button shown (Readiness, below).
   - Accounts are signed in with `system account login <id>` (remote desktop),
     then saved encrypted, as for ChatGPT.
 - **Readiness:** pages get 60 s to render, since the live app took over 30 s
@@ -186,8 +206,8 @@ driver, its operations are data: a UI map,
   stale element is logged as `ui.drift`, naming its region's outline, kept as
   local-private evidence
   ([drift evidence](../../../docs/design/ui-operations.md#drift-evidence)). The
-  outline masks the account's own name and address, read from its button even
-  while the page hides it.
+  outline masks the name and address of every account a button names, read
+  from the buttons even while the page hides them or they name more than one.
 - **Fixtures:** [`fixtures/fake-gemini.ts`](fixtures/fake-gemini.ts) is a local
   stand-in built from the signed-in page read live on 2026-10-12, with no
   private data. It reproduces the live traps:

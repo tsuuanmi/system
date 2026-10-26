@@ -31,7 +31,7 @@ interface ProviderDriver<Page> {                   // provider-core
   readonly sessionBound?: boolean;                 // works in its login profile, never from a copy (ADR-0030)
   readonly pageGapMs?: number;                     // a session-bound account's page loads, spaced
   pageIdle?(page): Promise<boolean>;               // nothing running or open: the session keeps the page
-  checkAuth(page): Promise<AuthState>;             // signed-in | signed-out | unknown
+  checkAuth(page, { save? }?): Promise<AuthState>; // signed-in | signed-out | unknown; save: the operator's Save
   identity(page): Promise<string>;                 // hashed before storage
   ask(page, prompt, { conversation, mode?, feature?, binding?, signal?, deadlines?,
                       beforeSend?, onBinding? }): Promise<AskResult>;  // { text, binding, mode }
@@ -42,6 +42,16 @@ interface ProviderDriver<Page> {                   // provider-core
   inspectConversation?(page, binding): Promise<PageOutline[]>;      // read-only: outlines, nothing chosen
 }
 ```
+
+`checkAuth`'s optional `save` (additive, [ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md))
+marks the check of the operator's Save in the login profile (`ctx.login.save`), which then reads
+`identity` there. A driver may count as signed in there an account its page names but does not
+show (Gemini's Google Account button while its side panel is collapsed: a Save failed live on
+2026-10-26), since that Save names who it is from the same reading. A turn's check, and a Save's
+verification in a fresh context, pass no options: there the account must show, so a page that
+hides it still fails closed as drift. A driver that takes no options reads every check as a
+turn's. The option is in the contract, not kept inside the driver, because only the caller knows
+which check it makes.
 
 `ask` holds the whole turn: open the conversation (new, bound, or Temporary chat), select and
 read back the mode, insert and send the prompt, wait for completion, and read the answer as

@@ -97,7 +97,12 @@ export interface ProviderDriver<Page = unknown> {
   pageIdle?(page: Page): Promise<boolean>
   /** Origins whose cookies, localStorage, and IndexedDB make up the portable state. */
   readonly stateOrigins: readonly string[]
-  checkAuth(page: Page): Promise<AuthState>
+  /**
+   * Whether the page is signed in. `save` marks the operator's Save, which then reads `identity`:
+   * a driver may count an account the page names but does not show as signed in there (Gemini's
+   * account button while a side panel is collapsed), never for a turn.
+   */
+  checkAuth(page: Page, options?: { save?: boolean }): Promise<AuthState>
   /** A stable identity hint for the signed-in account; only its hash is ever stored. */
   identity(page: Page): Promise<string>
   ask(page: Page, prompt: string, options: AskOptions): Promise<AskResult>

@@ -288,10 +288,11 @@ export class Login extends Service {
       origins: [...driver.stateOrigins],
       previous,
       inspect: async (page) => {
-        let auth = await driver.checkAuth(page)
+        // A Save's check: the driver may take an account its page names but hides (Gemini, live 2026-10-26).
+        let auth = await driver.checkAuth(page, { save: true })
         if (auth === 'signed-out' && options.signIn) {
           await options.signIn(page)
-          auth = await driver.checkAuth(page)
+          auth = await driver.checkAuth(page, { save: true })
         }
         if (auth === 'signed-out') throw new ProviderError('reauth_required', `${accountId} is not signed in; log in first`)
         if (auth !== 'signed-in') throw new ProviderError('session_broken', `${accountId}: could not confirm the sign-in`)

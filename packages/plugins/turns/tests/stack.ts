@@ -139,9 +139,10 @@ export function turnsStack() {
 
   /**
    * A Gemini account whose site binds its session to the profile that signed in (ADR-0030): the
-   * operator signs in in its login profile, as a remote login does, then Saves.
+   * operator signs in in its login profile, as a remote login does, then Saves. With `saveFails`,
+   * a failed Save is returned (`saveError`) rather than thrown.
    */
-  async function bootBound(options: { fake?: FakeGeminiOptions; turns?: Record<string, unknown> } = {}) {
+  async function bootBound(options: { fake?: FakeGeminiOptions; turns?: Record<string, unknown>; saveFails?: boolean } = {}) {
     const fake = new FakeGemini({ startOnSpark: false, deviceBound: true, answer: 'From the profile.', ...options.fake })
     await fake.start()
     onTestFinished(() => fake.stop())
@@ -177,8 +178,9 @@ export function turnsStack() {
     // Verified in the profile: a copy of this state is signed out, so Save would fail on a copy.
     // Its features first: a background probe that starts once the account is ready finds them fresh, so it loads nothing.
     await ctx.accounts.setFeatures('gemini-main', ['deep-research'])
-    await ctx.login.save('gemini-main')
-    return { ctx, fake }
+    const saveError = await ctx.login.save('gemini-main').then(() => undefined, (error: unknown) => error)
+    if (saveError !== undefined && !options.saveFails) throw saveError
+    return { ctx, fake, saveError }
   }
 
   /** A ChatGPT account bound to the profile that signed in, as chatgpt-main was live: signed in there, then Saved. */
