@@ -588,6 +588,7 @@ No options.
 | `maxLimitWaitHours` | number (0…720) | `24` | Hours a node refused only because the assigned accounts that could take it are at their limit may wait for the earliest reset, in all from its first wait, spending no attempt; past it, or with no known reset, it fails quota_exhausted (ADR-0052, INV-9); 0 never waits |
 | `autoApprovePlans` | boolean | `false` | Approve a high-confidence plan by policy instead of waiting for the operator |
 | `maxReviewCycles` | number (1…5) | `3` | Reviews of one change, the first included, before remediation stops |
+| `fixSessionWaitMinutes` | number (0…1440) | `60` | Minutes a review's fix that continues its author's session waits for that session's Worker while it cannot take the fix now (out of quota, signed out, not listed), from the fix's first wait, spending no attempt; past it, the session is handed off to another Worker with its earlier turns, recorded (INV-9); 0 hands off at once |
 | `tieTimeoutHours` | number (0.0001…720) | `24` | Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9) |
 | `gateTimeoutHours` | number (0.0001…720) | `24` | Hours a plan's gate waits for the operator's approval, then closes and fails the run, by rule (INV-9); continue the run to wait again |
 | `approvalPollSeconds` | number (1…300) | `15` | Seconds between the engine's reads of the approval queue: a remediation fix's request while its run waits on it, and the requests a Worker's deferred tool calls wait on (INV-9) |

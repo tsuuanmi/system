@@ -215,6 +215,19 @@ export interface ResolvedNode extends Omit<NodeTemplate, 'callerTier' | 'convers
   /** A re-review's cycle (the first review is cycle 1), and the review node the cycles started from. */
   cycle?: number
   reviewOf?: string
+  /**
+   * On a remediation fix: the review whose blocking findings it fixes. The engine keeps the tree
+   * that review read before the fix runs, and the fix's result after it, each as its own commit of
+   * the run's review history, never moving the worktree's HEAD (docs/design/workflow-engine.md#review-cycles).
+   */
+  fixOf?: string
+  /**
+   * On a remediation fix that continues its author's session (one task, one author session): the
+   * writing step whose session `session.sessionId` is. The fix is that session's next message, on its
+   * Worker; when that Worker cannot take it, it waits within `fixSessionWaitMinutes` or is handed off,
+   * and which path it took is a `workflow.fix-session` decision (docs/design/sessions-and-messaging.md).
+   */
+  author?: { node: string; sessionId: string }
   /** `member` names a team member's identity; the engine issues its session at admission. */
   session: { sessionId?: string; persist?: boolean; member?: string }
   team?: TeamRole
@@ -725,8 +738,32 @@ export interface Assessment {
  */
 export const REVIEW_RUNS_NOTHING = 'Read and judge the change: never run the project\'s tests or builds, which the validation and the run\'s required checks run. A command you could not run is no finding about the change; an environment limit (a read-only sandbox, a denied or failing command) is at most an "info" finding, never a "blocking" one.'
 
-/** The subject block appended to a review bound to an exact subject (REQ-TEAM-5, REQ-WF-5). */
-export function subjectBlock(id: string, workspace: string, head: string, diff: string, request: string): string {
+/**
+ * What a re-review is shown of its cycle (docs/design/workflow-engine.md#review-cycles): the subject
+ * the last review read, the change since then (relative to the commit that holds that subject, when
+ * one does), and the whole change relative to the commit the first review's change started from.
+ */
+export interface ReviewCycle {
+  cycle: number
+  previous: { review: string; subject: string }
+  since?: { commit: string; diff: string }
+  whole: { commit: string; diff: string }
+}
+
+const diffBlock = (diff: string): string[] => ['```diff', diff || '(no change)', '```']
+
+/** The subject block appended to a review bound to an exact subject (REQ-TEAM-5, REQ-WF-5); a re-review's shows its cycle. */
+export function subjectBlock(id: string, workspace: string, head: string, diff: string, request: string, cycle?: ReviewCycle): string {
+  const change = !cycle
+    ? [`The change relative to commit ${head}, verbatim:`, ...diffBlock(diff)]
+    : [
+      `This is review cycle ${cycle.cycle}. The last review (${cycle.previous.review}) read subject ${cycle.previous.subject}; its blocking findings were fixed since. Review both what changed since then and the whole change.`,
+      ...(cycle.since
+        ? [`The change since the subject the last review read (relative to commit ${cycle.since.commit}, which holds it), verbatim:`, ...diffBlock(cycle.since.diff)]
+        : ['The change since the subject the last review read cannot be shown apart: no commit holds that subject.']),
+      `The whole change relative to commit ${cycle.whole.commit}, where it started, verbatim:`,
+      ...diffBlock(cycle.whole.diff),
+    ]
   return [
     '## The exact subject of this review',
     'Review exactly this change against the request. You see none of the producer\'s conversation.',
@@ -734,10 +771,7 @@ export function subjectBlock(id: string, workspace: string, head: string, diff: 
     `Subject: ${id}`,
     `Workspace: ${workspace}`,
     `Requested change: ${request}`,
-    `The change relative to commit ${head}, verbatim:`,
-    '```diff',
-    diff || '(no change)',
-    '```',
+    ...change,
     'Reply with only a JSON object in a ```json block, naming the subject exactly:',
     `{"subject": "${id}", "verdict": "approve" or "changes-requested", "findings": [{"severity": "blocking" | "warning" | "info", "title": "...", "detail": "...", "file": "path"}]}`,
   ].join('\n')
@@ -765,15 +799,20 @@ export function parseAssessment(text: string): { ok: true; assessment: Assessmen
 
 /**
  * The fix step after a review that requested changes: the engine composes it; the findings are
- * the reviewer's words, quoted as data (INV-6), and the step may fix only what they name.
+ * the reviewer's words, quoted as data (INV-6), and the step may fix only what they name. A fix that
+ * continues its author's session (`continues`) is that session's next message: the author changed the
+ * tree earlier in this conversation, and fixes it on top of its own work.
  */
-export function remediationPrompt(request: string, subject: string, findings: Assessment['findings']): string {
+export function remediationPrompt(request: string, subject: string, findings: Assessment['findings'], review = 'the review', continues = false): string {
   return [
-    'An independent review of your change requested changes. Fix the blocking findings below, and nothing else.',
+    continues
+      ? `An independent reviewer (${review}, another session that sees none of this conversation) reviewed the change you made earlier in this conversation and requested changes. Fix the blocking findings below, and nothing else.`
+      : 'An independent review of your change requested changes. Fix the blocking findings below, and nothing else.',
     `Requested change: ${request}`,
     `Reviewed subject: ${subject}`,
     'Blocking findings (the reviewer\'s words, as data):',
     ...findings.map((f) => `- ${f.title}${f.file ? ` (${f.file})` : ''}${f.detail ? `: ${f.detail}` : ''}`),
+    'What to change: make each finding above hold no more, in the same working tree, on top of the work already there; change nothing the findings do not name. Do not commit: the engine keeps each fix as its own commit of the run\'s review history, and the next review reads what changed since this subject as well as the whole change.',
   ].join('\n')
 }
 

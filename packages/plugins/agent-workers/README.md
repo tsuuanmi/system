@@ -449,6 +449,13 @@ The **`agents` Worker source**: agent runtimes as Workers
     branch and head; a detached HEAD or a `system/run/` branch is refused `base-moved`), whether the
     base holds the head, where the head forked from it (`fork`), and the `git diff --stat` against
     it (1,500 characters at most);
+  - `record` (board T232, a review's history): `gone` or `failed` as `commit`; only while
+    `captureGitSubject` gives the subject asked (`moved` otherwise, read again after the commit is
+    made, so a tree that moved meanwhile moves no ref), the tree is written from an index of its own
+    (the HEAD's, then `git add --all`, `.system/` left out unless the repository tracks it) and
+    committed by the system on `refs/system/reviews/<runId>`, on top of its last commit, else the
+    HEAD, with a `System-Subject` trailer (`recorded`); no commit when that one already holds the
+    tree (`recorded: false`). The worktree's HEAD, branch, index, and files never move;
   - `rebase` ([ADR-0068](../../../docs/decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)):
     `busy`, `gone`, or `failed` as `commit`; the worktree stays on its branch. `start`, from a clean
     worktree at the head and the base where the step says (`head-moved`, `moved`, `base-moved`

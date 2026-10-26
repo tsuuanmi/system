@@ -68,6 +68,22 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
     expect(existsSync(join(worktree, 'test_calc.py'))).toBe(true)
     untouched(pilot)
 
+    // One task, one author session (T232): the fix continued develop:1's session, and the change the
+    // review read and the fix's result are each a commit of the run's review history, while the
+    // worktree's HEAD stays the commit the task writes, so its result and checks still bind (below).
+    expect(work[2]!.resume).toBe('h-1')
+    const history = `refs/system/reviews/${run.runId}`
+    expect(pilot.git(worktree, 'rev-parse', 'HEAD')).toBe(pilot.head)
+    expect(pilot.git(worktree, 'log', '--format=%s', history).split('\n')).toEqual([
+      `system: review:1:fix:1 of run ${run.runId}, the fix of review review:1's blocking findings`,
+      expect.stringMatching(/^system: the change review review:1 of run \S+ read \(git:/),
+      'init',
+    ])
+    expect(pilot.git(worktree, 'show', '--name-only', '--format=', history)).toBe('test_calc.py')
+    expect(pilot.git(worktree, 'show', '--name-only', '--format=', `${history}~1`)).toBe('calc.py')
+    expect(pilot.git(worktree, 'rev-parse', `${history}~2`)).toBe(pilot.head)
+    expect(pilot.git(worktree, 'status', '--porcelain', '--', 'calc.py', 'test_calc.py')).toBe('M calc.py\n?? test_calc.py')
+
     // The reviewer read the task and the exact change, never the developer's answer; the re-review read the fixed subject.
     const reviews = work.filter((r) => r.role === 'review')
     expect(reviews[0]!.prompt).toContain('Goal: Make add() add, with its tests passing')

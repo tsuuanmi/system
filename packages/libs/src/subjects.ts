@@ -171,11 +171,67 @@ export function captureGitSubject(workspace: string, options: CaptureOptions = {
   }
   const tree = sha256(`${tracked}\0${parts.join('\0')}`).replace(/^sha256:/, '')
   const full = [tracked.trimEnd(), ...shown].filter(Boolean).join('\n\n')
-  const maxDiffChars = options.maxDiffChars ?? 200_000
-  const truncated = full.length > maxDiffChars
-  return {
-    subject: { type: 'git-head', ref: head, version: tree },
-    diff: truncated ? `${full.slice(0, maxDiffChars)}\n…(truncated; ${full.length} chars in all)` : full,
-    truncated,
+  return { subject: { type: 'git-head', ref: head, version: tree }, ...bounded(full, options.maxDiffChars ?? 200_000) }
+}
+
+/** A diff within `max` characters, cut and marked when longer. */
+function bounded(full: string, max: number): { diff: string; truncated: boolean } {
+  const truncated = full.length > max
+  return { diff: truncated ? `${full.slice(0, max)}\n…(truncated; ${full.length} chars in all)` : full, truncated }
+}
+
+/** The hash a working tree with no change on top of its HEAD has: the `version` of a clean subject. */
+export const CLEAN_VERSION: string = sha256('\0').replace(/^sha256:/, '')
+
+/** A commit id as git prints it, the only revision {@link changeSince} takes (never an option or a range). */
+const COMMIT = /^[0-9a-f]{7,64}$/
+
+/**
+ * The working tree's change relative to `commit` (an ancestor of its HEAD, say: where a review cycle
+ * started), verbatim as {@link captureGitSubject} shows a change (tracked diff, then each untracked
+ * file), within `maxDiffChars`: what a re-review is shown beside the change since the subject the
+ * last review read. Undefined when git answers that the workspace is no repository with a commit, or
+ * the commit is not one of it; any other failure throws, as a capture's does.
+ */
+export function changeSince(workspace: string, commit: string, options: CaptureOptions = {}): { diff: string; truncated: boolean } | undefined {
+  if (!COMMIT.test(commit)) throw new TypeError(`${JSON.stringify(commit)} is not a commit id`)
+  const timeoutMs = options.timeoutMs ?? 10_000
+  try {
+    git(workspace, ['rev-parse', '--verify', '--quiet', `${commit}^{commit}`], timeoutMs)
+  } catch (error) {
+    if (noSubject(error) || (error as { status?: unknown }).status === 1) return undefined
+    throw error
   }
+  const tracked = git(workspace, ['diff', '--binary', '--no-color', '--no-ext-diff', '--no-textconv', commit, '--'], timeoutMs).toString('utf8')
+  const untracked = git(workspace, ['ls-files', '--others', '--exclude-standard', '-z'], timeoutMs).toString('utf8').split('\0').filter(Boolean).sort()
+  const maxFileBytes = options.maxFileBytes ?? 1024 * 1024
+  const budget = { left: options.maxHashBytes ?? 8 * 1024 ** 3 }
+  const shown: string[] = []
+  for (const path of untracked) {
+    const file = untrackedFile(join(workspace, path), maxFileBytes, budget)
+    if (file) shown.push(file.content === undefined ? `new file ${path} (${file.size} bytes, not shown)` : `new file ${path}\n${file.content.toString('utf8')}`)
+  }
+  return bounded([tracked.trimEnd(), ...shown].filter(Boolean).join('\n\n'), options.maxDiffChars ?? 200_000)
+}
+
+/**
+ * The change from commit `from` to commit `to` of the repository of `workspace`, verbatim (`git diff`
+ * between their trees), within `maxDiffChars`: what a re-review is shown of a fix, between the commits
+ * that keep the tree its review read and the fix's result. Read only. Undefined when git answers that
+ * the workspace is no repository with a commit, or either commit is not one of it; any other failure
+ * throws, as a capture's does.
+ */
+export function changeBetween(workspace: string, from: string, to: string, options: CaptureOptions = {}): { diff: string; truncated: boolean } | undefined {
+  for (const commit of [from, to]) if (!COMMIT.test(commit)) throw new TypeError(`${JSON.stringify(commit)} is not a commit id`)
+  const timeoutMs = options.timeoutMs ?? 10_000
+  for (const commit of [from, to]) {
+    try {
+      git(workspace, ['rev-parse', '--verify', '--quiet', `${commit}^{commit}`], timeoutMs)
+    } catch (error) {
+      if (noSubject(error) || (error as { status?: unknown }).status === 1) return undefined
+      throw error
+    }
+  }
+  const diff = git(workspace, ['diff', '--binary', '--no-color', '--no-ext-diff', '--no-textconv', from, to, '--'], timeoutMs).toString('utf8')
+  return bounded(diff.trimEnd(), options.maxDiffChars ?? 200_000)
 }

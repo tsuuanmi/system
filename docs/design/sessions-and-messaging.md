@@ -147,6 +147,34 @@ Worker takes off the session either still fails, its message naming both
 refusals; a handoff that would point at more artifacts than a brief holds does
 not move, and says so. Code: `packages/plugins/workflow/src/session-moves.ts`.
 
+### A review fix continues its author's session
+
+One task, one author session (board T232; operator 2026-10-26: "when a fix is
+needed, message it; after a review, message that session directly to update;
+the whole task stays in one session while still getting outside information
+from an independent reviewer"). A review's fix is not routed like any step to a
+fresh context: it takes the session of the step that wrote the change, and the
+review's findings are that session's next message, on its Worker, resuming its
+native conversation. The author fixes its own work on top of what it did, its
+earlier turns in view; the reviewer stays independent, in a session of its own,
+never the author's ([review cycles](workflow-engine.md#review-cycles)).
+
+When the author's Worker cannot take the fix, the fix never starts fresh in
+silence. Each path is a `route` decision by `workflow.fix-session`:
+
+| Path | When | What happens |
+|---|---|---|
+| `continue` | the session's Worker takes it, and keeps a native session to resume | the fix is the session's next message there |
+| `wait` | the session's Worker cannot take it now (out of quota, signed out, not listed) | the fix waits for it, sending nothing and spending no attempt, at most `fixSessionWaitMinutes` (default 60; INV-9) from its first wait; recorded once |
+| `handoff` (session lost) | no Worker keeps the session, or it keeps no native session to resume | the fix starts a new conversation of the same session, its brief carrying the session's earlier turns as `prior` pointers |
+| handoff (moved) | the session's Worker can never take it, or the wait passed its bound | the step moves off the session for this execution ([above](#a-step-its-sessions-worker-cannot-take), a `workflow.session-move` `handoff`, its `stay` reason saying the bounded wait ended) |
+
+A later fix of the same task continues the same session again, and is handed
+what ran off it. Each fix's result is kept as its own commit of the run's
+review history (`refs/system/reviews/<runId>`), never on the worktree's HEAD,
+which stays the commit the task binds its result to
+([review cycles](workflow-engine.md#review-cycles)).
+
 ## A2A alignment (for the planned adapter)
 
 | `system` | A2A 1.0 |

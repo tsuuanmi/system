@@ -139,7 +139,10 @@ const VALIDATE_PROMPT = [
  *   session, which the task's next attempt resumes;
  * - `review:1` reviews that exact change on a read-only Worker, reading and judging it and running
  *   no test or build; blocking findings grow a fix and a re-review, the fix waiting on the approval
- *   queue (engine remediation);
+ *   queue (engine remediation). The fix continues `develop:1`'s session on its Worker, the findings
+ *   its next message (one task, one author session); the re-review stays in a session of its own;
+ *   each fix is its own commit of the run's review history, the worktree's HEAD left where the task
+ *   binds its result (docs/design/workflow-engine.md#review-cycles);
  * - `validate:1` runs the task's tests and benchmarks on the reviewed change, confined to the
  *   worktree, on a Worker that proves `validate` (its commands proven confined). It reads the task's
  *   criteria and their checks from its brief, never the caller's input (the develop step's orders)
