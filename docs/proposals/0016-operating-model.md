@@ -423,3 +423,8 @@ Accepted by the operator on 2026-10-26, each open question answered as this prop
   unmatched path is heavy (fail closed, like an unreadable one), not normal as §4 first wrote; the
   check keeps every tracked path matched, so only a new one is ever unmatched. The adversarial review
   prompt, the decision brief, and the lead-touch metric are I2's later parts.
+- **I1, part 1** (T249), design only, no code yet: the five layers, the inventory of today's rules
+  with their duplicates and contradictions, the per-Worker slice, the bound, and each layer's
+  version in the brief: [handbook](../design/handbook.md),
+  [ADR-0072](../decisions/adr/0072-the-handbook-in-five-layers-and-a-bounded-slice-per-worker.md)
+  (proposed).
