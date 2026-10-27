@@ -11,6 +11,7 @@
  *   node scripts/live-update-check.ts cut-report <cli> <DSH_HOME> <cut file>
  *   node scripts/live-update-check.ts dispatch-pause <cli> <DSH_HOME> <reason>
  *   node scripts/live-update-check.ts dispatch-resume <cli> <DSH_HOME>
+ *   node scripts/live-update-check.ts live-update-record <cli> <DSH_HOME> <done|failed> <from> <to> [<reason>]
  *   node scripts/live-update-check.ts hold-steps <cli> <DSH_HOME> <reason>
  *   node scripts/live-update-check.ts release-steps <cli> <DSH_HOME>
  *
@@ -21,7 +22,9 @@
  * the store, read-only, on a Worker or not; the roster's `work` adds what it knows, and its bounds are
  * noted), saying what it waits for: each run, its step, the Worker, and for how long; `running` is one such
  * read, for the dry run; `dispatch-resume` lifts the update's own pause once the profile runs again, and
- * `release-steps` the hold when the update stops before the stop (the restart ends it otherwise).
+ * `release-steps` the hold when the update stops before the stop (the restart ends it otherwise);
+ * `live-update-record` records how the update ended (MCP `live_update_record`, the event
+ * `host.live-update` each project's lead inbox tells as `live-update.done` or `live-update.failed`).
  * When the update cuts (T269, its default), `await-idle --cut-file` writes the steps the stop is
  * about to cut, `stop-cut` stops the daemon with the CLI's `shutdownHost` and a short drain (60 s
  * by default, instead of the unit's 600 s), and `cut-report`, after the restart, says how each cut
@@ -877,6 +880,7 @@ const USAGE = `usage: node scripts/live-update-check.ts capture <cli> <DSH_HOME>
        node scripts/live-update-check.ts cut-report <cli> <DSH_HOME> <cut file>
        node scripts/live-update-check.ts dispatch-pause <cli> <DSH_HOME> <reason>
        node scripts/live-update-check.ts dispatch-resume <cli> <DSH_HOME>
+       node scripts/live-update-check.ts live-update-record <cli> <DSH_HOME> <done|failed> <from> <to> [<reason>]
        node scripts/live-update-check.ts hold-steps <cli> <DSH_HOME> <reason>
        node scripts/live-update-check.ts release-steps <cli> <DSH_HOME>`
 
@@ -914,6 +918,16 @@ async function main(argv: string[]): Promise<number> {
   if (command === 'release-steps' && args.length === 2) {
     await releaseSteps(await callToolOf(args[0]!), args[1]!)
     console.log('steps released: each running run goes on from its recorded state')
+    return 0
+  }
+  if (command === 'live-update-record' && (args.length === 5 || args.length === 6) && (args[2] === 'done' || args[2] === 'failed')) {
+    // How the update ended, for every project's lead inbox (D107): a profile without the tool is a note, never a failure.
+    const recorded = await (await callToolOf(args[0]!))('live_update_record', { outcome: args[2], from: args[3], to: args[4], ...(args[5] ? { reason: args[5] } : {}) }, args[1]!)
+    if (recorded.isError) {
+      console.error(`live_update_record: ${recorded.text}`)
+      return 1
+    }
+    console.log(`recorded for the lead inbox: live update ${args[2]}`)
     return 0
   }
   if (command === 'dispatch-resume' && args.length === 2) {

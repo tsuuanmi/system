@@ -125,6 +125,10 @@ describe('landing an accepted result (ADR-0060)', () => {
     expect(pilot.git(pilot.repo, 'remote')).toBe('')
     expect(decisionsOf(pilot, merged).at(-1)).toMatchObject({ decider: { id: 'workflow.landing' }, outcome: { option: 'merge', detail: { step: 'merge', commit: mergeCommit, already: false, requestId: request!.requestId } } })
     expect(ctx.eventLog.query({ type: 'workflow.task.landing', runId }).map((e) => e.data?.['state'])).toEqual(['commit', 'committed', 'asked', 'merging', 'merged'])
+    // What the lead inbox reads of the landing (D107): its merge request while it waits, then its commit, branch, and one-line change.
+    const events = ctx.eventLog.query({ type: 'workflow.task.landing', runId })
+    expect(events.find((e) => e.data?.['state'] === 'asked')!.data).toMatchObject({ taskId: task.taskId, requestId: request!.requestId })
+    expect(events.at(-1)!.data).toMatchObject({ taskId: task.taskId, state: 'merged', commit: mergeCommit, branch: 'main', changed: expect.stringMatching(/1 file changed/) })
 
     // Each step done again, as after a restart, finds its work done and does nothing twice (INV-4).
     expect(await ctx.workers.land!({ step: 'commit', runId, workspace: worktree, subject: { ref: pilot.head, version: accepted.version }, message: 'again' })).toMatchObject({ outcome: 'committed', committed: false, head, contained: true })

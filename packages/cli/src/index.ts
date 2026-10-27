@@ -705,6 +705,62 @@ export function parseMetrics(args: readonly string[]): Record<string, string | n
   return input
 }
 
+/** A notice of a project's lead inbox, as much of it as the CLI prints (`lead-notice@1.0`). */
+export interface LeadNoticeView { id: string; project: string; kind: string; title: string; text: string; act: string[] }
+
+/**
+ * `system lead wait [--project <id>] [--timeout <s>]`, `system lead inbox [--project <id>]`, and
+ * `system lead ack [--project <id>] <id>...` (D107), each with `--json`; undefined for an unknown
+ * word, flag, or value. A timeout is a whole number of seconds from 1 to 86400.
+ */
+export function parseLead(rest: readonly string[]): { action: 'wait' | 'inbox' | 'ack'; json: boolean; project?: string; timeoutSeconds?: number; ids: string[] } | undefined {
+  const [action, ...words] = rest
+  if (action !== 'wait' && action !== 'inbox' && action !== 'ack') return undefined
+  const out: { action: 'wait' | 'inbox' | 'ack'; json: boolean; project?: string; timeoutSeconds?: number; ids: string[] } = { action, json: false, ids: [] }
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i]!
+    if (word === '--json') out.json = true
+    else if (word === '--project' && out.project === undefined && words[i + 1] && !words[i + 1]!.startsWith('--')) out.project = words[++i]!
+    else if (word === '--timeout' && action === 'wait' && out.timeoutSeconds === undefined && /^[1-9]\d{0,5}$/.test(words[i + 1] ?? '') && Number(words[i + 1]) <= 86_400) out.timeoutSeconds = Number(words[++i])
+    else if (action === 'ack' && !word.startsWith('--')) out.ids.push(word)
+    else return undefined
+  }
+  return action === 'ack' && !out.ids.length ? undefined : out
+}
+
+/** One notice as lines: its kind and title, what happened, and the command to act. */
+export const formatLeadNotice = (n: LeadNoticeView): string[] => [`[${n.kind}] ${n.title}  (${n.id})`, `  ${n.text}`, ...n.act.map((line) => `  → ${line}`)]
+
+/**
+ * The lead's loop instead of polling: `wait` asks the inbox (`lead_inbox`, up to 55 s at a time) until a
+ * notice is unread or the timeout passes, and prints it; `inbox` prints what is unread; `ack` marks ids
+ * handled. Exit 0 when notices were printed or acked, 1 when the timeout passed with none.
+ */
+export async function leadInbox(parsed: NonNullable<ReturnType<typeof parseLead>>, call: typeof callTool = callTool, print: (line: string) => void = console.log, now: () => number = Date.now): Promise<number> {
+  const base = parsed.project !== undefined ? { projectId: parsed.project } : {}
+  const deadline = parsed.timeoutSeconds !== undefined ? now() + parsed.timeoutSeconds * 1000 : Infinity
+  for (;;) {
+    const left = Math.max(0, Math.ceil((deadline - now()) / 1000))
+    const wait = parsed.action === 'wait' ? { waitSeconds: Math.min(55, left) } : {}
+    const outcome = await call('lead_inbox', { ...base, ...(parsed.action === 'ack' ? { ack: parsed.ids } : {}), ...wait })
+    if (outcome.isError) throw new Error(outcome.text)
+    const result = outcome.structured as unknown as { notices: LeadNoticeView[]; acked?: string[]; unknown?: string[] }
+    if (parsed.action === 'ack') {
+      print(parsed.json ? JSON.stringify(result) : `acked ${result.acked?.length ?? 0}${result.unknown?.length ? `; unknown or handled already: ${result.unknown.join(', ')}` : ''}`)
+      return 0
+    }
+    if (result.notices.length) {
+      for (const notice of result.notices) for (const line of parsed.json ? [JSON.stringify(notice)] : formatLeadNotice(notice)) print(line)
+      return 0
+    }
+    if (parsed.action === 'inbox') {
+      if (!parsed.json) print('no unread notice')
+      return 0
+    }
+    if (now() >= deadline) return 1
+  }
+}
+
 /** One line per event: sequence, time, type, where, and its data. */
 export function formatEvents(events: readonly EventLine[]): string[] {
   return events.map((e) => [e.seq, e.at, e.type, e.runId ? `run=${e.runId}${e.nodeId ? `/${e.nodeId}` : ''}` : '', e.sessionId ? `session=${e.sessionId}` : '', e.data ? JSON.stringify(e.data) : '']

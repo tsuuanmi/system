@@ -158,6 +158,47 @@ many were sent. A failure the next delivery to the same sink outlived is over. P
 in the window it is degraded, never `ok` on part of them
 ([mcp-server](../../packages/plugins/mcp-server/README.md)).
 
+## The lead's inbox
+
+D107: a real lead does not go asking and waiting; what needs a project's lead, and what finished,
+reaches it. The `lead-inbox` plugin ([README](../../packages/plugins/lead-inbox/README.md)) does for
+a project's lead what notify does for the operator, from the same kind of source, **recorded events
+only**, read after its own cursor on its own clock, so it never blocks or alters a producer. It
+replaces each lead's own polling script (`waiter.sh`) with one place every project's lead reads.
+
+- **Records:** [`lead-notice@1.0`](../../schemas/lead-notice.v1.json), per project, addressed to
+  `lead:<project>`: `result.held` (`board.review.held`: heavy tier, or a required check unknown),
+  `merge.held` (a landing `asked`), `worker.question`, `task.retries-spent` (`board.waiting`),
+  `task.landing-gave-up` (a landing `refused`, including "moved again after N rebases"),
+  `request.outside-rights` (`approvals.lead-refused`: a lead token was refused a verdict),
+  `request.stale` (an open request older than `staleMinutes`, 10), `quota.idle` (ready tasks waiting
+  while a Worker that could take them is free, past `idleMinutes`, read from capacity now),
+  `live-update.done` / `live-update.failed` (`host.live-update`, which `scripts/live-update.sh`
+  records through the operator's MCP `live_update_record` once the daemon runs again, updated or
+  rolled back; a profile without the tool is a note in the update's log), `task.landed` (a landing `merged`:
+  task, commit, and what it changed in one line, pushed per landing) and `task.digest` (the landings
+  of each `digestMinutes`, extra). Ids, kinds, counts, times, and the command to act only (egress
+  classification `operator-shared`).
+- **Handled:** `lead_inbox` (MCP, client scope; a lead token reads its own project only, the operator
+  names the project) lists the unread notices; `ack` marks ids handled. A notice handled through its
+  subject closes by itself: a decided request closes its `merge.held`, `request.outside-rights`, and
+  `request.stale`; a task that moves closes its `result.held`, `worker.question`, and
+  `task.retries-spent`; a later landing step closes a give-up.
+- **Waited for:** `system lead wait [--project <id>] [--timeout <s>]` blocks (the tool holds up to 55 s,
+  the CLI asks again) until a notice is unread, prints it, and exits 0; exit 1 when the timeout passes.
+  `system lead inbox` prints what is unread, `system lead ack <id>…` marks it handled.
+- **Pushed**, per project on the row (`projects.<id>.sinks`), each sink once, failing open, each
+  outcome the event `lead-inbox.delivery`: `command` (an argv list, no shell, the notice as JSON on
+  stdin, bounded in time and output; this is how a lead session is woken, System knows only the argv,
+  INV-11), `file` (one JSON line appended under `coordinationDir`), `wait` (the long-poll; the default).
+- **Deduplicated and bounded:** one notice per project, subject, and kind per `dedupMinutes`;
+  `maxNotices` per project, handled notices kept `retainDays`, `maxQueue` waiting to be pushed,
+  64 waiters (INV-9).
+- **Metrics:** `stats` (in `lead_inbox` and the `/ui` Lead panel) gives how long notices waited from
+  made to handled (median, p90) and the lead's touches per task, counted from the acks and from the
+  decisions that closed a notice's subject.
+- **`/ui`:** a project's board page shows its **Lead** panel: the unread notices and the recent digest.
+
 ## What it does not do
 
 - It never approves, retries, continues, or stops anything: each notice names the operator's own

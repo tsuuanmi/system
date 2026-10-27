@@ -1,0 +1,38 @@
+{
+  "name": "@tsuuanmi/system-lead-inbox",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A project's lead inbox, from recorded events only: what needs the lead (a result or merge held, a question, spent retries, a landing that gave up, a request outside the lead's rights or stale, idle quota) and what finished (a live update, a landing, a digest), as lead-notice@1.0 records addressed to lead:<project>; MCP lead_inbox, system lead wait, and push to a command's stdin or a file; deduplicated, bounded, its outcomes recorded",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib",
+    "plugin-manifest.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-gateway-core": "workspace:*",
+    "@tsuuanmi/system-libs": "workspace:*",
+    "@tsuuanmi/system-store": "workspace:*",
+    "zod": "^4.1.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1",
+    "@tsuuanmi/system-artifacts": "workspace:*"
+  }
+}

@@ -260,6 +260,7 @@
           "packages/plugins/mcp-server/",
           "packages/plugins/models/",
           "packages/plugins/notify/",
+          "packages/plugins/lead-inbox/",
           "packages/plugins/plugin-host/",
           "packages/plugins/profile-scientific-research/",
           "packages/plugins/profile-software-development/",

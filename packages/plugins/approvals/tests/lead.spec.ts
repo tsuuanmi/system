@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { type Action, type ApprovalRequest, ApprovalsError, type AutonomyPolicy, HOST_STOPPED_RECONCILIATION, type NewRequest, type Subject } from '@tsuuanmi/system-approvals-core'
 import Artifacts from '@tsuuanmi/system-artifacts'
+import EventLog from '@tsuuanmi/system-event-log'
 import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import Store from '@tsuuanmi/system-store'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
@@ -37,7 +38,7 @@ async function boot(config: Partial<Config> = {}) {
   const tasks = new Map<string, { taskId: string; projectId: string }>([['t-system', { taskId: 't-system', projectId: 'system' }], ['t-other', { taskId: 't-other', projectId: 'other' }]])
   const ctx = new Context()
   const fibers = [
-    ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(RecordingMcp),
+    ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(RecordingMcp),
     ctx.plugin({ name: 'workflow', apply: (c: Context) => void (c as unknown as { provide(name: string, value: unknown): void }).provide('workflow', { landing: (runId: string) => landings.get(runId) }) }),
     // The board's tasks by id: a Worker's command names its task, whose project is the board's.
     ctx.plugin({ name: 'board', apply: (c: Context) => void (c as unknown as { provide(name: string, value: unknown): void }).provide('board', { task: async (taskId: string) => tasks.get(taskId) }) }),
@@ -111,6 +112,14 @@ describe('a project lead in the approval queue', () => {
       await expect(booted.approvals.decideAsLead('system', [verdictOn(request)], after(5))).rejects.toThrow(new RegExp(`lead:system may not decide ${actionClass}`))
       expect((await booted.ctx.approvals.get(request.requestId))!.state).not.toBe('approved')
     }
+  })
+
+  it('records a verdict it refused as approvals.lead-refused (ids and class only), which the project\'s lead inbox tells as needing the operator (D107)', async () => {
+    const booted = await boot()
+    const request = await ask(booted, { class: 'deploy', projectId: 'system' }, 'refused-deploy', 'system')
+    await expect(booted.approvals.decideAsLead('system', [verdictOn(request)], after(5))).rejects.toThrow(/lead:system may not decide deploy/)
+    const events = booted.ctx.eventLog.query({ type: 'approvals.lead-refused', limit: 10 })
+    expect(events.map((e) => e.data)).toEqual([{ projectId: 'system', requestId: request.requestId, actionClass: 'deploy' }])
   })
 
   /**

@@ -290,6 +290,25 @@
 
 No options.
 
+## `lead-inbox`
+
+[@tsuuanmi/system-lead-inbox](../../packages/plugins/lead-inbox/README.md)
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `kinds` | ("result.held" \| "merge.held" \| "worker.question" \| "task.retries-spent" \| "task.landing-gave-up" \| "request.outside-rights" \| "request.stale" \| "quota.idle" \| "live-update.done" \| "live-update.failed" \| "task.landed" \| "task.digest")[] | `["result.held","merge.held","worker.question","task.retries-spent","task.landing-gave-up","request.outside-rights","request.stale","quota.idle","live-update.done","live-update.failed","task.landed","task.digest"]` | The kinds of notice made (default every kind) |
+| `staleMinutes` | number (1…10080) | `10` | An open request of a project older than this is a request.stale notice, in minutes |
+| `idleMinutes` | number (1…10080) | `10` | Ready tasks waiting while Workers that could take them are free, past this many minutes, are a quota.idle notice |
+| `digestMinutes` | number (1…10080) | `60` | The landings of this many minutes are batched into one task.digest notice |
+| `dedupMinutes` | number (1…1440) | `10` | At most one notice per project, subject, and kind in this many minutes |
+| `maxAgeMinutes` | number (1…10080) | `60` | An event older than this when read makes no notice (a host or row that was off), in minutes |
+| `pollSeconds` | number (1…3600) | `15` | How often the event log and the time-based checks are read, in seconds, beside each new event |
+| `retainDays` | number (1…366) | `14` | Handled notices are kept this many days |
+| `maxNotices` | number (10…100000) | `1000` | Notices kept per project, at most; the oldest handled go first, then the oldest unread (recorded) |
+| `maxQueue` | number (1…10000) | `200` | Notices waiting to be pushed, at most; one more is dropped and recorded |
+| `coordinationDir` | string |  | The directory a file sink writes under: an absolute path, the project's coordination directory |
+| `projects` | Record<string, object> | `{}` | Push delivery by project id |
+
 ## `leases`
 
 [@tsuuanmi/system-leases](../../packages/plugins/leases/README.md)

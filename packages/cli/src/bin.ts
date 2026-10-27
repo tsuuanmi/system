@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostCapacity, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, type DispatchView, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, leadToken, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseMetrics, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
+import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostCapacity, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, type DispatchView, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, leadInbox, leadToken, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseLead, parseMetrics, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
 import { bundlePlugins, bundleStudioPolicy, parseProjectNew, profileHost, type ProjectHost, projectNew } from './project.ts'
 
 const USAGE = `Usage: system <command>
@@ -144,6 +144,11 @@ const USAGE = `Usage: system <command>
                             and Help (how System works in plain words, and a glossary)
   mcp-token --scope model   print the model gateways' token (for a model client's environment variable;
                             needs a gateway row)
+  lead wait [--project <id>] [--timeout <s>] [--json]
+                            block until a notice is unread in a project's lead inbox, then print it (exit 1 when
+                            --timeout passes first): the loop a lead runs instead of polling
+  lead inbox [--project <id>] [--json]
+                            print the unread notices; lead ack [--project <id>] <id>... marks them handled
   lead-token issue <project>   issue a project's lead token (lead-<project>.token beside operator.token, owner-only; replaces one
                             issued before): its holder decides as lead:<project>, within a closed list of rights System enforces
   lead-token revoke <project>  revoke it: requests with it are refused at once
@@ -748,6 +753,12 @@ async function main(argv: string[]): Promise<number> {
       // Opened over ssh -L like the login desktop; the link carries the token in its fragment.
       console.log(uiUrl())
       return 0
+    case 'lead': {
+      // The lead's inbox (D107): `wait` is the loop a lead runs instead of polling.
+      const parsed = parseLead(rest)
+      if (!parsed) break
+      return leadInbox(parsed)
+    }
     case 'lead-token':
       // The operator's command (ADR-0076): a project's lead principal, with its own token and the decider lead:<project>.
       for (const line of leadToken(rest[0], rest[1])) console.log(line)

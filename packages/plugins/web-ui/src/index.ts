@@ -1017,10 +1017,27 @@ export function apply(ctx: Context, config: Config = {}): void {
     }
   }
 
+  /**
+   * A project's lead inbox (D107): `GET lead?project=<id>` gives the unread notices, the recent digests,
+   * and the inbox's stats, as the lead-inbox plugin keeps them (503 when it is not mounted). A project's
+   * lead token reads its own project only; the operator names the project.
+   */
+  const leadPanel = (req: IncomingMessage, res: ServerResponse, lead?: string): void => {
+    if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+    const inbox = ctx.get('leadInbox' as never) as { unread(project?: string, limit?: number): unknown[]; digests(project: string, limit?: number): unknown[]; stats(project?: string): unknown } | undefined
+    if (!inbox) return json(res, 503, { error: 'the lead inbox is not running' })
+    const asked = new URL(req.url ?? '/', 'http://localhost').searchParams.get('project') ?? undefined
+    if (lead !== undefined && asked !== undefined && asked !== lead) return json(res, 403, { error: `the lead token of project ${lead} reaches only project ${lead}'s inbox` })
+    const project = lead ?? asked
+    if (project === undefined) return json(res, 400, { error: 'name the project: ?project=<id>' })
+    return json(res, 200, { project, unread: inbox.unread(project, 50), digests: inbox.digests(project, 5), stats: inbox.stats(project) })
+  }
+
   const api = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
     const caller = authenticate(req)
     if ('refused' in caller) return json(res, caller.refused[0], { error: caller.refused[1] })
     const { lead } = caller
+    if (path === 'lead') return leadPanel(req, res, lead)
     // A project's lead token reaches the approval queue and the reviews, held to the closed list of its rights (ADR-0076), and nothing else here:
     // policy, projects, starts, runs, and the roster are the operator's.
     if (lead !== undefined) {

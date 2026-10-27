@@ -366,8 +366,11 @@ describe('live-update.sh waits for what runs before it stops the unit (T234)', (
       expect(f.unit.calls()).toEqual(['start system.service', 'reset-failed system.service', 'start system.service'])
       // A profile from before the hold (T257) holds nothing: the wait is for every step.
       expect(output).toContain('this profile holds no steps')
-      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'hold_steps', 'roster', 'roster', `shutdown 60 ${realpathSync(f.home)}`, 'dispatch_resume'])
+      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'hold_steps', 'roster', 'roster', `shutdown 60 ${realpathSync(f.home)}`, 'dispatch_resume', 'live_update_record'])
       expect(stateOf(f)).toContain('dispatch_paused=resumed')
+      // The rollback is recorded once the daemon runs again, for every project's lead inbox (D107: live-update.failed).
+      expect(system.liveUpdates()).toEqual([{ outcome: 'failed', from: f.from, to: f.target, reason: 'rolled-back' }])
+      expect(output).toContain('recorded for the lead inbox: live update failed')
     } finally {
       f.unit.cleanup()
     }
@@ -544,7 +547,7 @@ describe('live-update.sh waits for what runs before it stops the unit (T234)', (
       // Once the daemon exited, its next start ends the hold: the update releases nothing itself.
       expect(output).toContain('steps: the hold ends with the next start of the daemon')
       expect(stateOf(f)).toContain('steps_held=restart')
-      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'hold_steps', 'roster', 'roster', `shutdown 60 ${realpathSync(f.home)}`, 'dispatch_resume'])
+      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'hold_steps', 'roster', 'roster', `shutdown 60 ${realpathSync(f.home)}`, 'dispatch_resume', 'live_update_record'])
       expect(status).toBe(1)
     } finally {
       f.unit.cleanup()

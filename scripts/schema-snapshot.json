@@ -1667,6 +1667,33 @@
       "/properties/target/properties/version": {"h":"29ec966ad6b37d13"}
     }
   },
+  "lead-notice.v1.json": {
+    "version": "1.0",
+    "nodes": {
+      "": {"h":"43e0a82d01b891a3","r":["act","at","event","id","kind","project","schema","subject","text","title","to"],"p":["act","at","changed","commit","event","id","kind","landed","project","schema","subject","taskId","text","title","to"]},
+      "/properties/act": {"h":"b3494812808ffbc8"},
+      "/properties/act/items": {"h":"11033dea281281d3"},
+      "/properties/at": {"h":"ff895c1f9ff510e0"},
+      "/properties/changed": {"h":"603c6e9671b08d8c"},
+      "/properties/commit": {"h":"004b75a82b8ba959"},
+      "/properties/event": {"h":"cd1a463c46d62641","r":["seq","type"],"p":["seq","type"]},
+      "/properties/event/properties/seq": {"h":"0d3ac1e9e006c011"},
+      "/properties/event/properties/type": {"h":"d856c03b0c724c83"},
+      "/properties/id": {"h":"3e79622dec12ac17"},
+      "/properties/kind": {"h":"b567426c2a9806e1"},
+      "/properties/landed": {"h":"90a81fccaa2c7fb3"},
+      "/properties/landed/items": {"h":"cd1a463c46d62641","r":["taskId"],"p":["commit","taskId"]},
+      "/properties/landed/items/properties/commit": {"h":"fb12c34f007c70d9"},
+      "/properties/landed/items/properties/taskId": {"h":"d9b15405da102f55"},
+      "/properties/project": {"h":"d9b15405da102f55"},
+      "/properties/schema": {"h":"704cc4a33e472fd9"},
+      "/properties/subject": {"h":"d9b15405da102f55"},
+      "/properties/taskId": {"h":"d9b15405da102f55"},
+      "/properties/text": {"h":"2b1e00f7cfc18abe"},
+      "/properties/title": {"h":"1a859664cdda99f2"},
+      "/properties/to": {"h":"b1fa736f57b05433"}
+    }
+  },
   "lease.v1.json": {
     "version": "1.0",
     "nodes": {

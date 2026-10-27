@@ -127,6 +127,8 @@ export interface FakeSystem {
   noShutdown: () => void
   /** The tools called, in order, and each `shutdown <seconds> <home>` of the CLI's shutdownHost. */
   calls: () => string[]
+  /** What each `live_update_record` call recorded, in order. */
+  liveUpdates: () => Array<Record<string, unknown>>
 }
 
 const FAKE_SYSTEM = (dir: string, db: string): string => `const fs = require('node:fs')
@@ -177,6 +179,10 @@ exports.callTool = async (name, args) => {
       return { worker, availability: mine.length ? { state: 'busy', summary: 'busy 1 of 1' } : { state: 'ready', summary: 'ready' }, work: { value: { items: mine, more: 0 } } }
     })
     return ok({ asOf: new Date().toISOString(), workers: { value: workers }, unlisted: 0 })
+  }
+  if (name === 'live_update_record') {
+    fs.appendFileSync(path.join(dir, 'live-updates'), JSON.stringify(args) + '\\n')
+    return ok(args)
   }
   if (name === 'dispatch_status') return ok(read('dispatch.json'))
   if (name === 'dispatch_pause') {
@@ -249,6 +255,7 @@ export function fakeSystem(root: string, live: string, home: string): FakeSystem
     work, holds, held: () => existsSync(join(dir, 'held')), holdDelay: (ms) => writeFileSync(join(dir, 'hold-delay.json'), JSON.stringify(ms)), dispatch,
     noShutdown: () => writeFileSync(join(dir, 'no-shutdown'), ''),
     calls: () => (existsSync(join(dir, 'calls')) ? readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n') : []),
+    liveUpdates: () => (existsSync(join(dir, 'live-updates')) ? readFileSync(join(dir, 'live-updates'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>) : []),
   }
 }
 

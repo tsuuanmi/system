@@ -65,7 +65,7 @@ export const GROUPS: Readonly<Record<string, Group>> = {
   },
   surfaces: {
     about: 'what the operator and clients reach: the MCP server, the gateways, notifications, the web UI, the report, the CLI, and the bundle that composes everything',
-    packages: ['gateway-core', 'gateway-turns', 'gateway-anthropic', 'gateway-responses', 'mcp-server', 'notify', 'web-ui', 'report', 'cli', 'system-bundle'],
+    packages: ['gateway-core', 'gateway-turns', 'gateway-anthropic', 'gateway-responses', 'mcp-server', 'notify', 'lead-inbox', 'web-ui', 'report', 'cli', 'system-bundle'],
   },
   libs: {
     about: 'the libraries, the schemas, and the repository scripts with their repository-wide checks',

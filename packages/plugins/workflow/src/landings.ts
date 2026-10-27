@@ -799,7 +799,7 @@ export class TaskLandings {
       // The landing keeps its own time (`at`): the row's updated_at stays the report's.
       db.prepare('UPDATE workflow_tasks SET landing = ? WHERE run_id = ?').run(JSON.stringify(landing), row.run_id)
       if (landing.state !== this.view(row)?.state) {
-        this.e.ctx.eventLog.append({ type: 'workflow.task.landing', runId: row.run_id, ...(landing.decisions?.length ? { decision: landing.decisions.at(-1)! } : {}), data: { taskId: row.task_id, state: landing.state, ...(landing.requestId ? { requestId: landing.requestId } : {}), ...(landing.commit ? { commit: landing.commit } : {}), ...(landing.reverts?.length ? { reverts: landing.reverts } : {}), ...(landing.reason ? { reason: landing.reason.slice(0, 500) } : {}) } })
+        this.e.ctx.eventLog.append({ type: 'workflow.task.landing', runId: row.run_id, ...(landing.decisions?.length ? { decision: landing.decisions.at(-1)! } : {}), data: { taskId: row.task_id, state: landing.state, ...(landing.requestId ? { requestId: landing.requestId } : {}), ...(landing.commit ? { commit: landing.commit } : {}), ...(landing.state === 'merged' && landing.stat ? { changed: landing.stat.trim().split('\n').at(-1)!.trim().slice(0, 200) } : {}), ...(landing.base?.branch ? { branch: landing.base.branch } : {}), ...(landing.cause ? { cause: landing.cause } : {}),...(landing.reverts?.length ? { reverts: landing.reverts } : {}), ...(landing.reason ? { reason: landing.reason.slice(0, 500) } : {}) } })
       }
     })
     row.landing = JSON.stringify(landing)

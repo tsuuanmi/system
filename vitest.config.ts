@@ -84,6 +84,7 @@ export default defineConfig({
       '@tsuuanmi/system-plugin-host-core': src('./packages/plugin-host-core/src/index.ts'),
       '@tsuuanmi/system-plugin-host': src('./packages/plugins/plugin-host/src/index.ts'),
       '@tsuuanmi/system-feedback-core': src('./packages/feedback-core/src/index.ts'),
+      '@tsuuanmi/system-lead-inbox': src('./packages/plugins/lead-inbox/src/index.ts'),
     },
   },
   test: {

@@ -23,10 +23,11 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [gateway-core](../../packages/gateway-core/README.md) | gateways | defines `mcp` | — | — | `libs` |
 | [gateway-responses](../../packages/plugins/gateway-responses/README.md) | gateways | — | `gateway-responses` | `webServer`, `workflow`, `store` | `gateway-core`, `gateway-turns`, `libs` |
 | [gateway-turns](../../packages/gateway-turns/README.md) | gateways | — | — | — | `gateway-core`, `libs` |
+| [lead-inbox](../../packages/plugins/lead-inbox/README.md) | gateways | `leadInbox` | `lead-inbox` | `store`, `eventLog`, `accounts` (optional), `agentWorkers` (optional), `board` (optional), `mcp` (optional), `resources` (optional), `workers` (optional), `workflow` (optional) | `gateway-core`, `libs` |
 | [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `accounts` (optional), `agentWorkers` (optional), `artifacts` (optional), `board` (optional), `browser` (optional), `credentials` (optional), `eventLog` (optional), `pluginHost` (optional), `providers` (optional), `resources` (optional), `store` (optional), `turns` (optional), `workers` (optional), `workflow` (optional) | `gateway-core`, `libs`, `plugin-host-core`, `resources-core` |
 | [notify](../../packages/plugins/notify/README.md) | gateways | — | `notify` | `store`, `eventLog`, `credentials` (optional), `egress` (optional), `mcp` (optional) | `gateway-core`, `libs` |
 | [report](../../packages/plugins/report/README.md) | gateways | — | `report` | `artifacts`, `eventLog`, `approvals` (optional), `board` (optional), `digests` (optional), `mcp` (optional), `resources` (optional) | `approvals-core`, `board-core`, `digest-core`, `gateway-core`, `libs`, `resources-core` |
-| [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow`, `accounts` (optional), `agentWorkers` (optional), `approvals` (optional), `artifacts` (optional), `board` (optional), `eventLog` (optional), `resources` (optional), `workers` (optional) | `approvals-core`, `board-core`, `gateway-core`, `libs`, `workers-core` |
+| [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow`, `accounts` (optional), `agentWorkers` (optional), `approvals` (optional), `artifacts` (optional), `board` (optional), `eventLog` (optional), `leadInbox` (optional), `resources` (optional), `workers` (optional) | `approvals-core`, `board-core`, `gateway-core`, `libs`, `workers-core` |
 | [board](../../packages/plugins/board/README.md) | orchestration | `board` | `board` | `store`, `artifacts`, `leases`, `approvals`, `eventLog` (optional), `mcp` (optional) | `approvals-core`, `board-core`, `gateway-core`, `leases`, `libs` |
 | [board-core](../../packages/board-core/README.md) | orchestration | defines `board` | — | — | `approvals-core` |
 | [decision-core](../../packages/decision-core/README.md) | orchestration | defines `dispatchAdvisor` | — | — | `libs` |
@@ -94,6 +95,7 @@ flowchart TB
   subgraph gateways ["gateways"]
     gateway_anthropic["gateway-anthropic"]
     gateway_responses["gateway-responses"]
+    lead_inbox["lead-inbox<br/>ctx.leadInbox"]
     mcp_server["mcp-server<br/>ctx.mcp"]
     notify["notify"]
     report["report"]
@@ -197,6 +199,15 @@ flowchart TB
   gateway_responses --> workflow
   gateway_responses --> store
   landing_local --> workers
+  lead_inbox --> store
+  lead_inbox --> event_log
+  lead_inbox -.-> accounts
+  lead_inbox -.-> agent_workers
+  lead_inbox -.-> board
+  lead_inbox -.-> mcp_server
+  lead_inbox -.-> resources
+  lead_inbox -.-> workers
+  lead_inbox -.-> workflow
   leases --> store
   login --> accounts
   login --> browser_patchright
@@ -284,6 +295,7 @@ flowchart TB
   web_ui -.-> artifacts
   web_ui -.-> board
   web_ui -.-> event_log
+  web_ui -.-> lead_inbox
   web_ui -.-> resources
   web_ui -.-> workers
   worker_sessions --> store
@@ -354,6 +366,7 @@ flowchart TB
     gateway_core["gateway-core<br/>defines mcp"]
     gateway_responses["gateway-responses"]
     gateway_turns["gateway-turns"]
+    lead_inbox["lead-inbox<br/>ctx.leadInbox"]
     mcp_server["mcp-server<br/>ctx.mcp"]
     notify["notify"]
     report["report"]
@@ -450,6 +463,7 @@ flowchart TB
   gateway_turns --> gateway_core
   landing_local --> landing_core
   landing_local --> workers_core
+  lead_inbox --> gateway_core
   login --> display_virtual
   login --> gateway_core
   login --> provider_core

@@ -429,7 +429,7 @@ describe('ctx.board (store-backed): the approval queue', () => {
   })
 
   it('starts nothing with no attempt left, even when the operator approves going on (INV-9)', async () => {
-    const { ctx } = await boot()
+    const { ctx } = await boot({ eventLog: true })
     await active(ctx)
     const t = await ready(ctx, task('p2', 't', { maxAttempts: 1 }))
     const { generation } = await ctx.board.claim(t.taskId, 'lead', 600_000, at(3))
@@ -441,6 +441,12 @@ describe('ctx.board (store-backed): the approval queue', () => {
     const stopped = (await ctx.board.task(t.taskId))!
     expect(stopped).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
     expect(ctx.artifacts.get(stopped.lastDecision!)?.body).toMatchObject({ decisionType: 'approval' })
+    // The wait is an event (the project's lead inbox tells it: D107), and its end is another.
+    const waits = ctx.eventLog.query({ type: 'board.waiting', limit: 10 })
+    expect(waits.at(-1)!.data).toEqual({ taskId: t.taskId, projectId: 'p2', reason: 'retries-spent', expiresAt: stopped.waiting!.expiresAt })
+    expect(ctx.eventLog.query({ type: 'board.waiting.ended', limit: 10 })).toEqual([])
+    await ctx.board.sweep(new Date(Date.parse(stopped.waiting!.expiresAt)))
+    expect(ctx.eventLog.query({ type: 'board.waiting.ended', limit: 10 }).map((e) => e.data)).toEqual([{ taskId: t.taskId, projectId: 'p2', reason: 'retries-spent', state: 'cancelled' }])
   })
 
   it('commits a move before it withdraws the request the task waited on: a withdrawal that fails after it leaves an open request that changes nothing (S7)', async () => {

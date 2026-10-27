@@ -32,6 +32,8 @@ results land on.
    the digest, and what you escalate with a decision brief.
 3. [ ] Run the daily loop (LD6 to LD8): *Needs your attention* on `/ui` Home, pending approvals,
    held reviews, failed or stalled runs; handle by expiry; one digest a day.
+   Wait on the inbox instead of polling: `system lead wait --project {{id}}` blocks until a notice
+   is unread (what needs you, what landed); `system lead ack <id>` marks it handled.
 4. [ ] Judge a deferred command by its words (LD9 to LD12); deny with what to run instead. The
    routine ones are the project policy's command rules, decided at the gate: keep no judge script.
 5. [ ] Salvage only by LD13 to LD15, and file each salvage's root-cause task.

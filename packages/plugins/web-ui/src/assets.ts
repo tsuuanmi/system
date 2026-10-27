@@ -2277,6 +2277,16 @@ export const APP_JS = `'use strict'
       details.className = 'column'
       return details
     }
+    // The project's Lead panel (D107): the unread notices of its lead inbox, and its recent digest; absent when the inbox is not running.
+    let leadData = null
+    if (!all) { try { leadData = await api('lead?project=' + encodeURIComponent(shownId)) } catch {} }
+    const leadPanel = (data) => !data ? null : el('section', { class: 'panel', id: 'lead-panel', 'aria-label': 'Lead inbox of ' + data.project },
+      el('h2', {}, 'Lead ', chip(qty(data.unread.length, 'unread notice'), data.unread.length ? 'warn' : 'idle')),
+      data.unread.length
+        ? el('ul', {}, data.unread.map((n) => el('li', {}, el('strong', {}, n.title), ' · ', clockOf(n.at), ' · ', n.text, n.act.length ? el('div', { class: 'muted' }, n.act[0]) : null)))
+        : el('p', { class: 'muted' }, 'Nothing needs the lead'),
+      data.digests.length ? fold('Recent digest · ' + clockOf(data.digests[0].at), el('p', {}, data.digests[0].text)) : null,
+      el('p', { class: 'muted' }, 'Handled ' + data.stats.handled + (data.stats.waitMs.median !== undefined ? ' · a notice waits ' + Math.round(data.stats.waitMs.median / 1000) + ' s (median) until handled' : '') + (data.stats.touches.median !== undefined ? ' · ' + data.stats.touches.median + ' touch(es) per task (median)' : '')))
     // Each empty state one short line; how tasks move between columns is in Help's Task lifecycle (T171), how a ready task
     // starts behind its column's "?" (T239). The tasks first, Needs your attention leading on a phone; then, folded, the
     // projects with their state and moves, and the done and cancelled tasks.
@@ -2289,6 +2299,7 @@ export const APP_JS = `'use strict'
       // All projects (T253): each project's counts only, what of it needs you, and its moves; its tasks on its own board.
       projects.length && all ? el('section', { class: 'portfolio', 'aria-label': 'All projects' }, el('h2', {}, 'All projects', whatIs('project'), charters ? [' ', chip(qty(charters, 'charter approval'), 'warn')] : null),
         el('div', { class: 'projects' }, projects.map(head))) : null,
+      projects.length && !all ? leadPanel(leadData) : null,
       projects.length && !all ? el('div', { class: 'kanban' },
         column('Proposed', ['proposed'], 'None'),
         column('Ready', ['ready'], 'None', whatIs('start')),

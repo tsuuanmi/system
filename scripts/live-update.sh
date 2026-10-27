@@ -628,6 +628,15 @@ resume_dispatch() {
   fi
 }
 
+# Record how the update ended once the daemon runs again (`host.live-update`), so each project's
+# lead inbox tells it (live-update.done or live-update.failed, D107). A profile that cannot record
+# it is a note: the update's outcome stands.
+record_outcome() {
+  if ! check_tool live-update-record "$@" 2>&1 | tee -a "$LOG_FILE" >&2; then
+    log "note: the lead inbox was not told this update's outcome ($1)"
+  fi
+}
+
 # Hold steps before the wait (T257): each running run finishes the step it is in and starts no next
 # one, so the wait ends at the next step boundary instead of when every run is done. Recorded
 # (steps_held=update) until it is released (release_steps) or the daemon stopped (the next start
@@ -875,6 +884,7 @@ rollback() {
   fi
   start_daemon || fail "the previous code did not start"
   resume_dispatch
+  record_outcome failed "$FROM" "$TARGET" rolled-back
   cli "$LIVE" health 2>&1 | tee -a "$LOG_FILE" >&2 || true
   state_set phase rolled-back
   log "rolled back: the live install runs ${FROM:0:12} again$( (($(phase_index "$from_phase") >= $(phase_index starting))) && echo ', on the store and vault of the backup'); why: $reason"
@@ -1158,6 +1168,7 @@ if ! reached verified; then
 fi
 resume_dispatch
 report_cuts
+record_outcome done "$FROM" "$TARGET"
 
 set_phase done
 log "updated: $LIVE runs ${TARGET:0:12} (pid $DAEMON_PID); backup and notes in $ATTEMPT"

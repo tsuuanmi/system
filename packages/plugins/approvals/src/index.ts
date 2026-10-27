@@ -435,7 +435,7 @@ export class StoreApprovals extends Approvals {
       // Ids, the class, and the expiry only: never the summary, consequences, or command (a surface reads it).
       this.announce('approvals.requested', {
         requestId: created.requestId, actionClass: created.action.class, expiresAt: created.expiresAt, component: created.requester.component,
-        ...(projectId !== undefined ? { projectId } : {}), ...(created.requester.policyChangeId !== undefined ? { policyChangeId: created.requester.policyChangeId } : {}),
+        ...(projectId !== undefined ? { projectId } : {}), ...(created.requester.taskId !== undefined ? { taskId: created.requester.taskId } : {}), ...(created.requester.policyChangeId !== undefined ? { policyChangeId: created.requester.policyChangeId } : {}),
       })
       return structuredClone(created)
     })
@@ -514,6 +514,7 @@ export class StoreApprovals extends Approvals {
     if (!Array.isArray(verdicts)) throw invalid('verdicts is not a list')
     verdicts.forEach((v, i) => this.validVerdict(v, i))
     const refused: string[] = []
+    const outside: Array<{ requestId: string; actionClass: string }> = []
     for (const v of verdicts) {
       const request = this.read(v.requestId)?.request
       if (!request) continue
@@ -522,7 +523,18 @@ export class StoreApprovals extends Approvals {
         branch: request.action.class === 'merge' ? this.baseBranchOf(request) : undefined, devBranches: this.devBranches(project),
         remediation: request.action.class === 'remediation' ? leadRemediationOf(request, (ref) => this.ctx.artifacts.get(ref as never)) : undefined,
       })
-      if (!may.ok) refused.push(`${v.requestId} (${request.action.class}): ${may.reason}`)
+      if (!may.ok) {
+        refused.push(`${v.requestId} (${request.action.class}): ${may.reason}`)
+        outside.push({ requestId: v.requestId, actionClass: request.action.class })
+      }
+    }
+    if (refused.length) {
+      // The refusal is recorded (ids and classes only) so the project's lead inbox tells that the request needs the operator.
+      try {
+        for (const o of outside.slice(0, 50)) this.ctx.get('eventLog')?.append({ type: 'approvals.lead-refused', data: { projectId: project, requestId: o.requestId, actionClass: o.actionClass } })
+      } catch (error) {
+        this.ctx.logger.warn(`approvals: the lead refusal of project ${project} was not recorded: ${(error as Error).message}`)
+      }
     }
     if (refused.length) throw new ApprovalsError('forbidden', `${leadId(project)} may not give ${refused.length === 1 ? 'this verdict' : 'these verdicts'}; nothing was decided. ${refused.join(' | ')}`)
     return this.decideBy(verdicts, when, check, project)

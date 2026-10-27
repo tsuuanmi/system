@@ -2248,7 +2248,9 @@ export class StoreBoard extends Board {
    * the hold expires unseen (notify's `review.expiring`): `board.review.held` names the task, its
    * project, until when, and the checks still pending; `board.review.ended` the task, its project,
    * and where it went (done, another attempt, a wait for input once it expired). Ids, states, and
-   * times only. The event log is optional here, as for the approval queue: an append that fails is
+   * times only. A task that starts waiting for input is `board.waiting` (its reason: question,
+   * retries-spent, …) and the end of that wait `board.waiting.ended`, which the project's lead inbox
+   * reads. The event log is optional here, as for the approval queue: an append that fails is
    * logged, and the move stands.
    */
   private announceReview(before: BoardTask, after: BoardTask): void {
@@ -2258,6 +2260,16 @@ export class StoreBoard extends Board {
       : held(before) && !held(after)
         ? { type: 'board.review.ended', data: { taskId: after.taskId, projectId: after.projectId, state: after.state, ...(after.waiting ? { reason: after.waiting.reason } : {}) } }
         : undefined
+    this.append(event, after)
+    // A task that waits for input, and the end of that wait (a lead's inbox reads both): its reason, ids only.
+    const waits = (t: BoardTask): string | undefined => (t.state === 'waiting-for-input' ? t.waiting?.reason : undefined)
+    const was = waits(before)
+    const now = waits(after)
+    if (now !== undefined && now !== was) this.append({ type: 'board.waiting', data: { taskId: after.taskId, projectId: after.projectId, reason: now, expiresAt: after.waiting?.expiresAt } }, after)
+    else if (was !== undefined && now === undefined) this.append({ type: 'board.waiting.ended', data: { taskId: after.taskId, projectId: after.projectId, reason: was, state: after.state } }, after)
+  }
+
+  private append(event: { type: string; data: Record<string, unknown> } | undefined, after: BoardTask): void {
     if (!event) return
     try {
       this.ctx.get('eventLog')?.append({ ...event, ...(after.lastDecision ? { decision: after.lastDecision } : {}) })

@@ -1,0 +1,16 @@
+{
+  "schema": "lead-notice@1.0",
+  "id": "system:task.landed:task-6755c1d17c2d:7410",
+  "project": "system",
+  "to": "lead:system",
+  "kind": "task.landed",
+  "subject": "task-6755c1d17c2d",
+  "at": "2026-10-27T09:12:00.000Z",
+  "event": { "seq": 7410, "type": "workflow.task.landing" },
+  "title": "Landed: board task task-6755c1d17c2d",
+  "text": "Board task task-6755c1d17c2d landed on dev as commit 4f1c2a9b: 3 files changed, 41 insertions(+), 2 deletions(-).",
+  "act": ["system lead wait --project system", "MCP lead_inbox {\"projectId\":\"system\"}"],
+  "taskId": "task-6755c1d17c2d",
+  "commit": "4f1c2a9b7d3e5a60",
+  "changed": "3 files changed, 41 insertions(+), 2 deletions(-)"
+}

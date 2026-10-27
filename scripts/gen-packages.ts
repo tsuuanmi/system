@@ -87,6 +87,7 @@ export const LAYER_OF: Record<string, Layer> = {
   'web-ui': 'gateways',
   'report': 'gateways',
   'notify': 'gateways',
+  'lead-inbox': 'gateways',
   'cli': 'gateways',
 }
 
