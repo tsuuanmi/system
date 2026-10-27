@@ -18,16 +18,19 @@ const maps = riskTierMaps([JSON.parse(readFileSync(join(root, 'policies/system.j
 const CHARTER: NonNullable<Read['charter']> = {
   projectId: 'system',
   charter: {
-    version: 3, intent: 'Build System: an operator-owned studio that runs work on the operator\'s own Workers, every decision recorded.',
-    criteria: [{ id: 'c1', statement: 'Every change lands reviewed, with its checks passing on the exact tree' }, { id: 'c2', statement: 'No silent loss of work or of a rule' }],
-    constraints: { egressPolicy: 'operator-shared', notes: ['the repository is public'] },
-    stopRules: [{ id: 'quota', condition: 'the week\'s quota under its reserve', action: 'pause' }],
+    // The size of the live charter of project system (T321 measured it at about 470 tokens).
+    version: 3, intent: 'Build `system` (tsuuanmi/system) toward the base release (PROP-0010 B1-B8), developed through System itself, and run as Base\'s pilot (D68, D69 A, 2026-10-25): the board\'s tasks run in System, one algorithm-development run per attempt, Claude Code writes every change, Codex validates and reviews, the lead proposes and starts, the operator approves the charter, answers the queue and merges dev into main. Five working days through at least one restart, measured against the Claude-alone baseline.',
+    criteria: [{ id: 'base-release', statement: 'The base release (PROP-0010 B1-B8) is merged to main and reviewed by the operator' }, { id: 'accepted-work', statement: 'At least 25 tasks of the pilot end with an accepted result landed on dev' }, { id: 'tests-pass', statement: 'Every accepted result passes the policy\'s required checks (tests, lint) on its exact tree (ADR-0063)' }, { id: 'pilot-close', statement: 'The pilot ran five working days through at least one restart, and the board shows its progress without a transcript' }],
+    constraints: { deadline: '2026-11-01T00:00:00Z', notes: ['Pilot days: 2026-10-26 to 2026-10-30 (Mon-Fri), plus 2026-10-25 as day 0. Restarts so far: the live updates of 2026-10-25.', 'Only work that runs in System is on this board (sysboard: unmirror, 2026-10-25); the coordination board keeps the rest.', 'Claude Code writes code, docs and tests; Codex validates and reviews (operator, 2026-10-25; base exit criterion 3 amended, D69 A).', 'The lead accepts and merges dev-branch results on the operator\'s permission (sysdev.mjs); main is the operator\'s.'] },
+    stopRules: [{ id: 'operator-stops', condition: 'The operator stops or pauses the project', action: 'stop' }, { id: 'three-rejections', condition: 'A task\'s three attempts end without an accepted result twice in one working day', action: 'pause' }, { id: 'quota-spent', condition: 'Every Claude Code account\'s five-hour window is limited at once for a whole working day', action: 'pause' }],
   },
 }
 
 const AREAS = {
   'one area': ['packages/plugins/workflow/src/views.ts'],
   'two areas': ['packages/plugins/workflow/src/views.ts', 'packages/plugins/agent-workers/src/lessons.ts'],
+  // The measured p99 shapes (T321): a heavy change (by the path map) in two areas, and paths unknown (heavy, every guide).
+  'a heavy change in two areas': ['packages/plugins/workflow/src/handbook.ts', 'packages/approvals-core/src/index.ts', 'packages/plugins/board/src/index.ts'],
   'paths unknown': undefined,
 } as const
 
@@ -58,7 +61,16 @@ describe('the handbook slice of this repository\'s own steps (T259)', () => {
         expect(built.tokens, `${nodeId}, ${name}: ${built.layers.map((l) => `L${l.layer}${l.renderedBy === 'source' ? ' source' : ''} ${l.tokens}`).join(', ')}`).toBeLessThanOrEqual(HANDBOOK_BOUND)
         expect(built.sourceOver).toEqual([])
         if (nodeId === 'review:1') expect(built.parts).toContain('L4.review-guides')
+        // Each layer within its share (T321), but one: a review with its paths unknown is given every
+        // guide, so its layer 4 alone passes its share by design (recorded, never refused while the total holds).
+        const everyGuide = nodeId === 'review:1' && touched === undefined
+        expect(built.over.map((l) => l.layer), `${nodeId}, ${name}: layers over their shares`).toEqual(everyGuide ? [4] : [])
       }
     })
   }
+
+  it('reads the heavy change in two areas as heavy, so its slice carries every invariant and the tier\'s heavy line', () => {
+    const built = slice('review:1', AREAS['a heavy change in two areas'])
+    expect(built.parts).toEqual(expect.arrayContaining(['INV-1', 'INV-15', 'L2.tier.heavy']))
+  })
 })

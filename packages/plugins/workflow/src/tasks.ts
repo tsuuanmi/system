@@ -26,7 +26,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { type ArtifactRef, BoardError, type BoardTask, type Board, type Classification, type InfrastructureFailure, type Project, renderTasks, type RunOutcome, type Subject, UNRELEASED_MAX, type UnreleasedHold, unreleasedText } from '@tsuuanmi/system-board-core'
 import type { Lease } from '@tsuuanmi/system-leases'
 import { takesKind, type WorkerExecution } from '@tsuuanmi/system-workers-core'
-import { BRIEF_LIMITS, type BriefBudgetLine, type BriefFile, type BriefPointer, captureGitSubject, clampText, questionsOf } from '@tsuuanmi/system-libs'
+import { BRIEF_LIMITS, type BriefBudgetLine, type BriefFile, type BriefPointer, captureGitSubject, clampText, QUESTION_LIMITS, questionsOf } from '@tsuuanmi/system-libs'
 import { type BudgetLine, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type { Check } from '@tsuuanmi/system-approvals-core'
 import { recordOutcome } from './advisor.ts'
@@ -1408,6 +1408,22 @@ export class TaskRuns {
       this.e.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision, data: { executionId: execution.id, source: node.source, worker: node.worker, kind: error.kind, disposition: error.disposition } })
       this.e.ctx.eventLog.append({ type: 'workflow.task.question', runId: run.run_id, nodeId: node.node_id, decision, data: { taskId: row.task_id, questions: questions.length } })
     })
+    return true
+  }
+
+  /**
+   * A step whose handbook slice was refused at its start (./handbook.ts, T321): the task waits for
+   * input on the board's question wait, as a step's own question does ({@link ask}), so the refusal
+   * never spends an attempt nor a free retry: once the layer's owner has shortened it, the answer
+   * continues this attempt (T291) and the slice is built again. Called inside the transaction that
+   * fails the step; false (the run's failure is then reported as any other) for a run that is not a
+   * task's, lost its holder, or already asked.
+   */
+  waitsOnHandbook(runId: string, nodeId: string, decision: ArtifactRef, question: string): boolean {
+    const row = this.row(runId)
+    if (!row || row.lost || row.question) return false
+    const asked: TaskQuestion = { state: 'asked', nodeId, questions: [clampText(question, QUESTION_LIMITS.chars)], decision }
+    this.e.ctx.store.db.prepare('UPDATE workflow_tasks SET question = ?, updated_at = ? WHERE run_id = ? AND question IS NULL').run(JSON.stringify(asked), now(), runId)
     return true
   }
 

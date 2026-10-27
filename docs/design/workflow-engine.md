@@ -302,7 +302,7 @@ reserves its budget or is routed:
 - **The source's half** (the gate view, the lessons): the lessons are counted at what they render
   to, measured by the engine with the one renderer the source uses (libs `lessonsSectionOf`) on the
   lessons file of the repository the run's worktree was cut from, for the step's role and touched
-  paths (at their constructed maximum, 3,100 tokens, when that repository cannot be read); the gate
+  paths (at their constructed maximum, 1,450 tokens, when that repository cannot be read); the gate
   view, rendered from the routed Worker's own evidence and tools, at its constructed maximum (1,000;
   agent-workers bounds both in UTF-8 bytes). A source's half over its layer's share is refused in
   either mode (`handbook_over_bound`). The agent Worker source reads the brief's
@@ -1023,7 +1023,9 @@ The engine tells it from its own records when it reports the failed run (`reconc
   for the task's own input, policy, configuration, or code (`invalid_input`, `input_dropped`,
   `egress_denied`, `config_error`, `ui_drift`, `internal`), a timeout, a rejection, a question, or a
   reconciliation its source did not mark. Sending again would meet the same refusal, so a free
-  retry would only repeat it until the bound ran out.
+  retry would only repeat it until the bound ran out. A step whose handbook slice is refused
+  (`config_error`, `handbook_over_bound`) is not reported as a failed run at all: its task takes
+  the question wait, so it is neither counted nor a free retry ([handbook](handbook.md#the-6000-token-bound), T321).
 - **Recorded.** The report's `reconciliation` decision (`workflow.task-report`, version 2) names the
   kind and the reason (`outcome.detail.infrastructure`), and the board's move names them with the
   free retries used and allowed.

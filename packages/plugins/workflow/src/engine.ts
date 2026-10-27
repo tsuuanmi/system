@@ -16,7 +16,7 @@ import { checksFor, landingTargets } from './checks.ts'
 import { DOSSIER_CAPABILITY, type TaskDossiers } from './dossiers.ts'
 import { type Draft, draftOf, guidesFor, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
 import { awaitCall, continueWithMessage, settleCalls, waitsOnCall } from './continuations.ts'
-import { applyHandbook, type Built, buildHandbook } from './handbook.ts'
+import { applyHandbook, type Built, buildHandbook, fileRefusal } from './handbook.ts'
 import { authorDraft, commitFixed, commitReviewed, continued, waitForAuthor, waitForSelfReview } from './fix-sessions.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
 import { heldNow, release } from './hold.ts'
@@ -733,7 +733,10 @@ export class Engine {
       if (signal.aborted) return
       if (built) {
         const applied = applyHandbook(this, run, node, draft, built, lease)
-        if (applied === 'refused') return
+        if (applied === 'refused') {
+          await fileRefusal(this, built, node)
+          return
+        }
         draft = applied
       }
       // A board task's step reserves its task's budget before it is routed or sent (ADR-0047, step 1):

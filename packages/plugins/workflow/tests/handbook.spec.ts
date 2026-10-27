@@ -120,15 +120,15 @@ describe('the slice of each role (docs/design/handbook.md#the-slice-of-each-role
   })
 
   it('counts a part whose text the brief carries elsewhere, renders only its line, and names every layer over its share when the slice passes the bound', () => {
-    const long: HandbookPart = { id: 'L4.long', layer: 4, text: 'x'.repeat(4 * 2500), elsewhere: '- your playbook is this step\'s instructions', applies: { roles: ['develop'] } }
+    const long: HandbookPart = { id: 'L4.long', layer: 4, text: 'x'.repeat(4 * 4500), elsewhere: '- your playbook is this step\'s instructions', applies: { roles: ['develop'] } }
     const slice = buildSlice({ ...FIXTURE, parts: [...FIXTURE.parts, long] }, sel('develop', { class: 'code' }))
     expect(slice.text).toContain('- your playbook is this step\'s instructions')
     expect(slice.text).not.toContain('xxxx')
     const layer4 = slice.layers.find((l) => l.layer === 4)!
-    expect(layer4.tokens).toBeGreaterThan(2500)
+    expect(layer4.tokens).toBeGreaterThan(4500)
     expect(slice.tokens).toBeGreaterThan(HANDBOOK_BOUND)
     expect(slice.exceeds).toBe(true)
-    expect(slice.over).toEqual([{ layer: 4, tokens: layer4.tokens, share: 900, owner: 'lead' }])
+    expect(slice.over).toEqual([{ layer: 4, tokens: layer4.tokens, share: 2300, owner: 'lead' }])
   })
 
   it('counts the source\'s half at what it renders to when that is known, at its maximum only when not, and flags a source half over its layer\'s share', () => {
@@ -140,9 +140,9 @@ describe('the slice of each role (docs/design/handbook.md#the-slice-of-each-role
     expect(measured.tokens).toBe(buildSlice(FIXTURE, sel('develop', { class: 'code' })).tokens - SOURCE_MAX.lessons + 640)
     expect(measured.sourceOver).toEqual([])
     // A source's half past its layer's share: flagged whatever the slice's size, so it is refused in either mode.
-    const grown = buildSlice(at(3200), sel('develop', { class: 'code' }))
+    const grown = buildSlice(at(1500), sel('develop', { class: 'code' }))
     expect(grown.exceeds).toBe(false)
-    expect(grown.sourceOver).toEqual([{ layer: 5, tokens: 3200, share: 3100, owner: 'lead and review' }])
+    expect(grown.sourceOver).toEqual([{ layer: 5, tokens: 1500, share: 1450, owner: 'lead and review' }])
     // The constructed maxima are within their layers' shares.
     expect(SOURCE_MAX.lessons).toBeLessThanOrEqual(HANDBOOK_LAYERS.find((l) => l.layer === 5)!.share)
     expect(SOURCE_MAX.gateView).toBeLessThanOrEqual(HANDBOOK_LAYERS.find((l) => l.layer === 2)!.share)
@@ -156,12 +156,13 @@ describe('the slice of each role (docs/design/handbook.md#the-slice-of-each-role
         eventLog: { append: () => undefined },
       },
       writeNode: (_node: unknown, patch: (typeof writes)[number]) => writes.push(patch),
+      tasks: { waitsOnHandbook: () => true },
     }
     const built = { selection: sel('develop', { class: 'code' }), slice: grown, mode: 'warn' as const, projectId: 'p1', taskId: 't1' }
     const draft = { schema: 'brief@1.2', goal: 'g', acceptance: [], artifacts: [], budget: { remaining: [] }, classification: 'public' }
     expect(applyHandbook(engine as never, { run_id: 'r1' } as never, { node_id: 'n1' } as never, draft as never, built, () => ({}) as never)).toBe('refused')
     expect(decisions.map((d) => [d.decider.id, d.outcome.option])).toEqual([[HANDBOOK_RULE, 'refuse']])
-    expect(writes).toEqual([expect.objectContaining({ state: 'FAILED', error: expect.stringMatching(/config_error.*handbook_over_bound.*layer 5 \(Repository lessons, owner lead and review\) renders 3200 tokens/) })])
+    expect(writes).toEqual([expect.objectContaining({ state: 'FAILED', error: expect.stringMatching(/config_error.*handbook_over_bound.*layer 5 \(Repository lessons, owner lead and review\) renders 1500 tokens/) })])
   })
 
   it('measures the lessons as the Worker source renders them for the role and paths, none without a lessons file, and unknown without a repository', () => {
@@ -311,7 +312,7 @@ const policy: AutonomyPolicy = {
 const step = (prompt: string, kind?: string): NodeTemplate[] => [{ nodeId: 'develop', objective: 'Change it', prompt, capabilities: ['develop'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', ...(kind ? { kind } : {}) }]
 const SMALL = 'Change it: {{input}}'
 /** A playbook far over layer 4's share: with the source's half at its maximum, the slice passes the bound. */
-const BIG = `Change it: {{input}}\n${'Follow this rule. '.repeat(600)}`
+const BIG = `Change it: {{input}}\n${'Follow this rule. '.repeat(1500)}`
 
 async function boot(handbook: { warnTasks?: number; enabled?: boolean }, touched?: string[]) {
   const dir = mkdtempSync(join(tmpdir(), 'system-workflow-handbook-'))
@@ -346,13 +347,15 @@ async function boot(handbook: { warnTasks?: number; enabled?: boolean }, touched
     rmSync(dir, { recursive: true, force: true })
   })
   await activeProject(ctx)
+  const tasks = new Map<string, string>()
   const run = async (template: string, title: string): Promise<string> => {
     const task = await readyTask(ctx, title)
     const { runId } = await ctx.workflow.start({ template, input: 'change it', classification: 'public', task: { taskId: task.taskId } })
+    tasks.set(runId, task.taskId)
     await vi.waitFor(() => expect(ctx.workflow.get(runId)!.status).not.toBe('running'), { timeout: 30_000, interval: 25 })
     return runId
   }
-  return { ctx, workers, run }
+  return { ctx, workers, run, taskOf: (runId: string) => tasks.get(runId)! }
 }
 
 type Decision = { decider: { id: string }; outcome: { option: string; detail: Record<string, unknown> } }
@@ -389,7 +392,7 @@ describe('the slice in each step\'s brief (brief@1.6 handbook)', () => {
       parts: ['L1.pointer', 'INV-1', 'INV-2', 'L2.tier.heavy', 'L3.objective', 'L3.criteria', 'L3.constraints', 'L4.playbook', 'L4.rules', 'W2', 'W3', 'W4', 'W5', 'W18', 'Q1', 'T1', 'T4'],
     })
     expect(pointed.text).toContain('stop rule no-gain: Below 1.5x after two milestones (pivot)')
-    expect(pointed.text).toContain('- INV-2 Fail closed (docs/architecture/invariants.md#inv-2-fail-closed)')
+    expect(pointed.text).toContain('- INV-2 Fail closed\n')
     expect(pointed.text).toContain('- T4 wait for the event, not the clock')
     expect(pointed.text).not.toContain('V1')
     expect(started.prompt).toContain('Handbook slice for this step: role develop, risk tier heavy')
@@ -410,7 +413,7 @@ describe('the slice in each step\'s brief (brief@1.6 handbook)', () => {
   })
 
   it('sends a slice over the bound whole with a warning for the first warnTasks board tasks, then refuses it before anything is routed (handbook_over_bound)', async () => {
-    const { ctx, workers, run } = await boot({ warnTasks: 1 })
+    const { ctx, workers, run, taskOf } = await boot({ warnTasks: 1 })
     // The first task: warn mode, sent whole, the warning naming the layer over its share, its size, and its owner.
     const first = await run('big', 'first')
     expect(ctx.workflow.get(first)!.status).toBe('completed')
@@ -422,7 +425,7 @@ describe('the slice in each step\'s brief (brief@1.6 handbook)', () => {
     expect(decided).toHaveLength(2)
     const warned = decided.find((d) => d.outcome.option === 'warn')
     const moved = decided.find((d) => d.outcome.detail['move'] === 'refuse')
-    expect(warned!.outcome).toMatchObject({ option: 'warn', detail: { tokens: sent.tokens, bound: HANDBOOK_BOUND, over: [{ layer: 4, share: 900, owner: 'lead' }] } })
+    expect(warned!.outcome).toMatchObject({ option: 'warn', detail: { tokens: sent.tokens, bound: HANDBOOK_BOUND, over: [{ layer: 4, share: 2300, owner: 'lead' }] } })
     // That task was the warnTasks-th: the bound moves to refuse, a decision of its own.
     expect(moved!.outcome).toMatchObject({ option: 'refuse', detail: { move: 'refuse', tasks: 1 } })
 
@@ -431,8 +434,21 @@ describe('the slice in each step\'s brief (brief@1.6 handbook)', () => {
     const view = ctx.workflow.get(second)!
     expect(view.status).toBe('failed')
     expect(workers.started).toHaveLength(1)
-    expect(view.nodes[0]!.error).toMatchObject({ kind: 'config_error', message: expect.stringMatching(/handbook_over_bound.*layer 4 \(Role playbook, owner lead\) holds \d+ tokens of its 900/) })
+    expect(view.nodes[0]!.error).toMatchObject({ kind: 'config_error', message: expect.stringMatching(/handbook_over_bound.*layer 4 \(Role playbook, owner lead\) holds \d+ tokens of its 2300/) })
     expect(boundDecisions(ctx, second).map((d) => d.outcome.option)).toEqual(['refuse'])
+    // A refusal never spends an attempt (T321): the task waits for input on the question wait, which
+    // counts nothing and uses no free retry; its answer continues the same attempt.
+    expect(view.nodes[0]!.error).toMatchObject({ disposition: 'CODE_FIX' })
+    await vi.waitFor(async () => expect(await ctx.board.task(taskOf(second))).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'question', questions: [expect.stringMatching(/handbook slice was refused.*no attempt was spent/)] } }), { timeout: 30_000, interval: 25 })
+    expect((await ctx.board.task(taskOf(second)))!.attempts).toEqual({ count: 1, max: 3 })
+    expect(ctx.store.db.prepare('SELECT free_retries FROM board_tasks WHERE task_id = ?').get(taskOf(second))).toEqual({ free_retries: 0 })
+    // Answered once the layer is shortened: ready again on the same attempt, which the next start continues.
+    expect(await ctx.board.answer(taskOf(second), ['layer 4 is shortened'])).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+    expect(await ctx.board.continuing(taskOf(second))).toBe(true)
+    // And the refusal files a task for the layer's owner, once (T321).
+    const filed = (await ctx.board.tasks({ projectId: 'p1' })).filter((t) => t.title.startsWith('Handbook slice refused'))
+    expect(filed).toHaveLength(1)
+    expect(filed[0]).toMatchObject({ title: 'Handbook slice refused: layer 4 over its share', actionClass: 'workspace-write', goal: expect.stringContaining('The attempt was not spent') })
 
     // In refuse mode, a slice within the bound is sent.
     const third = await run('small', 'third')

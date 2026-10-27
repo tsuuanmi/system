@@ -68,7 +68,7 @@ The **`agents` Worker source**: agent runtimes as Workers
   its Tools section, a section "Lessons of this repository": the `- ` lines of
   `docs/engineering/lessons.md` as its repository (the configured `workspace`)
   has it committed at HEAD, read by git, never from the working tree, at most 30
-  lessons of at most 400 characters each and 12,400 UTF-8 bytes in all (3,100
+  lessons of at most 400 characters each and 5,800 UTF-8 bytes in all (1,450
   estimated tokens, the handbook's share for them), the rest counted. A run whose
   brief records its handbook slice (`brief@1.6` `handbook.selection`,
   [handbook](../../../docs/design/handbook.md)) gets the lessons that apply to

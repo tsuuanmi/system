@@ -115,12 +115,12 @@ describe('the lessons as a repository has them committed (repositoryLessons)', {
   })
 
   it('reads a file larger than its bound only so far, and no partial line of it', async () => {
-    const line = (i: number): string => `- lesson ${String(i).padStart(3, '0')} ${'y'.repeat(990)}`
-    const repo = repository(Array.from({ length: 60 }, (_, i) => line(i)).join('\n'))
+    const line = (i: number): string => `- lesson ${String(i).padStart(3, '0')} ${'y'.repeat(150)}`
+    const repo = repository(Array.from({ length: 300 }, (_, i) => line(i)).join('\n'))
     const lines = (await repositoryLessons(repo))!.split('\n')
-    // 32 KiB holds 32 whole lines of 1,004 characters (and a newline): 30 shown, 2 counted.
+    // 32 KiB holds 199 whole lines of 163 characters (and a newline): 30 shown, 169 counted.
     expect(lines).toHaveLength(1 + LESSONS_LIMITS.lines + 1)
-    expect(lines.at(-1)).toBe(`- and 2 more in ${LESSONS_PATH}`)
+    expect(lines.at(-1)).toBe(`- and 169 more in ${LESSONS_PATH}`)
   })
 })
 
