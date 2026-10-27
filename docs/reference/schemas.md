@@ -400,6 +400,19 @@ guesses.
   gives none, so capacity, health, and the Workers page say why; routing never reads it. A record
   carrying it below `@1.9`, or with another state, is refused. Readers accept 1.0 to 1.9. Example:
   [`capability-descriptor.unavailable-reason.json`](../../schemas/examples/capability-descriptor.unavailable-reason.json).
+- `capability-descriptor@1.10` adds the optional `tiers`: every tier one Worker offers, lowest
+  first, each once ([ADR-0073](../decisions/adr/0073-agent-workers-offer-tiers-per-role-with-quota-per-model.md)),
+  for an agent role that declares a model per tier. Each entry names its `tier`, and may carry
+  `pools` (the ledger pools a run at that tier draws on; absent: every pool of its account) and
+  `closed` (its model's limit closes that tier now while the others stay open), with `until` when
+  it is expected back, when known. `tier` stays the lowest offered. Routing serves the Worker at the
+  lowest offered tier within a requirement's bounds that is not closed, and never names a model
+  ([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)); absent, the Worker offers `tier`
+  alone. A record carrying it below `@1.10` is refused. Readers accept 1.0 to 1.10. Example:
+  [`capability-descriptor.tiers.json`](../../schemas/examples/capability-descriptor.tiers.json).
+- `capability-descriptor@1.11` adds, to each `tiers` entry, the optional `label` (its model's display
+  label as the live profile gives it; for people only, never a routing input) and `maxTurns` (the
+  turn limit a run at that tier gets). Readers accept 1.0 to 1.11.
 - `capability-descriptor@1.12` adds the optional `expectedBack` (date-time): when its source expects
   to know again whether a Worker whose `state` is `unavailable` takes work, because it is
   unavailable only for a while that passes by itself (an agent runtime's late probe: its next result
