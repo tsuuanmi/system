@@ -19,6 +19,11 @@ describe('the runner\'s arguments (T247)', () => {
     expect(splitArgs(['group', 'surfaces', '--reporter=dot'])).toEqual({ command: 'group', rest: ['surfaces'], extra: ['--reporter=dot'] })
     // A misspelt group is still a name, and still refused.
     expect(splitArgs(['group', 'survaces'])).toEqual({ command: 'group', rest: ['survaces'], extra: [] })
+    // `related`: the files end at the first option other than its own `--dry-run`, with or without `--`.
+    expect(splitArgs(['related', 'a.ts', '--silent', '--reporter=dot'])).toEqual({ command: 'related', rest: ['a.ts'], extra: ['--silent', '--reporter=dot'] })
+    expect(splitArgs(['related', 'a.ts', '--dry-run', 'b.ts', '--silent'])).toEqual({ command: 'related', rest: ['a.ts', '--dry-run', 'b.ts'], extra: ['--silent'] })
+    expect(splitArgs(['related', 'a.ts', '--', '--silent'])).toEqual({ command: 'related', rest: ['a.ts'], extra: ['--silent'] })
+    expect(splitArgs(['related', '--silent'])).toEqual({ command: 'related', rest: [], extra: ['--silent'] })
     // `affected` keeps its own options: only `--` gives vitest anything.
     expect(splitArgs(['affected', '--base', 'main'])).toEqual({ command: 'affected', rest: ['--base', 'main'], extra: [] })
   })
@@ -129,7 +134,8 @@ describe('related tests (T299)', () => {
     expect(changedSince('main', repo)).toContain('package.json')
   })
 
-  it('leaves out the browser specs a change does not touch (T305): a workflow-only change selects none, a provider-chatgpt-web change its own, an edited spec itself', () => {
+  it('leaves out the browser specs a change does not touch (T305): a workflow-only change selects none, a provider-chatgpt-web change its own, an edited spec itself', { timeout: 60_000 }, () => {
+    // It reads every spec file of the suite several times: the default 5 s fails on a loaded host (T331's landing).
     const browser = browserSpecs()
     expect(browser).toContain('packages/plugins/workflow/tests/team-votes.spec.ts')
     expect(browser).toContain('packages/plugins/turns/tests/profiles.spec.ts')

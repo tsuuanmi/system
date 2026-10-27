@@ -10,7 +10,7 @@
  *   groups the files changed since `<ref>` (default `origin/main`, else `main`) affect, committed or
  *   not, and nothing more. Under a check (`SYSTEM_CHECK_SCOPE`, set by agent-workers, T299) it runs
  *   instead the tests related to those files (`acceptance`) or the whole suite (`landing`).
- * - `node --import tsx scripts/test-groups.ts related <file>… [--dry-run] [-- <vitest args>]`: run the test
+ * - `node --import tsx scripts/test-groups.ts related <file>… [--dry-run] [--] [<vitest args>]`: run the test
  *   files related to those files (T299): each given test file, and for any other file the tests of
  *   its package and of every package that depends on it; the whole suite when a file is shared
  *   configuration (`package.json`, the lockfile, `tsconfig*.json`, `vitest*.ts`).
@@ -407,14 +407,20 @@ function runFor(filterList: string[], changed: readonly string[], every: boolean
 /**
  * The command, its own arguments, and vitest's (after `--`). A runner may drop the `--` (a package
  * runner's `run <script> -- …`): for `group`, the group names then end at the first argument that is
- * an option or a path (none is a group's name), and the rest are vitest's.
+ * an option or a path (none is a group's name), and the rest are vitest's; for `related`, the files
+ * end at the first option (its own `--dry-run` aside).
  */
 export function splitArgs(argv: readonly string[]): { command: string | undefined; rest: string[]; extra: string[] } {
   const split = argv.indexOf('--')
   if (split >= 0) return { command: argv[0], rest: argv.slice(1, split), extra: argv.slice(split + 1) }
   const [command, ...rest] = argv
+  if (command === 'related') {
+    // The files end at the first option but its own `--dry-run`; the rest are vitest's.
+    const first = rest.findIndex((arg) => arg.startsWith('-') && arg !== '--dry-run')
+    return first < 0 ? { command, rest, extra: [] } : { command, rest: rest.slice(0, first), extra: rest.slice(first) }
+  }
   if (command !== 'group') return { command, rest, extra: [] }
-  const end = rest.findIndex((arg) => arg.startsWith('-') || /[/.]/.test(arg))
+  const end =rest.findIndex((arg) => arg.startsWith('-') || /[/.]/.test(arg))
   return end < 0 ? { command, rest, extra: [] } : { command, rest: rest.slice(0, end), extra: rest.slice(end) }
 }
 
@@ -449,7 +455,7 @@ function main(argv: string[]): number {
     const option = given.find((arg) => arg.startsWith('-'))
     if (!given.length || option) {
       console.error(option ? `unknown option ${option}` : 'no file given')
-      console.error('usage: test-groups.ts related <file>… [--dry-run] [-- <vitest args>]')
+      console.error('usage: test-groups.ts related <file>… [--dry-run] [--] [<vitest args>]')
       return 2
     }
     return runRelated(given.map((file) => relative(root, resolve(root, file)).split(sep).join('/')), rest.includes('--dry-run'), extra)
@@ -482,7 +488,7 @@ function main(argv: string[]): number {
     if (rest.includes('--dry-run')) return 0
     return runFor(result.groups.length === names.length ? [] : result.groups.flatMap((name) => filters(name, all)), changed, rest.includes('--all-browser') || !!result.everything, extra, all)
   }
-  console.error('usage: test-groups.ts group [<name>...] [-- <vitest args>] | affected [--base <ref>] [--all-browser] [--dry-run] [-- <vitest args>] | related <file>… [--dry-run] [-- <vitest args>]')
+  console.error('usage: test-groups.ts group [<name>...] [-- <vitest args>] | affected [--base <ref>] [--all-browser] [--dry-run] [-- <vitest args>] | related <file>… [--dry-run] [--] [<vitest args>]')
   return 2
 }
 
