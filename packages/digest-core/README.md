@@ -1,6 +1,6 @@
 # @tsuuanmi/system-digest-core
 
-Digest **seam definition**
+Digest **seam definition**, and the one request engine both providers run on
 ([plugin model](../../docs/architecture/plugin-model.md#seam-catalog), plugin rule 2;
 [digests](../../docs/design/digests.md)). A capability seam of the digest family: its contract
 changes by a versioned definition and this conformance suite
@@ -8,12 +8,22 @@ changes by a versioned definition and this conformance suite
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.digests` | abstract `Digests` with `request({ sources, key? })`, `get(requestId)`, `wait(requestId, timeoutMs)`; `DigestRequest`, `DigestView`, `DigestState`, `DigestBody`, `DigestClaim`, `DigestError`, `DIGEST_LIMITS`; the quote check `quoteCheck(draft, sources, read, maxClaims)` (with why there is no digest, `QuoteFailure`), the one escalation `escalation(request, check, answer)` (`ESCALATION_TIER`), and the settling decision `settlement(request, outcome)` every provider applies; the MCP tools every provider serves, `registerDigestTools(ctx, digests)` (`digests_request`, `digests_get`; `DIGEST_TOOLS`, `DIGEST_TOOL_INPUTS`, `digestToolHandlers`, `digestTool`); `DIGESTS_CONTRACT` (1.2); `checkedRequest`, which runs a request's `check` | [`digest`](../plugins/digest/README.md) (on `ctx.store`, its row on); [`digest-extractive`](../plugins/digest-extractive/README.md) (on `ctx.store`, extractive-first, its row off); the fake `FakeDigests` |
+| `ctx.digests` | abstract `Digests` with `request({ sources, key? })`, `get(requestId)`, `wait(requestId, timeoutMs)`; `DigestRequest`, `DigestView`, `DigestState`, `DigestBody`, `DigestClaim`, `DigestError`, `DIGEST_LIMITS`; the quote check `quoteCheck(draft, sources, read, maxClaims)` (with why there is no digest, `QuoteFailure`), the one escalation `escalation(request, check, answer)` (`ESCALATION_TIER`), and the settling decision `settlement(request, outcome)` every provider applies; the MCP tools every provider serves, `registerDigestTools(ctx, digests)` (`digests_request`, `digests_get`; `DIGEST_TOOLS`, `DIGEST_TOOL_INPUTS`, `digestToolHandlers`, `digestTool`); `DIGESTS_CONTRACT` (1.2); `checkedRequest`, which runs a request's `check`; the request engine `DigestEngine(ctx, spec)` (`DigestSpec`, `DigestRow`) | [`digest`](../plugins/digest/README.md) (its row on); [`digest-extractive`](../plugins/digest-extractive/README.md) (extractive-first, its row off); the fake `FakeDigests` |
 
 - The types mirror `digest@1.0` and `mcp-digests@1.1`; the schemas in `schemas/` are canonical.
   It depends on Cordis, [`libs`](../libs/README.md) (`bodyText`, the text a quote is checked
   against, which a brief renders too; the schema registry), and the `ctx.mcp` definition in
   [`gateway-core`](../gateway-core/README.md) with `zod` (a peer), for the tools.
+- **The request engine** (`DigestEngine`, [`src/engine.ts`](src/engine.ts)) is what the two
+  providers share: a request durable in the provider's own table, driven under a lease, routed
+  through `ctx.workers` to a read-only Worker on a tier, its answer quote-checked, the one
+  escalation, and the settling decision, with a restart picking up each pending request where it
+  stood (INV-4). A provider gives it a `DigestSpec`: its table and id prefix, the tier and bounds,
+  `prepare` (the preamble and brief, and an `extract` its table records, if it has the column) and
+  `accept` (how the answer is read into a quote check). The engine therefore consumes the
+  `ctx.store`, `ctx.artifacts`, `ctx.leases` and `ctx.workers` definitions, and the optional
+  `ctx.eventLog` (`digests.settled`); `leases` and the other plugin packages are imported for their
+  types and for `LeaseLost` and `StaleGeneration`, the errors a lost lease raises.
 - **The MCP tools** belong to the seam, not to a provider: each provider registers them through
   `registerDigestTools` from `ctx.inject(['mcp'], …)`, so replacing the provider keeps the lead's
   tools as they are. Each call's input and structured output are checked against

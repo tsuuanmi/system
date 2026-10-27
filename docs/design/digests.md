@@ -34,9 +34,11 @@ Worker writes it; code keeps only the claims whose quotes are verbatim in the ar
 The definition also holds what every provider applies the same way: the quote check
 (`quoteCheck`), the one escalation (`escalation`, contract 1.1), the decision that settles a
 request (`settlement`), and the MCP tools `digests_*` (`registerDigestTools`), so replacing the
-provider keeps the lead's tools. A provider depends on
-seam definitions only: `ctx.workers` for its Worker, `ctx.artifacts` for what it reads and
-writes. It cooperates with the core by artifacts.
+provider keeps the lead's tools. It also holds the one request engine (`DigestEngine`): durable
+requests, the lease, routing, the quote check, the escalation and the settling, run for both
+providers. A provider depends on seam definitions only: it gives the engine its table, its
+preamble and brief (`prepare`) and how it reads an answer (`accept`). It cooperates with the core
+by artifacts.
 
 ## A request
 

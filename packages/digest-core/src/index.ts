@@ -11,6 +11,7 @@
 import { type Context, Service } from '@deepseek-ai/cordis'
 import { bodyText, clampText, SchemaRegistry } from '@tsuuanmi/system-libs'
 
+export { DigestEngine, type DigestRow, type DigestSpec } from './engine.ts'
 export { DIGEST_TOOL_INPUTS, DIGEST_TOOLS, type DigestTool, digestTool, digestToolHandlers, registerDigestTools } from './tools.ts'
 
 declare module '@deepseek-ai/cordis' {

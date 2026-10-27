@@ -296,25 +296,31 @@ importers:
 
   packages/digest-core:
     dependencies:
-      '@tsuuanmi/system-gateway-core':
-        specifier: workspace:*
-        version: link:../gateway-core
-      '@tsuuanmi/system-libs':
-        specifier: workspace:*
-        version: link:../libs
-    devDependencies:
-      '@deepseek-ai/cordis':
-        specifier: 4.0.5-alpha.1
-        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
       '@tsuuanmi/system-artifacts':
         specifier: workspace:*
         version: link:../plugins/artifacts
+      '@tsuuanmi/system-event-log':
+        specifier: workspace:*
+        version: link:../plugins/event-log
+      '@tsuuanmi/system-gateway-core':
+        specifier: workspace:*
+        version: link:../gateway-core
+      '@tsuuanmi/system-leases':
+        specifier: workspace:*
+        version: link:../plugins/leases
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../libs
       '@tsuuanmi/system-store':
         specifier: workspace:*
         version: link:../plugins/store
       '@tsuuanmi/system-workers-core':
         specifier: workspace:*
         version: link:../workers-core
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
       zod:
         specifier: ^4.6.6
         version: 4.6.7

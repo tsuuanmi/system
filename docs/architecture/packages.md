@@ -30,9 +30,9 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [board](../../packages/plugins/board/README.md) | orchestration | `board` | `board` | `store`, `artifacts`, `leases`, `approvals`, `eventLog` (optional), `mcp` (optional) | `approvals-core`, `board-core`, `gateway-core`, `leases`, `libs` |
 | [board-core](../../packages/board-core/README.md) | orchestration | defines `board` | — | — | `approvals-core` |
 | [decision-core](../../packages/decision-core/README.md) | orchestration | defines `dispatchAdvisor` | — | — | `libs` |
-| [digest](../../packages/plugins/digest/README.md) | orchestration | `digests` | `digest` | `store`, `artifacts`, `leases`, `workers`, `eventLog` (optional), `mcp` (optional) | `digest-core`, `gateway-core`, `leases`, `libs`, `workers-core` |
-| [digest-core](../../packages/digest-core/README.md) | orchestration | defines `digests` | — | — | `gateway-core`, `libs` |
-| [digest-extractive](../../packages/plugins/digest-extractive/README.md) | orchestration | `digests` | `digest-extractive` | `store`, `artifacts`, `leases`, `workers`, `eventLog` (optional), `mcp` (optional) | `digest-core`, `gateway-core`, `leases`, `libs`, `workers-core` |
+| [digest](../../packages/plugins/digest/README.md) | orchestration | `digests` | `digest` | `store`, `artifacts`, `leases`, `workers`, `mcp` (optional) | `digest-core`, `gateway-core`, `libs`, `workers-core` |
+| [digest-core](../../packages/digest-core/README.md) | orchestration | defines `digests` | — | `eventLog` (optional) | `gateway-core`, `leases`, `libs`, `workers-core` |
+| [digest-extractive](../../packages/plugins/digest-extractive/README.md) | orchestration | `digests` | `digest-extractive` | `store`, `artifacts`, `leases`, `workers`, `mcp` (optional) | `digest-core`, `gateway-core`, `libs`, `workers-core` |
 | [evaluations-core](../../packages/evaluations-core/README.md) | orchestration | defines `evaluations` | — | — | `experiments-core`, `libs` |
 | [experiments-core](../../packages/experiments-core/README.md) | orchestration | defines `experiments` | — | — | `libs` |
 | [landing-core](../../packages/landing-core/README.md) | orchestration | defines `landing` | — | — | — |
@@ -105,6 +105,7 @@ flowchart TB
     board["board<br/>ctx.board"]
     decision_core["decision-core<br/>defines dispatchAdvisor"]
     digest["digest<br/>ctx.digests"]
+    digest_core["digest-core<br/>defines digests"]
     digest_extractive["digest-extractive<br/>ctx.digests"]
     landing_local["landing-local<br/>ctx.landing"]
     profile_scientific_research["profile-scientific-research"]
@@ -182,13 +183,12 @@ flowchart TB
   digest --> artifacts
   digest --> leases
   digest --> workers
-  digest -.-> event_log
   digest -.-> mcp_server
+  digest_core -.-> event_log
   digest_extractive --> store
   digest_extractive --> artifacts
   digest_extractive --> leases
   digest_extractive --> workers
-  digest_extractive -.-> event_log
   digest_extractive -.-> mcp_server
   egress --> artifacts
   event_log --> store
@@ -438,12 +438,12 @@ flowchart TB
   cli --> system_bundle
   digest --> digest_core
   digest --> gateway_core
-  digest --> leases
   digest --> workers_core
   digest_core --> gateway_core
+  digest_core --> leases
+  digest_core --> workers_core
   digest_extractive --> digest_core
   digest_extractive --> gateway_core
-  digest_extractive --> leases
   digest_extractive --> workers_core
   display_virtual --> provider_core
   egress --> provider_core
