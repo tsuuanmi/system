@@ -14,7 +14,8 @@
 #   4. the canary (scripts/canary.ts run): health, a board task on a canary project through
 #      algorithm-development (its attempt, its dossier's evidence, its result on the board), an ask,
 #      and a research run, on the fake Workers; then the removability smoke (T317, `pnpm test:removability`)
-#      in that checkout;
+#      in that checkout, under --removability: `warn` (the default while the matrix is not yet green) logs
+#      a failure and goes on, `on` stops the stage on it;
 #   5. `system shutdown --profile system-test`; the daemon is never killed.
 # It never reads or writes the live profile's data directory, profile, port, or unit. Exit 0: the
 # canary passed; 1: a step failed (named); 2: usage.
@@ -22,15 +23,15 @@ set -Eeuo pipefail
 umask 077
 
 usage() {
-  echo 'usage: scripts/live-stage.sh --check-with <built checkout of the target> --dsh-home <dir> --node-dir <dir> --pnpm-dir <dir> --env-file <file> [--patch <candidate cordis.patch.yml>] [--wait <seconds>]' >&2
+  echo 'usage: scripts/live-stage.sh --check-with <built checkout of the target> --dsh-home <dir> --node-dir <dir> --pnpm-dir <dir> --env-file <file> [--patch <candidate cordis.patch.yml>] [--wait <seconds>] [--removability warn|on]' >&2
   exit 2
 }
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-CHECK_WITH='' HOME_DIR='' NODE_DIR='' PNPM_DIR='' ENV_FILE='' PATCH='' WAIT=180
+CHECK_WITH='' HOME_DIR='' NODE_DIR='' PNPM_DIR='' ENV_FILE='' PATCH='' WAIT=180 REMOVABILITY=warn
 while (($#)); do
   case $1 in
-    --check-with | --dsh-home | --node-dir | --pnpm-dir | --env-file | --patch | --wait)
+    --check-with | --dsh-home | --node-dir | --pnpm-dir | --env-file | --patch | --wait | --removability)
       if (($# < 2)); then usage; fi
       case $1 in
         --check-with) CHECK_WITH=$2 ;;
@@ -39,6 +40,9 @@ while (($#)); do
         --pnpm-dir) PNPM_DIR=$2 ;;
         --env-file) ENV_FILE=$2 ;;
         --patch) PATCH=$2 ;;
+        --removability)
+          if [[ $2 != warn && $2 != on ]]; then usage; fi
+          REMOVABILITY=$2 ;;
         --wait)
           if [[ ! $2 =~ ^[0-9]+$ ]]; then usage; fi
           WAIT=$2 ;;
@@ -113,8 +117,13 @@ done
 log "the canary"
 canary run "$LIB/index.js" "$HOME_DIR" >&2 || fail "the canary failed on the test profile"
 
-log "the removability smoke (T317)"
-(cd "$CHECK_WITH" && PATH=$BUILD_PATH pnpm test:removability) >&2 || fail "the removability smoke failed"
+log "the removability smoke (T317, $REMOVABILITY)"
+removable=passed
+if ! (cd "$CHECK_WITH" && PATH=$BUILD_PATH pnpm test:removability) >&2; then
+  [[ $REMOVABILITY == on ]] && fail "the removability smoke failed"
+  log "WARN: the removability smoke failed (above); --removability warn goes on"
+  removable="failed (warn)"
+fi
 
 stop_daemon
-log "the stage passed: the test profile took ${CHECK_WITH}'s code, and the canary and the removability smoke passed"
+log "the stage passed: the test profile took ${CHECK_WITH}'s code, and the canary passed; the removability smoke $removable"

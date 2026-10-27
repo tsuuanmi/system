@@ -4,11 +4,14 @@ The `fake` Worker source (T323): scripted Workers for the `system-test` profile,
 (`scripts/live-stage.sh`) runs `ask`, `research`, and `algorithm-development` with no website or
 agent account. It is off in the bundle; the test profile's patch turns it on.
 
-- Workers `fake:economy`, `fake:standard`, `fake:frontier` (`reason`, `develop`), and `fake:developer`,
-  `fake:reviewer`, `fake:reviewer-2` (the roles a review needs).
+- Workers `fake:economy`, `fake:standard`, `fake:frontier` (`reason`, `develop`), `fake:developer`,
+  `fake:reviewer`, `fake:reviewer-2` (the roles a review needs), and `fake:researcher` (`reason`,
+  `web-search`, for a research run's literature reviews), in two families (`fake-a`, `fake-b`), so a
+  step that must differ from another finds a Worker that does.
 - Every execution completes on the next turn of the event loop: an approving review for a step that
-  names a subject, a vote on each important finding of a verification step, otherwise the prompt
-  echoed. Results are `provider-answer@1.0` artifacts.
+  names a subject, a vote on each important finding of a verification step, an answer that passes
+  each step of the `research` template (its hypotheses and evidence table as their schemas, reviews
+  citing a link, a conclusion naming H1 and citing [E1]), otherwise the prompt echoed. Results are `provider-answer@1.0` artifacts.
 - For a writing step of a board task's run (develop), it first appends an `evidence` entry to the
   task's dossier through `ctx.workflow.appendToDossier`, as a writing Worker does, saying it ran no
   command, so the step's evidence gate passes on what it really did. The engine refuses that entry for

@@ -22,27 +22,51 @@ const PROVES = ['reason', 'develop']
 const TIERS: readonly Tier[] = ['economy', 'standard', 'frontier']
 
 /** What each fake Worker proves: one per tier for `reason` and `develop`, then the roles a team or a review needs. */
-const WORKERS: ReadonlyArray<{ id: string; tier: Tier; proves: string[] }> = [
-  ...TIERS.map((tier) => ({ id: `fake:${tier}`, tier, proves: PROVES })),
-  { id: 'fake:developer', tier: 'standard', proves: ['reason', 'develop', 'local-data', 'persistent-conversation', 'dossier', 'review'] },
-  { id: 'fake:reviewer', tier: 'standard', proves: ['review', 'local-data'] },
-  { id: 'fake:reviewer-2', tier: 'standard', proves: ['review', 'local-data'] },
+// Two families, so a step that must differ from another (a second review, review B, the critique) finds a Worker that does.
+const WORKERS: ReadonlyArray<{ id: string; tier: Tier; family: string; proves: string[] }> = [
+  ...TIERS.map((tier) => ({ id: `fake:${tier}`, tier, family: 'fake-b', proves: PROVES })),
+  { id: 'fake:developer', tier: 'standard', family: 'fake-a', proves: ['reason', 'develop', 'local-data', 'persistent-conversation', 'dossier', 'review'] },
+  { id: 'fake:reviewer', tier: 'standard', family: 'fake-a', proves: ['review', 'local-data'] },
+  { id: 'fake:reviewer-2', tier: 'standard', family: 'fake-b', proves: ['review', 'local-data'] },
+  { id: 'fake:researcher', tier: 'standard', family: 'fake-a', proves: ['reason', 'web-search'] },
 ]
+
+/** The one source every scripted research answer cites. */
+const SOURCE_URL = 'https://example.org/system-canary-source'
+const json = (value: unknown): string => '```json\n' + JSON.stringify(value) + '\n```'
+
+/**
+ * A step of the scientific-research template (`research`), told by its prompt's instruction, so the
+ * canary's research run passes each step's acceptance: the hypotheses and the evidence table as
+ * their schemas, the reviews with a source link, the conclusion naming H1 and citing [E1].
+ */
+function research(prompt: string): string | undefined {
+  if (prompt.includes('Conclude the study:')) return `H1: insufficient evidence, low confidence, resting on [E1]; reviews A and B agree. ${SOURCE_URL}`
+  if (prompt.includes('Extract one evidence table')) {
+    return json({ schema: 'evidence-table@1.1', evidence: [{ id: 'E1', claim: 'A scripted claim for the canary.', source: SOURCE_URL, reviews: ['A', 'B'], bears: [{ hypothesis: 'H1', direction: 'neutral' }], strength: 'weak' }] })
+  }
+  if (prompt.includes('Review the published evidence on the question')) return `A scripted review for the canary: no real evidence, one placeholder source, ${SOURCE_URL}.`
+  if (prompt.includes('Frame the research question')) {
+    const question = /^Question: (.+)$/m.exec(prompt)?.[1] ?? 'the canary question'
+    return json({ schema: 'hypothesis-set@1.0', question, hypotheses: [{ id: 'H1', statement: 'A scripted hypothesis for the canary.', supportIf: 'a source supports it', refuteIf: 'a source refutes it' }] })
+  }
+  return undefined
+}
 
 /** A verification step's answer: a `confirm` on every important finding it lists, naming the subject it was given. */
 function verification(prompt: string): string | undefined {
   if (!prompt.includes('## Verify these findings')) return undefined
   const subject = /^Verified subject: (\S+)$/m.exec(prompt)?.[1]
   const votes = [...prompt.matchAll(/^- (f\d+) important:/gm)].map((m) => ({ finding: m[1], vote: 'confirm', reason: 'scripted confirm' }))
-  return '```json\n' + JSON.stringify({ subject, votes }) + '\n```'
+  return json({ subject, votes })
 }
 
 /** The scripted answer to a rendered prompt. */
 export function answerTo(prompt: string): string {
-  const voted = verification(prompt)
+  const voted = verification(prompt) ?? research(prompt)
   if (voted !== undefined) return voted
   const subject = /^Subject: (\S+)$/m.exec(prompt)?.[1]
-  if (subject) return '```json\n' + JSON.stringify({ subject, verdict: 'approve', findings: [{ severity: 'nit', title: 'nothing to change', file: 'README.md' }] }) + '\n```'
+  if (subject) return json({ subject, verdict: 'approve', findings: [{ severity: 'nit', title: 'nothing to change', file: 'README.md' }] })
   return `answer: ${prompt.slice(0, 80)}`
 }
 
@@ -94,7 +118,7 @@ export function fakeSource(ctx: Context): WorkerSource {
     describe: async () => {
       const at = new Date().toISOString()
       return WORKERS.map((w): CapabilityDescriptor => ({
-        schema: 'capability-descriptor@1.0', worker: w.id, provider: SOURCE, tier: w.tier, quotaClass: 'local', locality: 'local',
+        schema: 'capability-descriptor@1.1', worker: w.id, provider: SOURCE, family: w.family, tier: w.tier, quotaClass: 'local', locality: 'local',
         capabilities: w.proves.map((capability) => ({ capability, evidence: { kind: 'conformance', at } })),
         state: 'ready', observedAt: at,
       }))

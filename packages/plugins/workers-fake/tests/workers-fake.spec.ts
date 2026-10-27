@@ -86,6 +86,31 @@ describe('the fake Worker source (T323)', () => {
     }
   })
 
+  it('answers each step of the research template so its acceptance passes: typed hypotheses and evidence, cited reviews, a cited conclusion', async () => {
+    const { ctx, dispose } = await boot()
+    try {
+      const put = (text: string) => ctx.artifacts.put({
+        kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'operator-shared', producer: { type: 'system', ref: 'test' },
+        body: { schema: 'provider-answer@1.0', provider: 'fake', account: 'fake', turnId: 't', conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text },
+      }).id as `sha256:${string}`
+      const frame = FakeWorkers.answerTo('Frame the research question below as 2 to 4 testable hypotheses.\n\nQuestion: what is two plus two?')
+      expect(ctx.workers.accept(put(frame), 'acceptance.answer', { resultSchema: 'hypothesis-set@1.0' })).toMatchObject({ accepted: true })
+      expect(frame).toContain('what is two plus two?')
+      // The later prompts carry the earlier answers: the step is told by its instruction, not by a schema it quotes.
+      const evidence = FakeWorkers.answerTo(`Extract one evidence table from the two independent literature reviews below.\n<hypotheses>\n${frame}\n</hypotheses>`)
+      expect(ctx.workers.accept(put(evidence), 'acceptance.answer', { resultSchema: 'evidence-table@1.1' })).toMatchObject({ accepted: true })
+      const review = FakeWorkers.answerTo(`Review the published evidence on the question and hypotheses below.\n\n${frame}`)
+      expect(ctx.workers.accept(put(review), 'acceptance.cited')).toMatchObject({ accepted: true })
+      const conclusion = FakeWorkers.answerTo(`Conclude the study: for each hypothesis (H1, H2, ...), state whether...\n<evidence>\n${evidence}\n</evidence>`)
+      expect(conclusion).toMatch(/\bH1\b/)
+      expect(conclusion).toMatch(/\[E1\]/)
+      const listed = await ctx.workers.list()
+      expect(listed.find((w) => w.worker === 'fake:researcher')!.capabilities.map((c) => c.capability)).toEqual(expect.arrayContaining(['reason', 'web-search']))
+    } finally {
+      await dispose()
+    }
+  })
+
   it('appends its evidence for a board task\'s step before it completes, as its writing Worker does, and goes on when the engine refuses it', async () => {
     const appended: Appended[] = []
     const writing = await boot({ workflow: { appended } })
