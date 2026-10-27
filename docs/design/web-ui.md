@@ -146,12 +146,15 @@ checks it.
 
 ## The page's files
 
-The page is three files in `packages/plugins/web-ui/client/`, not strings in server code (PROP-0018 T15,
-T303): `index.html` (the shell), `app.css` (the styles), and `app.ts` (the script, TypeScript with the DOM
-lib, so the linter, the type checker, and the dead-code check read it). The package's build compiles
-`app.ts` with `tsc` (no bundler) to `lib/client/app.js` and copies the other two beside it. The server
-(`clientDir`, default `lib/client/`) reads the three once at start, refuses to start when one is missing,
-and serves each as its bytes with its sha256 content hash as its `ETag`, `no-store`, and the same strict
+The page is all TypeScript, none of it a hand-written HTML, CSS, or JS file (PROP-0018 T15, T303, T304; D102):
+`src/ui/shell.ts` (`renderShell`, the shell as a function whose scripts and stylesheets are typed inputs, each
+with an optional subresource-integrity hash and CSP nonce), `src/ui/styles/` (the design tokens as typed
+constants in `tokens.ts`, a `css` template helper, and the rules in `base.ts` and `pages.ts`, joined by
+`stylesheet` into `APP_CSS`), and `client/app.ts` (the script, TypeScript with the DOM lib, so the linter, the
+type checker, and the dead-code check read it). The server renders the shell and the stylesheet at start (same
+input, same bytes) and reads the script that the package's build compiles with `tsc` (no bundler) to
+`lib/client/app.js` (`clientDir`, default `lib/client/`); it refuses to start when the script is missing, and
+serves each as its bytes with its sha256 content hash as its `ETag`, `no-store`, and the same strict
 content security policy. `app.ts` is still the old script, typed enough to compile (`any` where needed,
 `TODO(T304)`; the client is compiled under `strict` with nothing turned off, so T304 types what is still `any`), served as a
 classic script; the parts that follow split it into modules. Tests build the client into a temporary
@@ -161,7 +164,7 @@ directory and pass it as `clientDir`: they never write into the package.
 
 In the spirit of Anthropic's and Google Material 3's product UIs: calm neutral surfaces, one accent
 colour, thin borders, no shadows. Every colour, space, type size, and radius is one of the tokens
-below. They are written once as CSS variables at the top of `app.css`, and the rest of the
+below. They are written once as CSS variables at the top of the stylesheet (`src/ui/styles/tokens.ts`), and the rest of the
 stylesheet uses only them. `tests/layout.spec.ts` checks every margin, padding, gap, and font size.
 
 | Tokens | Light | Dark | For |
