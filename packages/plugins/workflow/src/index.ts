@@ -371,6 +371,16 @@ export class Workflow extends Service {
     return this.projectOf(runId, new Set())
   }
 
+  /**
+   * The project a session belongs to: that of the run it was made for, else of its first run.
+   * Undefined for a session of no project and for an unknown one: no lead reaches it.
+   */
+  async projectOfSession(sessionId: string): Promise<string | undefined> {
+    const origin = this.engine.ctx.workerSessions.session(sessionId)?.runId
+      ?? (this.engine.ctx.store.db.prepare('SELECT run_id FROM workflow_runs WHERE session_id = ? ORDER BY created_at, run_id LIMIT 1').get(sessionId) as { run_id: string } | undefined)?.run_id
+    return origin === undefined ? undefined : this.projectOfRun(origin)
+  }
+
   /** The project of a board task, as the board holds it; undefined when there is no board or no such task. */
   async projectOfTask(taskId: string): Promise<string | undefined> {
     return (await this.engine.board?.task(taskId))?.projectId

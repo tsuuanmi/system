@@ -124,6 +124,25 @@ describe('a lead token reaches only its own project (T285)', () => {
     expect(await seen(OPERATOR)).toEqual([own, theirs, untagged].sort())
   })
 
+  it('continues a session only within its own project, on ask and run alike', async () => {
+    const { ctx, call } = await boot()
+    const first = runIdOf(await call('ask', { prompt: 'q', persist: true, waitSeconds: 0 }, asLead('p1')))
+    const sessionId = ctx.workflow.get(first)!.sessionId!
+    expect(sessionId).toBeTruthy()
+    expect(await ctx.workflow.projectOfSession(sessionId)).toBe('p1')
+    const before = ctx.workflow.usage().length
+    for (const [name, args] of [['ask', { prompt: 'q2', sessionId, waitSeconds: 0 }], ['run', { template: 'solo', input: 'q2', sessionId, waitSeconds: 0 }]] as const) {
+      const refused = await call(name, args, asLead('p2'))
+      expect(refused.isError, name).toBe(true)
+      expect(refused.content[0]!.text, name).toMatch(refusal('p2', 'p1'))
+    }
+    expect(ctx.workflow.usage()).toHaveLength(before)
+    expect((await call('ask', { prompt: 'q2', sessionId, waitSeconds: 0 }, asLead('p1'))).isError).toBeFalsy()
+    expect((await call('ask', { prompt: 'q3', sessionId, waitSeconds: 0 }, OPERATOR)).isError).toBeFalsy()
+    // An unknown session is no project's: refused to a lead.
+    expect((await call('ask', { prompt: 'q', sessionId: 'ses-none', waitSeconds: 0 }, asLead('p1'))).content[0]!.text).toMatch(refusal('p1', undefined))
+  })
+
   it('reads a task\'s dossier only for its own project', async () => {
     const { ctx, call } = await boot()
     await activeProject(ctx, 'p1')
