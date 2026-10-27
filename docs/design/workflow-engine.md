@@ -1716,10 +1716,16 @@ flowchart TD
   used share) with headroom above `quota.reservePercent`; not metered (D65); its account below
   `maxRunningPerAccount` and its repository (the Worker's workspace) below
   `maxRunningPerRepository` (D64), counting dispatched runs not finished and asks open or approved.
-  A Worker that names no account, a pool configured `unknown: available` with no reading, or a ledger
-  without `quota()` is never free.
+  A Worker that names no account, or a ledger without `quota()`, is never free.
+- **Unread** (T294): an account every window of which has no reading yet, in pools configured
+  `unknown: available`, is admitted at a bound instead: at most `maxRunningUnreadPerAccount` (default
+  1) dispatched runs or asks on the account, counted like the other bounds. It is ordered after every
+  account with a reading, whatever its tier (key `unread` of `quota-score@2`), and its choice
+  records "unread, admitted at the unread bound". A reading of any of its windows replaces the bound:
+  it is judged by its windows, like any account. A stale, `unknown`, or `limited` reading is a
+  reading: it is not unread. The roster says the account is unread.
 - **Bounds** (INV-9), counted from the rows each pass: `maxRunning`, `maxRunningPerProject`,
-  `maxRunningPerAccount`, `maxRunningPerRepository`, `maxOpenAsks`, `maxPerPass`, and the
+  `maxRunningPerAccount`, `maxRunningUnreadPerAccount`, `maxRunningPerRepository`, `maxOpenAsks`, `maxPerPass`, and the
   `leaveRunsFree` of `maxActiveRuns` dispatch never fills. An ask open or approved counts as the run it
   would be, so approving every ask never passes a bound. A task that writes a subject another task
   holds (claimed, running, in review) or has a live ask on is not taken (board rule 6, INV-15; the

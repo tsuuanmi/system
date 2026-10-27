@@ -65,7 +65,7 @@ interface Booted {
   read: (account: string, used: number, resetsIn?: number, age?: number) => Promise<void>
 }
 
-async function boot(options: { workflow?: Config; accounts?: string[]; sandbox?: (worker: string) => WorkerSandbox | undefined; policy?: AutonomyPolicy; quota?: Record<string, number> } = {}): Promise<Booted> {
+async function boot(options: { workflow?: Config; accounts?: string[]; sandbox?: (worker: string) => WorkerSandbox | undefined; policy?: AutonomyPolicy; quota?: Record<string, number>; availableUnknown?: string[] } = {}): Promise<Booted> {
   const dir = mkdtempSync(join(tmpdir(), 'system-workflow-dispatch-'))
   const ctx = new Context()
   const workers = new ScriptedWorkers()
@@ -78,7 +78,7 @@ async function boot(options: { workflow?: Config; accounts?: string[]; sandbox?:
     ctx.plugin({ name: 'scripted-workers', inject: ['workers', 'artifacts'], apply: (c: Context) => void c.workers.register({ ...workers.source(c), ...(options.sandbox ? { sandbox: options.sandbox } : {}) }) }),
     ctx.plugin(StoreApprovals, { policies: [options.policy ?? POLICY], sweepSeconds: 3600 }),
     ctx.plugin(StoreBoard, { sweepSeconds: 0 }),
-    ctx.plugin(StoreResources, { pools: accounts.map(pool), ...(options.quota ? { quota: options.quota } : {}) }),
+    ctx.plugin(StoreResources, { pools: accounts.map((a) => ({ ...pool(a), ...(options.availableUnknown?.includes(a) ? { unknown: 'available' as const } : {}) })), ...(options.quota ? { quota: options.quota } : {}) }),
   ]
   await Promise.all(fibers)
   let engine = ctx.plugin(Workflow, config)
@@ -379,6 +379,74 @@ describe('the dispatch pass (ADR-0064, REQ-WF-16)', () => {
     expect(reason).toMatch(/stale/)
     expect(reason).toMatch(/used 70 %, no headroom above the 30 % reserve/)
     expect(await dispatchRequests(ctx)).toHaveLength(0)
+  })
+
+  it('starts a task whose only Workers are on an unread pool, one run at a time; once its run ends the next starts; a reading replaces the bound (T294)', async () => {
+    // maxRunningPerAccount 2, above the unread bound of 1: only the unread bound can hold the second task back.
+    const { ctx, workers, read } = await boot({ policy: withDispatch('auto'), accounts: ['acc-w'], availableUnknown: ['acc-w'], workflow: { dispatch: { maxPerPass: 4, maxRunningPerProject: 4, maxRunningPerAccount: 2, maxPerHour: 10, maxPerHourPerProject: 10 } } })
+    workers.extra = [agent('agent:acc-w/develop', 'acc-w'), agent('agent:acc-w/develop-2', 'acc-w')]
+    const onAccount = (worker: string): boolean => worker.startsWith('agent:acc-w/')
+    // The first has one attempt, so once its run ends it is done, never ready again to take the account's slot.
+    const [a, b] = [await ready(ctx, 'first', { maxAttempts: 1 }), await ready(ctx, 'second')]
+    // The first starts: its run is admitted, and its writing step is sent to a Worker of the unread account.
+    const pass = await ctx.workflow.sweepDispatch()
+    expect(pass.took.map((t) => [t.taskId, t.how])).toEqual([[a.taskId, 'started']])
+    const first = (await ctx.board.task(a.taskId))!
+    expect(first.state).toBe('running')
+    const firstRun = first.run!.runId
+    await vi.waitFor(() => expect(workers.started.filter((s) => s.runId === firstRun)).toHaveLength(1), { timeout: 30_000 })
+    expect(onAccount(workers.started.find((s) => s.runId === firstRun)!.worker)).toBe(true)
+    const choice = decisionOf(ctx, (JSON.parse((ctx.store.db.prepare('SELECT dispatch FROM workflow_tasks WHERE run_id = ?').get(firstRun) as { dispatch: string }).dispatch) as { decisions: string[] }).decisions[1])
+    expect(choice.candidates.find((c) => c.selected)!.reasons[0]).toMatch(/^unread, admitted at the unread bound \(0 of 1/)
+    // While it runs, the second waits on the unread bound, though a second Worker of the account is idle.
+    await ctx.workflow.sweepDispatch()
+    expect((await ctx.board.task(b.taskId))!.state).toBe('ready')
+    expect(reasonOf(ctx.workflow.dispatchStatus(), b.taskId)).toMatch(/unread: its account has 1 dispatched run\(s\) or ask\(s\), the unread bound is 1/)
+    expect(reasonOf(ctx.workflow.dispatchStatus(), b.taskId)).not.toMatch(/dispatch\.maxRunningPerAccount/)
+    expect(workers.started.filter((s) => s.runId !== firstRun)).toEqual([])
+    // The first run ends: the second starts, still at the bound, on the unread account.
+    await ctx.workflow.stop(firstRun, 'the test ends it')
+    // Once its end reaches dispatch's rows, a pass starts the second (each try sweeps again; no fixed wait).
+    await vi.waitFor(async () => {
+      await ctx.workflow.sweepDispatch()
+      expect((await ctx.board.task(b.taskId))!.state, `${reasonOf(ctx.workflow.dispatchStatus(), b.taskId)} | rows of the first: ${JSON.stringify(rowsOf(ctx, a.taskId))}`).toBe('running')
+    }, { timeout: 30_000 })
+    expect(ctx.workflow.get(firstRun)!.status).not.toBe('running')
+    const second = (await ctx.board.task(b.taskId))!
+    const secondRun = second.run!.runId
+    await vi.waitFor(() => expect(workers.started.filter((s) => s.runId === secondRun)).toHaveLength(1), { timeout: 30_000 })
+    expect(onAccount(workers.started.find((s) => s.runId === secondRun)!.worker)).toBe(true)
+    // A third waits on the bound while the second runs; a reading with headroom replaces the bound, and it starts beside the second.
+    const c = await ready(ctx, 'third')
+    await ctx.workflow.sweepDispatch()
+    expect(reasonOf(ctx.workflow.dispatchStatus(), c.taskId)).toMatch(/the unread bound is 1/)
+    await read('acc-w', 0)
+    await ctx.workflow.sweepDispatch()
+    const third = (await ctx.board.task(c.taskId))!
+    expect(third.state, reasonOf(ctx.workflow.dispatchStatus(), c.taskId)).toBe('running')
+    expect(ctx.workflow.get(secondRun)!.status).toBe('running')
+    const thirdChoice = decisionOf(ctx, (JSON.parse((ctx.store.db.prepare('SELECT dispatch FROM workflow_tasks WHERE run_id = ?').get(third.run!.runId) as { dispatch: string }).dispatch) as { decisions: string[] }).decisions[1])
+    expect(thirdChoice.candidates.find((x) => x.selected)!.reasons[0]).toBe('free: every window has headroom above the 20 % reserve')
+    // A reading with no headroom holds it back like any other account's.
+    await read('acc-w', 90)
+    const d = await ready(ctx, 'fourth')
+    await ctx.workflow.sweepDispatch()
+    expect(reasonOf(ctx.workflow.dispatchStatus(), d.taskId)).toMatch(/used 90 %, no headroom above the 20 % reserve/)
+  })
+
+  it('starts on a read pool with headroom before an unread one, whatever their tiers (T294)', async () => {
+    const { ctx, workers, read } = await boot({ policy: withDispatch('auto'), accounts: ['acc-r', 'acc-w'], availableUnknown: ['acc-w'] })
+    // The unread Worker has the lower admissible tier, which routing's tier key alone would prefer.
+    workers.extra = [agent('agent:acc-w/develop', 'acc-w'), agent('agent:acc-r/develop', 'acc-r', { tier: 'frontier' })]
+    await read('acc-r', 10)
+    const task = await ready(ctx, 'read first')
+    const pass = await ctx.workflow.sweepDispatch()
+    expect(pass.took.map((t) => [t.taskId, t.worker, t.how])).toEqual([[task.taskId, 'agent:acc-r/develop', 'started']])
+    const runId = (await ctx.board.task(task.taskId))!.run!.runId
+    await vi.waitFor(() => expect(workers.started.filter((s) => s.runId === runId)).toHaveLength(1), { timeout: 30_000 })
+    expect(workers.started.find((s) => s.runId === runId)!.worker).toBe('agent:acc-r/develop')
+    const choice = decisionOf(ctx, (JSON.parse((ctx.store.db.prepare('SELECT dispatch FROM workflow_tasks WHERE run_id = ?').get(runId) as { dispatch: string }).dispatch) as { decisions: string[] }).decisions[1])
+    expect(choice.candidates.find((c) => c.option === 'agent:acc-w/develop')!.reasons.join(' ')).toMatch(/is unread, admitted only at the unread bound, so it comes after every account with headroom/)
   })
 
   it('starts an attempt the operator approved through the board\'s gate with no second button, recorded as such (D62)', async () => {

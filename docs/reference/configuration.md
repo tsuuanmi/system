@@ -632,6 +632,7 @@ No options.
 | `dispatch.maxRunning` | number (1…10000) |  | Dispatched runs not finished, with the asks open or approved, at most (at most maxActiveRuns less leaveRunsFree; default 8, or that when less) |
 | `dispatch.maxRunningPerProject` | number (1…16) | `2` | The same, per project |
 | `dispatch.maxRunningPerAccount` | number (1…16) | `1` | The same, per account of the chosen Worker; and the most its account's load may be for it to be free |
+| `dispatch.maxRunningUnreadPerAccount` | number (1…16) | `1` | Dispatched runs or asks at most on an account none of whose windows has a reading yet (its pool is configured unknown: available); it is ordered after every account with headroom, and a reading replaces this bound (T294) |
 | `dispatch.maxRunningPerRepository` | number (1…16) | `4` | The same, per repository (the chosen writing Worker's workspace): tasks without a write subject on one repository run in parallel up to this (D64) |
 | `dispatch.leaveRunsFree` | number (0…10000) |  | Active runs dispatch leaves for the lead's and your own starts (at most maxActiveRuns less 1; default 4, or that when less) |
 | `dispatch.maxOpenAsks` | number (1…32) | `4` | Dispatch requests open at once, waiting for your go |

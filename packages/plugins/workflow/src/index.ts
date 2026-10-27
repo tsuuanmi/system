@@ -166,6 +166,7 @@ export class Workflow extends Service {
       maxRunning: z.natural().min(1).max(10_000).description('Dispatched runs not finished, with the asks open or approved, at most (at most maxActiveRuns less leaveRunsFree; default 8, or that when less)'),
       maxRunningPerProject: z.natural().min(1).max(16).default(2).description('The same, per project'),
       maxRunningPerAccount: z.natural().min(1).max(16).default(1).description('The same, per account of the chosen Worker; and the most its account\'s load may be for it to be free'),
+      maxRunningUnreadPerAccount: z.natural().min(1).max(16).default(1).description('Dispatched runs or asks at most on an account none of whose windows has a reading yet (its pool is configured unknown: available); it is ordered after every account with headroom, and a reading replaces this bound (T294)'),
       maxRunningPerRepository: z.natural().min(1).max(16).default(4).description('The same, per repository (the chosen writing Worker\'s workspace): tasks without a write subject on one repository run in parallel up to this (D64)'),
       leaveRunsFree: z.natural().max(10_000).description('Active runs dispatch leaves for the lead\'s and your own starts (at most maxActiveRuns less 1; default 4, or that when less)'),
       maxOpenAsks: z.natural().min(1).max(32).default(4).description('Dispatch requests open at once, waiting for your go'),

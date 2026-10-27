@@ -86,6 +86,8 @@ export interface DispatchSettings {
   maxRunning: number
   maxRunningPerProject: number
   maxRunningPerAccount: number
+  /** The most dispatched runs or asks on an account whose windows have no reading yet (T294). */
+  maxRunningUnreadPerAccount: number
   maxRunningPerRepository: number
   leaveRunsFree: number
   maxOpenAsks: number
@@ -101,7 +103,7 @@ export interface DispatchSettings {
 
 const RANGES: Record<Exclude<keyof DispatchConfig, 'enabled' | 'maxRunning' | 'leaveRunsFree' | 'maxPerHourPerProject' | 'advisor'>, readonly [number, number, number]> = {
   sweepSeconds: [10, 3600, 60], maxPerPass: [1, 16, 2], maxRunningPerProject: [1, 16, 2], maxRunningPerAccount: [1, 16, 1],
-  maxRunningPerRepository: [1, 16, 4], maxOpenAsks: [1, 32, 4], approvedHoldMinutes: [1, 240, 30], maxPerHour: [0, 120, 6],
+  maxRunningUnreadPerAccount: [1, 16, 1], maxRunningPerRepository: [1, 16, 4], maxOpenAsks: [1, 32, 4], approvedHoldMinutes: [1, 240, 30], maxPerHour: [0, 120, 6],
 }
 
 /**
@@ -139,7 +141,7 @@ export function dispatchSettings(config: Config): DispatchSettings {
   const pick = (key: keyof typeof RANGES): number => given[key] ?? RANGES[key][2]
   return {
     enabled: given.enabled ?? true, sweepSeconds: pick('sweepSeconds'), maxPerPass: pick('maxPerPass'), maxRunning: given.maxRunning ?? Math.min(8, active - leave),
-    maxRunningPerProject: pick('maxRunningPerProject'), maxRunningPerAccount: pick('maxRunningPerAccount'), maxRunningPerRepository: pick('maxRunningPerRepository'),
+    maxRunningPerProject: pick('maxRunningPerProject'), maxRunningPerAccount: pick('maxRunningPerAccount'), maxRunningUnreadPerAccount: pick('maxRunningUnreadPerAccount'), maxRunningPerRepository: pick('maxRunningPerRepository'),
     leaveRunsFree: leave, maxOpenAsks: pick('maxOpenAsks'), approvedHoldMinutes: pick('approvedHoldMinutes'), maxPerHour: pick('maxPerHour'),
     maxPerHourPerProject: given.maxPerHourPerProject ?? Math.min(3, pick('maxPerHour')), maxActiveRuns: active, advisor: advisorSettings(given.advisor),
   }
@@ -965,6 +967,8 @@ export class Dispatcher {
         worker: w.worker, ...(refused.length ? { refused } : {}), tier, tierRank: TIERS.indexOf(tier), quotaClass: w.quotaClass,
         quotaRank: rank(look.order.quota, w.quotaClass), metered, ...(w.load ? { load: w.load } : {}), priorityRank: rank(look.order.priority, w.worker),
         pools: accountPools as readonly QuotaPool[] | { unknown: string } | undefined, ...(busy.length ? { busy } : {}),
+        // An account none of whose windows has a reading is admitted at this bound; a reading replaces it (T294).
+        unreadBound: { running: used, limit: s.maxRunningUnreadPerAccount },
       }
     })
     return { score: quotaScoreOf(inputs, settings, at), inputs, accountOf, repositoryOf }

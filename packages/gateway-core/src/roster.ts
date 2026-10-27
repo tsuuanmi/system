@@ -106,6 +106,8 @@ export interface RosterPool {
   readings: Array<{ window: { id: string }; state: 'ok' | 'limited' | 'unknown'; usedPercentage?: number | undefined; resetsAt?: string | undefined; cooldownUntil?: string | undefined; source: string; observedAt: string }>
   available: boolean
   until?: string | undefined
+  /** How the pool is configured when a window has no reading (`unknown: available` makes it available; T294). */
+  unknown?: 'available' | 'unavailable' | undefined
 }
 /** A workflow run as the engine's usage view gives it. */
 export interface RosterRun {
@@ -400,16 +402,22 @@ function reasonOf(d: RosterDescriptor, rec: RosterAccountRecord | undefined, rec
   return unknown(`its Worker source gives no reason${isKnown(record) ? '' : `, and its account could not be read (${record.unknown})`}; system explain on a run it was refused for shows the route's reasons`)
 }
 
+/** What the roster's `used` says of a window of an unread pool (T294); capacity reads the pool as unread from it. */
+export const UNREAD_MARK = 'unread, admitted at the unread bound'
+
 /**
  * A pool's windows as the roster shows them. A window with no reading yet says, for the operator, why
  * its account's last usage report could not be read (`unread`), when that is the latest read of it.
  */
 function windowsOf(p: RosterPool, unread: { why: string; at: string } | undefined): RosterWindow[] {
   const none = unread ? `no reading yet: its account's usage report could not be read at ${unread.at}: ${unread.why}` : 'no reading yet'
+  // A pool configured `unknown: available` with no reading of any window is unread: dispatch admits it at the unread bound (T294).
+  // One read window makes it judged by its readings, so no window of it is marked then.
+  const bound = p.unknown === 'available' && p.readings.length === 0 ?` (${UNREAD_MARK}: dispatch admits it one run at a time, after every account with headroom)` : ''
   return p.windows.map((w) => {
     const r = p.readings.find((reading) => reading.window.id === w.id)
     const base = { id: w.id, kind: w.kind, ...(w.seconds !== undefined ? { seconds: w.seconds } : {}) }
-    if (!r) return { ...base, state: 'unknown' as const, used: unknown<number>(none), resets: unknown<string>('no reading yet') }
+    if (!r) return { ...base, state: 'unknown' as const, used: unknown<number>(none + bound), resets: unknown<string>('no reading yet') }
     const reset = later(r.resetsAt, r.cooldownUntil)
     return {
       ...base, state: r.state, observedAt: r.observedAt, source: r.source,

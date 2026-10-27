@@ -179,7 +179,10 @@ choice, every route's order, and the roster's capacity now all read it.
   Routing and the roster read the defaults then (the 20 % reserve), so the order still keeps it.
 - A window with no reading, a stale, `unknown`, or `limited` one, one with no used share, or one
   whose reading is from before its reset is not known, and a pool configured `unknown: available`
-  is never read as having headroom.
+  is never read as having headroom. Such a pool with no reading at all is **unread**: dispatch
+  admits its account at a bound (`dispatch.maxRunningUnreadPerAccount`, one run at a time), after
+  every account with headroom, so a website Worker that has never been read still takes work
+  (T294); a reading replaces the bound.
 - **The canonical gauge** of an account is the windows its pool lists, which the operator
   configures. A Claude Code plan's pool lists only its five-hour window (operator D70): its weekly
   windows are not read into headroom
