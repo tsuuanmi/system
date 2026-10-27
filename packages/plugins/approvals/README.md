@@ -67,6 +67,13 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
     `operator` on the request's own subject and an `approval` decision, with the request's move.
     A malformed verdict, or a named request whose stored record fails its schema, refuses the
     whole call before any verdict applies.
+  - `decideAsLead(project, verdicts, at?)` (ADR-0076, T273): a project's lead gives verdicts on its own
+    token (`system lead-token issue`), recorded with the decider `lead:<project>`, never the operator's.
+    The rights are a closed list the code checks (`leadMayDecide`): the commands and dispatch starts of
+    the lead's project, and merges into the project's `devBranches` (config; `main` and `master` are
+    refused there). A verdict outside the list, or on a request of another project, refuses the whole
+    call (`forbidden`, with the reason) and decides nothing. `devBranches(project)` and
+    `projectOfRequest(request)` serve it.
   - `withdraw(requestId, at?)`: rejects an unresolved request with cause `withdrawn`; a resolved
     one is returned unchanged; an unknown one is refused (`unknown-request`).
   - `sweep(at)`: rejects every unresolved request whose expiry has come, cause `expired`, with
@@ -149,7 +156,9 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
   (optional): the `sha256:` hash of the stored set this configuration replaces, read only at a
   start where that set no longer matches the configuration; `repeatedApprovals` (optional, off
   unless `enabled`): `approvals` (3 to 100, default 5) and `windowSeconds` (3600 to 7776000,
-  default 604800), when the queue proposes a change from repeated approvals. At load, a policy the schema
+  default 604800), when the queue proposes a change from repeated approvals; `devBranches`
+  (optional): `{<projectId>: [<branch>, …]}`, where the project's lead may decide merges and results
+  ([runbook](../../../docs/operations/runbooks.md#give-a-projects-lead-its-own-token)). At load, a policy the schema
   refuses, two rules for one action class, a rule giving a class in `ALWAYS_ASK` `auto` or
   `notify` (a 1.0 policy's `remediation` or `merge`: a merge always asks, D56), an `expiry.defaultSeconds` or a rule's
   `expiresSeconds` above `expiry.maxSeconds`, a commands entry with an empty word or a shell

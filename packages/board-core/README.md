@@ -9,7 +9,8 @@ Work state machine **seam definition**
 |---|---|---|
 | `ctx.board` | abstract `Board` with `charter(input, at?)`, `project`, `projects`, `pause`, `resume`, `close`, `propose(input, at?)`, `task`, `tasks`, `claim`, `renew`, `start`, `submit`, `accept`, `reconcileRun`, `block` (its optional `funding`, 1.2, and `unreleased`, 1.3), `answer`, `cancel`, `sweep(at)`, and the optional `attachDigest(taskId, digest, at?)` (1.1) and `reopen(taskId, back, at?)` (1.4); `Project`, `Charter`, `Milestone`, `BoardTask`, `Funding`, `UnreleasedHold`, `Reopening`, `CharterInput`, `TaskInput`, `Claim`, `RunOutcome` (its failed run's optional `infrastructure`, 1.5), `InfrastructureFailure`, `BoardError`; `TERMINAL`, `fundingVersion`, `UNRELEASED_MAX`, `REOPEN_REASON_MAX`, `unreleasedProblem`, `unreleasedText`, `INFRASTRUCTURE_KINDS`, `INFRASTRUCTURE_REASON_MAX`, `infrastructureProblem`, `FREE_RETRIES_DEFAULT`, `FREE_RETRIES_MAX`, `freeRetriesOf`, `BOARD_CONTRACT` (1.5) | the fake `FakeBoard`; the store-backed [`board`](../plugins/board/README.md) |
 
-- The types mirror `project@1.0` and `board-task@1.1`; the schemas in `schemas/` are canonical.
+- The types mirror `project@1.0` and `board-task@1.2` (its `defect` link, `Defect`, set by the optional
+  `linkDefect`, beyond the contract versions, T277b); the schemas in `schemas/` are canonical.
 - `block` takes, from 1.2, an optional `funding` on a `budget-spent` wait: the lines the holder
   asks to raise the task's budget by. `fundingVersion(contentId)` is the version of the subject
   that binds a funding request to those lines (`budget-spent:<sha256 of their canonical JSON>`);
