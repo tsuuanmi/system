@@ -63,7 +63,7 @@ says "the lead's", the lead does it in its own session, which System does not ga
 
 | Id | Rule | Check |
 |---|---|---|
-| LD19 | Pause dispatch; hold the lead's own starts; wait for running steps; build the candidate in its own checkout; dry run, then apply; on failure it rolls back; verify that every Worker that took work before takes it again ([live update](runbooks.md#update-the-live-install-from-e218ae7-to-the-base-release)). | `live-update.sh` (dispatch pause, the wait for running steps, the Workers' check, the rollback); the lead's own starts: **none** |
+| LD19 | Pause dispatch; hold the lead's own starts; wait for running steps; build the candidate in its own checkout; dry run, then `--stage` (never a bare `--apply`: the same code and patch run on the `system-test` profile with a canary first, and a mechanism newly switched on goes the same way, T323); on failure it rolls back; verify that every Worker that took work before takes it again ([live update](runbooks.md#update-the-live-install-from-e218ae7-to-the-base-release)). | `live-update.sh` (dispatch pause, the wait for running steps, the Workers' check, the rollback); the lead's own starts: **none** |
 | LD20 | A paused automatic update is read and acted on the same day, never unpaused unread ([runbook](runbooks.md#update-the-live-install-automatically)). | **none** |
 
 ## 7. Filing a task

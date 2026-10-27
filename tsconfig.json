@@ -162,6 +162,9 @@
       "@tsuuanmi/system-lead-inbox": [
         "packages/plugins/lead-inbox/src/index.ts"
       ],
+      "@tsuuanmi/system-workers-fake": [
+        "packages/plugins/workers-fake/src/index.ts"
+      ],
       "@tsuuanmi/system-report": [
         "packages/plugins/report/src/index.ts"
       ],

@@ -15,7 +15,7 @@ importing another, `value` when any of its imports is a value import, `type` whe
 |---|---|---|
 | kernel: libraries, the host, and the `*-core` seam definitions | 19 | `agent-runtime-core`, `approvals-core`, `board-core`, `cli`, `decision-core`, `digest-core`, `feedback-core`, `gateway-core`, `gateway-turns`, `landing-core`, `ledger-core`, `libs`, `models-core`, `plugin-host-core`, `provider-core`, `resources-core`, `system-bundle`, `ui-ops`, `workers-core` |
 | guarantee: guarantee providers: the required rows | 15 | `approvals`, `artifacts`, `board`, `credentials-vault`, `egress`, `event-log`, `landing-local`, `leases`, `plugin-host`, `resources`, `store`, `turn-receipts`, `worker-sessions`, `workers`, `workflow` |
-| capability: capability plugins | 17 | `accounts`, `agent-runtimes`, `agent-workers`, `browser-patchright`, `digest`, `digest-extractive`, `display-virtual`, `login`, `models`, `provider-chatgpt-web`, `provider-gemini-web`, `providers`, `runtime-acp`, `runtime-antigravity-cli`, `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `turns` |
+| capability: capability plugins | 18 | `accounts`, `agent-runtimes`, `agent-workers`, `browser-patchright`, `digest`, `digest-extractive`, `display-virtual`, `login`, `models`, `provider-chatgpt-web`, `provider-gemini-web`, `providers`, `runtime-acp`, `runtime-antigravity-cli`, `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `turns`, `workers-fake` |
 | surface: surfaces | 7 | `gateway-anthropic`, `gateway-responses`, `lead-inbox`, `mcp-server`, `notify`, `report`, `web-ui` |
 | profile: profiles | 2 | `profile-scientific-research`, `profile-software-development` |
 
@@ -27,15 +27,15 @@ Packages importing packages, importer by row, imported by column; each cell is v
 |---|---|---|---|---|---|
 | kernel | 15 / 6 | 0 / 1 | 1 / 0 | · | · |
 | guarantee | 39 / 11 | 1 / 0 | · | · | · |
-| capability | 50 / 14 | 0 / 1 | 1 / 3 | · | · |
+| capability | 51 / 16 | 0 / 1 | 1 / 3 | · | · |
 | surface | 18 / 12 | 0 / 1 | · | · | · |
 | profile | 2 / 1 | 1 / 2 | · | · | · |
 
 ## Counts
 
-- 60 packages: 19 kernel, 15 guarantee, 17 capability, 7 surface, 2 profile.
-- 180 package-to-package edges (128 value, 52 type); 12 of them end in a plugin (4 value, 8 type).
-- 11 violations (3 value, 8 type) in 7 of 41 plugins: 7 import a guarantee provider (`guarantee-provider`), 4 import another plugin outside its family (`plugin-to-plugin`).
+- 61 packages: 19 kernel, 15 guarantee, 18 capability, 7 surface, 2 profile.
+- 183 package-to-package edges (129 value, 54 type); 12 of them end in a plugin (4 value, 8 type).
+- 11 violations (3 value, 8 type) in 7 of 42 plugins: 7 import a guarantee provider (`guarantee-provider`), 4 import another plugin outside its family (`plugin-to-plugin`).
 
 ## Edges that end in a plugin
 

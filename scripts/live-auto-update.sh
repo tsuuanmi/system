@@ -12,7 +12,7 @@
 #     with every check run and commit status on GitHub completed with success (`gh api`: no gh, no
 #     sign-in, or a check still running is a wait; a failed one is a refusal);
 #   - the target built in its own check checkout (never the live one), then live-update.sh from
-#     there: a dry run, then --apply. The profile's patch is never changed (no --patch).
+#     there: a dry run, then --stage (the test profile first, then --apply's steps). The profile's patch is never changed (no --patch).
 # A stop the operator must look at (a refused dry run, an update stopped or rolled back, a target
 # that does not build, not a fast-forward) writes the pause file with the reason and exits 1, so the
 # unit's OnFailure= notifier runs once; the operator removes the file to resume. Every pass appends
@@ -152,7 +152,8 @@ main() {
   local status=0
   "${update[@]}" >>"$OUT" 2>&1 || status=$?
   if ((status)); then pause_self "the dry run refused ${TARGET:0:12} (exit $status): the output says why (the live patch fails the target's system check, say)"; fi
-  "${update[@]}" --apply >>"$OUT" 2>&1 || status=$?
+  # --stage (T323): the system-test profile and its canary first, the live install only when they pass.
+  "${update[@]}" --stage >>"$OUT" 2>&1 || status=$?
   case $status in
     0) outcome updated "the live install runs origin/$BRANCH ${TARGET:0:12} (from ${FROM:0:12}); notes: $OUT" ;;
     1) pause_self "the update to ${TARGET:0:12} stopped or rolled back (exit 1): the live install stays at ${FROM:0:12}" ;;

@@ -72,6 +72,7 @@ export default defineConfig({
       '@tsuuanmi/system-landing-local': src('./packages/plugins/landing-local/src/index.ts'),
       '@tsuuanmi/system-digest': src('./packages/plugins/digest/src/index.ts'),
       '@tsuuanmi/system-digest-extractive': src('./packages/plugins/digest-extractive/src/index.ts'),
+      '@tsuuanmi/system-workers-fake': src('./packages/plugins/workers-fake/src/index.ts'),
       '@tsuuanmi/system-report': src('./packages/plugins/report/src/index.ts'),
       '@tsuuanmi/system-resources-core': src('./packages/resources-core/src/index.ts'),
       '@tsuuanmi/system-resources': src('./packages/plugins/resources/src/index.ts'),

@@ -57,7 +57,7 @@ export const GROUPS: Readonly<Record<string, Group>> = {
   },
   workers: {
     about: 'routing and the Worker sources behind it: agent runtimes and agent Workers, and model Workers',
-    packages: ['workers-core', 'workers', 'agent-runtime-core', 'agent-runtimes', 'runtime-claude-agent-sdk', 'runtime-codex-sdk', 'runtime-acp', 'runtime-antigravity-cli', 'agent-workers', 'models-core', 'models'],
+    packages: ['workers-core', 'workers', 'agent-runtime-core', 'agent-runtimes', 'runtime-claude-agent-sdk', 'runtime-codex-sdk', 'runtime-acp', 'runtime-antigravity-cli', 'agent-workers', 'workers-fake', 'models-core', 'models'],
   },
   websites: {
     about: 'website Workers: the provider runtime, the display and the browser, accounts and login, the drivers and their fake sites, and turns',

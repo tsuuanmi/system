@@ -58,6 +58,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [runtime-claude-agent-sdk](../../packages/plugins/runtime-claude-agent-sdk/README.md) | capabilities | — | `runtime-claude-agent-sdk` | `agentRuntimes` | `agent-runtime-core`, `libs`, `provider-core` |
 | [runtime-codex-sdk](../../packages/plugins/runtime-codex-sdk/README.md) | capabilities | — | `runtime-codex-sdk` | `agentRuntimes` | `agent-runtime-core`, `libs`, `provider-core` |
 | [turns](../../packages/plugins/turns/README.md) | capabilities | `turns` | `turns` | `store`, `artifacts`, `leases`, `egress`, `turnReceipts`, `accounts`, `browser`, `providers`, `workers`, `eventLog` (optional), `login` (optional), `mcp` (optional) | `board-core`, `gateway-core`, `ledger-core`, `libs`, `provider-core`, `workers-core` |
+| [workers-fake](../../packages/plugins/workers-fake/README.md) | capabilities | — | `workers-fake` | `artifacts`, `workers`, `workflow` (optional) | `ledger-core`, `libs`, `workers-core` |
 | [accounts](../../packages/plugins/accounts/README.md) | provider runtime | `accounts` | `accounts` | `credentials` | `libs`, `provider-core` |
 | [browser-patchright](../../packages/plugins/browser-patchright/README.md) | provider runtime | `browser` | `browser` | `display`, `eventLog` (optional) | `libs`, `provider-core` |
 | [display-virtual](../../packages/plugins/display-virtual/README.md) | provider runtime | `display` | `display` | — | `libs`, `provider-core` |
@@ -129,6 +130,7 @@ flowchart TB
     runtime_claude_agent_sdk["runtime-claude-agent-sdk"]
     runtime_codex_sdk["runtime-codex-sdk"]
     turns["turns<br/>ctx.turns"]
+    workers_fake["workers-fake"]
   end
   subgraph provider_runtime ["provider runtime"]
     accounts["accounts<br/>ctx.accounts"]
@@ -305,6 +307,9 @@ flowchart TB
   worker_sessions -.-> workflow
   workers --> artifacts
   workers -.-> resources
+  workers_fake --> artifacts
+  workers_fake --> workers
+  workers_fake -.-> workflow
   workflow --> store
   workflow --> artifacts
   workflow --> event_log
@@ -352,6 +357,8 @@ policy above it. Each such edge is listed here so a new one is a visible change.
 | `turns` (capabilities) | `mcp` | `mcp-server` (gateways) | optional |
 | `turns` (capabilities) | `workers` | `workers` (routing) | required |
 | `worker-sessions` (orchestration) | `mcp` | `mcp-server` (gateways) | optional |
+| `workers-fake` (capabilities) | `workers` | `workers` (routing) | required |
+| `workers-fake` (capabilities) | `workflow` | `workflow` (orchestration) | optional |
 | `workflow` (orchestration) | `mcp` | `mcp-server` (gateways) | optional |
 
 ## Library imports
@@ -407,6 +414,7 @@ flowchart TB
     runtime_claude_agent_sdk["runtime-claude-agent-sdk"]
     runtime_codex_sdk["runtime-codex-sdk"]
     turns["turns<br/>ctx.turns"]
+    workers_fake["workers-fake"]
   end
   subgraph provider_runtime ["provider runtime"]
     accounts["accounts<br/>ctx.accounts"]
@@ -548,6 +556,8 @@ flowchart TB
   worker_sessions --> ledger_core
   workers --> ledger_core
   workers --> workers_core
+  workers_fake --> ledger_core
+  workers_fake --> workers_core
   workflow --> approvals_core
   workflow --> board_core
   workflow --> decision_core

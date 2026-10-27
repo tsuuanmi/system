@@ -178,6 +178,7 @@
         "paths": [
           "packages/workers-core/",
           "packages/plugins/workers/",
+          "packages/plugins/workers-fake/",
           "packages/decision-core/",
           "packages/plugins/workflow/src/dispatch.ts",
           "packages/plugins/workflow/src/advisor.ts"

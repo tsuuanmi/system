@@ -28,6 +28,7 @@
     "@tsuuanmi/system-display-virtual": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-workers": "workspace:*",
+    "@tsuuanmi/system-workers-fake": "workspace:*",
     "@tsuuanmi/system-agent-runtimes": "workspace:*",
     "@tsuuanmi/system-agent-workers": "workspace:*",
     "@tsuuanmi/system-runtime-claude-agent-sdk": "workspace:*",

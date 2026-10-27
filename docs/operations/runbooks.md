@@ -1771,6 +1771,42 @@ through that checkout's `packages/cli/lib/bin.js mcp-headers`. [`scripts/live-up
 takes it to the Base release (the merged `main`): the [upgrade with drain](#upgrade-with-drain),
 each step checked, rolled back when one fails. It is a dry run unless `--apply`.
 
+**This is the way to update live: on the test profile first** (operator, 2026-10-27, D108; T323).
+Run `scripts/live-update.sh --stage <commit> --check-with <built checkout of the commit> [--patch …]`,
+not `--apply`: `--stage` implies `--apply`, and before `system` is captured, paused, or stopped
+(it only reads the live patch, when no `--patch` is given), it updates and checks the `system-test`
+profile with the same code and the same patch (`scripts/live-stage.sh`), and updates `system` only
+when that passes. If the stage fails,
+`system` and its unit are untouched, the output says which step failed, and the test daemon's log is
+`~/.dsh/system-test.log`. The automatic update ([below](#update-the-live-install-automatically)) stages
+too. `--apply` alone is only the live steps: use it for a retry of an update the stage already passed.
+
+- **The test profile** is made by `system init --profile system-test` (the stage runs it) beside
+  `system`, under the same `$DSH_HOME/profiles`. It has its own data directory, `~/.dsh/system-test`
+  (store, vault and its key, tokens, discovery file; never `~/.dsh/system`), and its own port, 47318
+  (the live profile's is 47317). It composes the live profile's bundles: its manifest is the live
+  one's (the preset layer and every bundle added with `dsh plugin add`), refreshed at each `init`; a
+  test profile is refused while there is no live one. Its patch is every entry of the live patch,
+  rows it inserts included, with the test profile's own on top: every row that signs in to a website
+  or an agent account is off (`accounts`, `login`, `turns`, `browser`, `display`, the providers, the
+  agent runtimes and `agent-workers`), and so is an inserted row of one of their packages, so no
+  account the live profile uses is opened a second time (one context per account, never shared); a
+  patch entry that neither sets a row nor inserts rows stops the stage (update by hand). Workers are
+  the scripted `fake` Worker source ([`workers-fake`](../../packages/plugins/workers-fake/README.md), a bundle row that is off
+  except here) and the API model rows the patch carries. Other `system` commands act on it with
+  `--profile system-test` (`system start`, `check`, `health`, `ask`, `shutdown`, …).
+- **The canary** (`scripts/canary.ts`) runs on the staged daemon: health; a board task through
+  `algorithm-development` (a `canary-<time>` project, its charter approved as the operator, one task,
+  and one attempt of it started with `run … task`: its claim, its steps, the dossier's evidence gate,
+  which the fake writing Worker passes with an entry saying it ran no command, and its result on the
+  board, in review or done); an `ask`; a `research` run; each to completion on the fake Workers; then
+  the [removability smoke](../engineering/testing.md#removability-matrix) (`pnpm test:removability`,
+  T317) in the target's checkout.
+- **A mechanism switched on** (a row turned on in the live patch, or a setting changed: T322) is
+  switched on in the test profile first, the canary run, then on live: put it in the candidate patch
+  and update with `--stage … --patch <candidate>`. Nothing is switched on in `system` that the stage
+  has not run.
+
 **What changes.**
 
 - **The store.** Base's migrations run at its first start, per owner, each in one transaction. Every

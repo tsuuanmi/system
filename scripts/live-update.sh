@@ -42,14 +42,19 @@ umask 077
 
 usage() {
   cat <<'EOF'
-usage: scripts/live-update.sh <target sha> [--apply] [--check-with <built checkout of the target>]
+usage: scripts/live-update.sh <target sha> [--stage | --apply] [--check-with <built checkout of the target>]
          [--patch <candidate cordis.patch.yml>] [--from <sha>] [--live <checkout>] [--dsh-home <dir>]
          [--node-dir <dir>] [--pnpm-dir <dir>] [--backups <dir>] [--new-workers <prefix,...>]
          [--workers-wait <seconds>] [--runs-wait <minutes>] [--runs-every <seconds>] [--cut-running | --no-cut]
          [--cut-deadline <seconds>]
 
-A dry run unless --apply. --apply needs --check-with: the profile is checked against the target's
-code before anything is stopped. Before the stop it pauses dispatch (unless paused or off already),
+A dry run unless --apply. --stage <commit> is the way to update the live install (T323): it updates
+and checks the system-test profile first, with the target's code and the same patch (the test
+profile has its own data directory and port, no website or agent account, and the conformance
+fakes as Workers), and runs the canary there: a run through algorithm-development, an ask, a
+research run, and the removability smoke. Only when they pass does it go on with --apply's steps on
+`system`; when they fail, `system` is not touched. --apply alone skips the stage (it is the live steps only). --apply needs --check-with: the profile is checked against the
+target's code before anything is stopped. Before the stop it pauses dispatch (unless paused or off already),
 holds steps (each running run finishes the step it is in and starts no next one; released on every
 exit before the stop, ended by the restart after it),
 and waits until no workflow step runs, up to --runs-wait minutes, reading the store (read-only) and
@@ -69,6 +74,7 @@ EOF
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 APPLY=0
+STAGE=0             # T323: the update runs on the system-test profile first (scripts/live-stage.sh); --stage implies --apply
 TARGET_REF=''
 FROM_REF=e218ae7
 LIVE=$HOME/workspaces/system-live
@@ -88,6 +94,7 @@ PATCH_CANDIDATE=''
 while (($#)); do
   case $1 in
     --apply) APPLY=1 ;;
+    --stage) STAGE=1; APPLY=1 ;;
     --cut-running) CUT_RUNNING=1 ;;
     --no-cut) CUT_RUNNING=0 ;;
     --check-with | --patch | --from | --live | --dsh-home | --node-dir | --pnpm-dir | --backups | --new-workers | --workers-wait | --runs-wait | --runs-every | --cut-deadline)
@@ -762,6 +769,15 @@ report_cuts() {
   fi
 }
 
+# The stage (T323): the target's code and the patch to ship on the system-test profile, and its
+# canary, by scripts/live-stage.sh. Nothing of the live profile is read for writing or touched: a
+# failure is a refusal before anything of the live install changed.
+stage() {
+  log "stage: the target's code and the patch on the system-test profile first (canary: algorithm-development, ask, research, the removability smoke)"
+  bash "$SCRIPT_DIR/live-stage.sh" --check-with "$CHECK_WITH" --dsh-home "$DSH_HOME_DIR" --node-dir "$NODE_DIR" --pnpm-dir "$PNPM_DIR" \
+    --env-file "$ENV_FILE" ${PATCH_CANDIDATE:+--patch "$PATCH_CANDIDATE"} 2>&1 | tee -a "$LOG_FILE" >&2
+}
+
 backup() {
   local store=$ATTEMPT/store
   if [[ ! -f $store/system-backup.json ]]; then
@@ -1051,6 +1067,12 @@ if find_attempt && ! reached stopped && ! same_patch; then
   state_set phase set-aside
   ATTEMPT=''
   STATE=''
+fi
+# Staged before anything is stopped, and not again once this update stopped the live daemon.
+if ((STAGE)) && [[ $HEAD_AT == from || -n $ATTEMPT ]] && ! { [[ -n $ATTEMPT ]] && reached stopped; }; then
+  # A refusal the live steps would make anyway comes first: the stage takes minutes.
+  [[ $HEAD_AT == from && -z $ATTEMPT && -z $DAEMON_PID ]] && die "the daemon is not running: start it (systemctl --user start $UNIT), so what it answers can be captured, then run this again"
+  stage || die "the stage failed on the system-test profile (above): $UNIT and the live profile were not touched"
 fi
 if [[ -z $ATTEMPT ]] && ! find_attempt; then
   if [[ $HEAD_AT == target ]]; then

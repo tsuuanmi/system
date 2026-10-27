@@ -17,9 +17,30 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { type DrawFigure, drawFigureText, dshHome, issueLeadToken, leadId, leadTokenFile, listLeads, revokeLeadToken, sqliteRuntimeProblem } from '@tsuuanmi/system-libs'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
+import { TEST_OFF_ROWS, testProfilePatch, testProfilePatchOf } from './test-profile.ts'
+
+export { stagePatch, TEST_OFF_ROWS, TEST_PORT, testProfilePatch, testProfilePatchOf, testRows } from './test-profile.ts'
 
 const require = createRequire(import.meta.url)
-const PROFILE = 'system'
+/** The live profile, and the test profile that every live update runs on first (T323). */
+export const LIVE_PROFILE = 'system'
+export const TEST_PROFILE = 'system-test'
+/** The profile the CLI acts on: `system` unless `--profile <name>` named another (see {@link useProfile}). */
+let PROFILE = LIVE_PROFILE
+
+/** Act on the other profile of this home: its profile directory, its data directory, its daemon. */
+export function useProfile(name: string): void {
+  if (name !== LIVE_PROFILE && name !== TEST_PROFILE) throw new Error(`no such profile '${name}': the profiles are ${LIVE_PROFILE} and ${TEST_PROFILE}`)
+  PROFILE = name
+}
+
+/**
+ * The data directory of the profile the CLI acts on: its store, vault, tokens, and discovery file.
+ * `<home>/system` for the live profile; `<home>/<name>` for another, so two profiles never share one.
+ */
+export function stateDir(home: string = dshHome()): string {
+  return join(home, PROFILE)
+}
 
 /** The `dsh` launcher entry of the pinned DSH installation. */
 function dshBin(): string {
@@ -41,7 +62,7 @@ export function profileDir(home: string = dshHome()): string {
  * Create or refresh the profile: its bundle list is exactly the system bundle, linked from
  * this installation; the operator's own `cordis.patch.yml` is created empty and never overwritten.
  */
-interface ProfileManifest {
+export interface ProfileManifest {
   name?: string
   private?: boolean
   dependencies?: Record<string, string>
@@ -74,11 +95,32 @@ export function mergeProfileManifest(current: Partial<ProfileManifest> | undefin
   const layer = preset === 'default' ? undefined : PRESETS[preset]
   return {
     ...current,
-    name: current?.name ?? 'dsh-profile-system',
+    name: current?.name ?? `dsh-profile-${PROFILE}`,
     private: true,
     dependencies: { ...dependencies, '@tsuuanmi/system-bundle': `link:${bundleDir}`, ...(layer ? { [layer]: `link:${join(bundleDir, 'presets', preset)}` } : {}) },
     dsh: { ...current?.dsh, profile: { ...current?.dsh?.profile, bundles: ['@tsuuanmi/system-bundle', ...(layer ? [layer] : []), ...bundles] } },
   }
+}
+
+/**
+ * The `system-test` profile's manifest (T323): the live profile's own, so the same bundles compose
+ * (its preset layer and every bundle the operator added), linked from this installation as `init`
+ * links any profile, under the test profile's name. `preset` overrides the live one's, as for `init`.
+ */
+export function testProfileManifest(live: Partial<ProfileManifest>, bundleDir: string, preset?: Preset): ProfileManifest {
+  return { ...mergeProfileManifest(live, bundleDir, preset ?? presetOf(live)), name: `dsh-profile-${TEST_PROFILE}` }
+}
+
+/** The packages of the rows the test profile turns off, as this installation's bundle names them: an inserted row of one of them signs in too. */
+export function testOffPackages(bundleDir: string = dirname(require.resolve('@tsuuanmi/system-bundle/package.json'))): Set<string> {
+  const off: readonly string[] = TEST_OFF_ROWS
+  const rows = (parseYaml(readFileSync(join(bundleDir, 'cordis.patch.yml'), 'utf8')) as Array<{ insert?: Array<{ id: string; name?: string }> }>).flatMap((p) => p.insert ?? [])
+  return new Set(rows.filter((r) => off.includes(r.id) && r.name).map((r) => r.name!))
+}
+
+/** The stage's patch of the test profile (scripts/canary.ts patch): the live patch's text as {@link testProfilePatchOf} takes it, with this bundle's off packages. */
+export function stagedTestPatch(state: string, liveText: string): string {
+  return testProfilePatchOf(state, liveText, testOffPackages())
 }
 
 /** Exit status for a child that exited normally or died from a signal (128 + signal number). */
@@ -112,14 +154,23 @@ function readIfPresent(path: string): string | undefined {
  */
 export function init(home: string = dshHome(), preset?: Preset): string {
   const dir = profileDir(home)
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
   const bundleDir = dirname(require.resolve('@tsuuanmi/system-bundle/package.json'))
   const path = join(dir, 'package.json')
-  const current = readIfPresent(path)
-  writeFileSync(path, `${JSON.stringify(mergeProfileManifest(current === undefined ? undefined : JSON.parse(current) as Partial<ProfileManifest>, bundleDir, preset), null, 2)}\n`)
+  let manifest: ProfileManifest
+  if (PROFILE === TEST_PROFILE) {
+    // The test profile composes what the live one does, refreshed from it at every init (T323).
+    const live = readIfPresent(join(home, 'profiles', LIVE_PROFILE, 'package.json'))
+    if (live === undefined) throw new Error(`no ${LIVE_PROFILE} profile under ${home}/profiles to stage: the ${TEST_PROFILE} profile composes the live one's bundles, so run \`system init\` first`)
+    manifest = testProfileManifest(JSON.parse(live) as Partial<ProfileManifest>, bundleDir, preset)
+  } else {
+    const current = readIfPresent(path)
+    manifest = mergeProfileManifest(current === undefined ? undefined : JSON.parse(current) as Partial<ProfileManifest>, bundleDir, preset)
+  }
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`)
   // Created only when absent (`wx`, one atomic step): an operator's file is never overwritten.
   try {
-    writeFileSync(join(dir, 'cordis.patch.yml'), '# Operator overrides for the system profile.\n[]\n', { flag: 'wx' })
+    writeFileSync(join(dir, 'cordis.patch.yml'), PROFILE === TEST_PROFILE ? testProfilePatch(stateDir(home)) : '# Operator overrides for the system profile.\n[]\n', { flag: 'wx' })
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
   }
@@ -371,7 +422,7 @@ export interface BrowserDeps {
 
 const defaultBrowserDeps = (home: string): BrowserDeps => ({
   discover: () => discoverChrome(undefined),
-  install: () => installManagedChrome({ dir: join(home, 'system', 'browsers') }),
+  install: () => installManagedChrome({ dir: join(stateDir(home), 'browsers') }),
   hasXvfb: () => spawnSync('sh', ['-c', 'command -v Xvfb'], { stdio: 'ignore' }).status === 0,
   vnc: () => {
     const found = spawnSync('sh', ['-c', 'command -v x0vncserver || command -v x11vnc'], { encoding: 'utf8' })
@@ -425,7 +476,7 @@ interface Discovery { url: string; tokenFiles: Record<Scope, string>; pid?: numb
 
 /** The running profile's discovery file. */
 function discovery(home: string): Discovery {
-  const path = join(home, 'system', 'mcp.json')
+  const path = join(stateDir(home), 'mcp.json')
   const text = readIfPresent(path)
   if (text === undefined) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
   const found = JSON.parse(text) as Partial<Discovery>
@@ -440,7 +491,7 @@ function tokenDirOf(home: string): string {
   try {
     return dirname(discovery(home).tokenFiles.operator)
   } catch {
-    return join(home, 'system')
+    return stateDir(home)
   }
 }
 
@@ -965,6 +1016,7 @@ export function hostProcessProblem(pid: number, home: string, proc = '/proc'): s
     return `it is not running, or not readable under ${proc}`
   }
   if (!argv.some((a) => a.endsWith('/@deepseek-ai/dsh/lib/bin.js')) || !argv.includes('--profile')) return 'it does not run a DSH profile'
+  if (argv[argv.indexOf('--profile') + 1] !== PROFILE) return `it runs the ${argv[argv.indexOf('--profile') + 1]} profile, not ${PROFILE}`
   const own = env.find((v) => v.startsWith('DSH_HOME='))?.slice('DSH_HOME='.length)
   const resolved = (p: string): string => resolve(p).replace(/\/$/, '')
   if (own ? resolved(own) !== resolved(home) : resolved(home) !== resolved(join(homedir(), '.dsh'))) return `its DSH_HOME is ${own ?? 'the default'}, not ${home}`
@@ -977,7 +1029,7 @@ export function hostProcessProblem(pid: number, home: string, proc = '/proc'): s
  */
 export async function shutdownHost(deadlineMs: number, options: { home?: string; call?: typeof callTool; pollMs?: number; onActive?: (active: string[]) => void; proc?: string } = {}): Promise<{ drained: boolean; active: string[]; pid: number; undrained?: string }> {
   const home = options.home ?? dshHome()
-  const path = join(home, 'system', 'mcp.json')
+  const path = join(stateDir(home), 'mcp.json')
   const text = readIfPresent(path)
   if (text === undefined) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
   const { pid } = JSON.parse(text) as Discovery
@@ -1036,7 +1088,7 @@ function listFiles(dir: string, prefix = ''): string[] {
  * managed browser are not state: a new login recreates them.
  */
 export function backupHost(target: string, options: { home?: string; includeKey?: boolean } = {}): BackupManifest {
-  const state = join(options.home ?? dshHome(), 'system')
+  const state = stateDir(options.home)
   if (!existsSync(join(state, 'system.db'))) throw new Error(`no store at ${join(state, 'system.db')}`)
   if (existsSync(target) && readdirSync(target).length) throw new Error(`${target} is not empty`)
   mkdirSync(target, { recursive: true, mode: 0o700 })
@@ -1084,7 +1136,7 @@ function profileRunning(state: string): boolean {
  * `keyFile` keeps it outside the state directory.
  */
 export function restoreHost(source: string, options: { home?: string; yes?: boolean; keyFile?: string } = {}): { manifest: BackupManifest; applied: boolean; keptAside?: string } {
-  const state = join(options.home ?? dshHome(), 'system')
+  const state = stateDir(options.home)
   // The manifest is written last, so a backup a crash interrupted has none and is refused.
   if (!existsSync(join(source, BACKUP_MANIFEST))) throw new Error(`${source} has no ${BACKUP_MANIFEST}: it is not a complete system backup`)
   const manifest = JSON.parse(readFileSync(join(source, BACKUP_MANIFEST), 'utf8')) as BackupManifest

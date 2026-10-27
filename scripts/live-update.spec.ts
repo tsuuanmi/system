@@ -328,6 +328,73 @@ describe('live-update.sh and system.service', () => {
   })
 })
 
+describe('live-update.sh --stage (T323)', () => {
+  /** This directory's scripts, copied beside a stand-in stage that exits `code` and records its arguments. */
+  function staged(f: Fixture, code: number): string {
+    const dir = join(f.root, 'scripts')
+    mkdirSync(dir)
+    for (const name of ['live-update.sh', 'live-update-check.ts']) writeFileSync(join(dir, name), readFileSync(join(dirname(SCRIPT), name)))
+    writeFileSync(join(dir, 'live-stage.sh'), `printf '%s\\n' "$*" >"${join(f.root, 'stage-args')}"\nexit ${code}\n`)
+    return join(dir, 'live-update.sh')
+  }
+  function runStaged(f: Fixture, script: string, ...args: string[]): { status: number | null; output: string } {
+    const result = spawnSync('bash', [script, f.target, '--stage', '--from', f.from, '--live', f.live, '--dsh-home', f.home, '--backups', f.backups,
+      '--node-dir', dirname(process.execPath), '--pnpm-dir', f.bin, '--check-with', builtTarget(f), ...args], { encoding: 'utf8', env: { ...process.env, PATH: `${f.bin}:${process.env.PATH}` } })
+    return { status: result.status, output: `${result.stdout}${result.stderr}` }
+  }
+
+  it('refuses to touch the live profile when the canary on the test profile fails', () => {
+    const f = fixture()
+    const script = staged(f, 1)
+    execFileSync(join(f.bin, 'systemctl'), ['--user', 'start', 'system.service'])
+    waitForDaemon(f)
+    try {
+      const before = { ...snapshot(join(f.home, 'profiles')), ...snapshot(join(f.home, 'system')) }
+      const { status, output } = runStaged(f, script)
+      expect(status, output).toBe(1)
+      expect(output).toContain('the stage failed on the system-test profile')
+      expect(output).toContain('were not touched')
+      // The live unit was never stopped or restarted, the checkout stays at the previous commit, no update was opened.
+      expect(f.unit.calls()).toEqual(['start system.service'])
+      expect(f.git('rev-parse', 'HEAD')).toBe(f.from)
+      expect(readdirSync(f.backups)).toEqual(['.live-update.lock'])
+      expect({ ...snapshot(join(f.home, 'profiles')), ...snapshot(join(f.home, 'system')) }).toEqual(before)
+    } finally {
+      f.unit.cleanup()
+    }
+  })
+
+  it('goes on to the live steps only after the stage passed, with the target\'s checkout and the same patch', () => {
+    const f = fixture()
+    const script = staged(f, 0)
+    const patch = join(f.root, 'candidate.yml')
+    writeFileSync(patch, '[]\n')
+    const system = fakeSystem(f.root, f.live, f.home)
+    execFileSync(join(f.bin, 'systemctl'), ['--user', 'start', 'system.service'])
+    waitForDaemon(f)
+    system.work([T223])
+    try {
+      const { output } = runStaged(f, script, '--patch', patch, '--runs-wait', '0', '--no-cut')
+      // The stand-in stage passed; the live steps then began (and stopped at the wait, as --no-cut says).
+      expect(output, output).toContain('steps still run after 0 min')
+      expect(output.indexOf('stage:')).toBeLessThan(output.indexOf('waiting until no workflow step runs'))
+      const args = readFileSync(join(f.root, 'stage-args'), 'utf8')
+      expect(args).toContain(`--check-with ${join(f.root, 'target')}`)
+      expect(args).toContain(`--patch ${patch}`)
+      expect(args).toContain(`--dsh-home ${realpathSync(f.home)}`)
+    } finally {
+      f.unit.cleanup()
+    }
+  })
+
+  it('--stage needs a checked target, as --apply does', () => {
+    const f = fixture()
+    const { status, output } = run(f, f.target, '--stage')
+    expect(status).toBe(1)
+    expect(output).toContain('--apply needs --check-with')
+  })
+})
+
 /** T223's develop step, the one the update to c2a45415 cut on 2026-10-26. */
 const T223: FakeWork = { runId: 'run_T223', nodeId: 'develop:1', worker: 'agent:codex-main/develop', since: '2026-10-26T09:00:00.000Z', taskId: 'T223' }
 const T223_LINE = /run run_T223 step develop:1 on agent:codex-main\/develop, for \d+ (s|min|h \d+ min) \(task T223, algorithm-development\)/

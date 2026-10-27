@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostCapacity, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, type DispatchView, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, leadInbox, leadToken, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseLead, parseMetrics, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
+import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostCapacity, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, type DispatchView, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, leadInbox, leadToken, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseLead, parseMetrics, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem, useProfile } from './index.ts'
 import { bundlePlugins, bundleStudioPolicy, parseProjectNew, profileHost, type ProjectHost, projectNew } from './project.ts'
 
-const USAGE = `Usage: system <command>
+const USAGE = `Usage: system <command> [--profile system|system-test]
+
+  --profile system-test     act on the test profile (init, start, check, ask, ...): its own data directory,
+                            port and Workers; live updates run on it first (scripts/live-update.sh --stage)
 
   init [--preset default|api-first]
                             create or refresh the system DSH profile (a preset is kept until changed);
@@ -264,8 +267,21 @@ async function agentAccount(action: string, target: Extract<AccountTarget, { kin
   return 0
 }
 
-async function main(argv: string[]): Promise<number> {
-  const [command, ...rest] = argv
+/**
+ * `--profile <name>` names the profile a command acts on (`system`, or `system-test`, T323). For
+ * `start` it must come first: what follows is the launcher's own arguments.
+ */
+function takeProfile(argv: string[]): string[] {
+  const at = argv[0] === 'start' ? (argv[1] === '--profile' ? 1 : -1) : argv.indexOf('--profile')
+  if (at < 0) return argv
+  const name = argv[at + 1]
+  if (!name) throw new Error('--profile needs a name: system or system-test')
+  useProfile(name)
+  return [...argv.slice(0, at), ...argv.slice(at + 2)]
+}
+
+async function main(args: string[]): Promise<number> {
+  const [command, ...rest] = takeProfile(args)
   switch (command) {
     case 'init': {
       const preset = rest[0] === '--preset' ? rest[1] : undefined

@@ -94,6 +94,11 @@
       name: '@tsuuanmi/system-workers'               # Worker registry, admission, deterministic router
     - id: turns
       name: '@tsuuanmi/system-turns'                 # the website Worker runtime (durable turns)
+    # --- scripted Workers for the system-test profile's canary (T323): off here, on only there. They
+    # answer at once, with no account, network, or model; live work never runs on them. ---
+    - id: workers-fake
+      name: '@tsuuanmi/system-workers-fake'          # the `fake` Worker source
+      disabled: true
     # --- agent runtimes: Claude Code as the first Worker, on by default (PROP-0010 B3). Each run is
     # confined for reads by bubblewrap, and its commands by the SDK's sandbox (ADR-0024, ADR-0038);
     # a host without Claude Code, bubblewrap, or a sign-in still boots, and the probe says why its

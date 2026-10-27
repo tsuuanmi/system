@@ -27,7 +27,7 @@ const shipped = (dir: string, edit: (m: Record<string, any>) => void): string =>
 
 describe('the manifests the workspace ships (REQ-HOST-7)', () => {
   it('has one for every plugin and every seam definition, each valid as the host reads it, and all agreeing with the code', () => {
-    expect(derived.map((d) => d.path).filter((p) => p.startsWith('packages/plugins/')).length).toBe(41)
+    expect(derived.map((d) => d.path).filter((p) => p.startsWith('packages/plugins/')).length).toBe(42)
     expect(derived.filter((d) => d.manifest.defines).map((d) => d.dir).sort()).toEqual([
       'agent-runtime-core', 'approvals-core', 'board-core', 'decision-core', 'digest-core', 'feedback-core', 'gateway-core', 'landing-core', 'ledger-core', 'models-core', 'plugin-host-core', 'provider-core',
       'resources-core', 'workers-core',

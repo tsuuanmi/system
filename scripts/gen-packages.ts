@@ -57,6 +57,7 @@ export const LAYER_OF: Record<string, Layer> = {
   'agent-workers': 'capabilities',
   'models-core': 'capabilities',
   'models': 'capabilities',
+  'workers-fake': 'capabilities',
   // routing
   'workers-core': 'routing',
   'approvals-core': 'routing',

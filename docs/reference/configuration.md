@@ -611,6 +611,12 @@ No options.
 | `quotaPreference` | ("subscription-chat" \| "local" \| "agent-plan" \| "metered")[] | `["subscription-chat","local","agent-plan","metered"]` | Quota classes in order of preference |
 | `priority` | string[] | `[]` | Worker ids preferred, in order, after tier and quota class |
 
+## `workers-fake`
+
+[@tsuuanmi/system-workers-fake](../../packages/plugins/workers-fake/README.md)
+
+No options.
+
 ## `workflow`
 
 [@tsuuanmi/system-workflow](../../packages/plugins/workflow/README.md)

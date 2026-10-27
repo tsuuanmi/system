@@ -108,7 +108,7 @@ The `Class` column of the [seam catalog](#seam-catalog) gives each seam's class.
 
 | Plugin family | Contract | Seams and providers |
 |---|---|---|
-| Worker | takes a brief and artifact pointers; returns result artifacts with usage | Worker sources `turns`, `agentWorkers`, `models`; their runtimes `agentRuntimes`, `providers`, `browser`, `display`, `accounts`, `login`; the plugins that register into them: `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp`, `runtime-antigravity-cli`, `provider-chatgpt-web`, `provider-gemini-web` |
+| Worker | takes a brief and artifact pointers; returns result artifacts with usage | Worker sources `turns`, `agentWorkers`, `models`, and `workers-fake` (scripted Workers for the `system-test` profile's canary, T323; off in the bundle); their runtimes `agentRuntimes`, `providers`, `browser`, `display`, `accounts`, `login`; the plugins that register into them: `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp`, `runtime-antigravity-cli`, `provider-chatgpt-web`, `provider-gemini-web` |
 | decision | takes state and typed questions; returns typed answers with probabilities | the routing policy inside `workers`; model healing in `ui-ops`; `dispatchAdvisor` (defined in `decision-core`; its providers `local` and `model` in the workflow engine); `decisions` (planned) |
 | verification | takes an artifact and criteria; returns pass or fail with evidence | acceptance contracts registered through `workers.contract`; metric collectors and validators registered through `evaluations.collector`; quote checks and tallies in team review |
 | digest | takes raw artifacts; returns a cited summary | `digests`: `system-digest` (on by default), `system-digest-extractive` (off, its alternative) |
@@ -158,7 +158,7 @@ The **family** is the seam a group of plugins registers into, where one may buil
 | capability | agent-runtimes | `agent-runtimes`, `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp`, `runtime-antigravity-cli` |
 | capability | web-providers | `providers`, `provider-chatgpt-web`, `provider-gemini-web` |
 | capability | digests | `digest`, `digest-extractive` |
-| capability | — | `display-virtual`, `browser-patchright`, `accounts`, `login`, `turns`, `agent-workers`, `models` |
+| capability | — | `display-virtual`, `browser-patchright`, `accounts`, `login`, `turns`, `workers-fake`, `agent-workers`, `models` |
 | surface | — | `lead-inbox`, `report`, `notify`, `gateway-anthropic`, `gateway-responses`, `web-ui`, `mcp-server` |
 | profile | — | `profile-software-development`, `profile-scientific-research` |
 
@@ -198,7 +198,7 @@ matrix fails).
   `resources`, `approvals`, `turn-receipts`, `egress`, `workers`, `worker-sessions`, `landing-local`,
   `workflow`, `board`.
 - **Optional** rows (capability and surface): `lead-inbox`, `display`, `browser`, `providers`,
-  `provider-chatgpt-web`, `provider-gemini-web`, `accounts`, `login`, `turns`, `agent-runtimes`,
+  `provider-chatgpt-web`, `provider-gemini-web`, `accounts`, `login`, `turns`, `workers-fake`, `agent-runtimes`,
   `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp`, `runtime-antigravity-cli`,
   `agent-workers`, `llm`, `llm-pi-ai`, `models`, `digest`, `digest-extractive`, `report`, `notify`,
   `profile-software-development`, `profile-scientific-research`, `gateway-anthropic`,

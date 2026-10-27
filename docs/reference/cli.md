@@ -9,6 +9,7 @@
 
 | Command | What it does |
 |---|---|
+| `system <command> --profile system-test` | act on the test profile instead of `system` (T323): its profile directory `~/.dsh/profiles/system-test`, data directory `~/.dsh/system-test`, and port 47318; with `start` it comes first. `system init --profile system-test` creates it ([runbook](../operations/runbooks.md#update-the-live-install-from-e218ae7-to-the-base-release)) |
 | `system init [--preset default\|api-first]` | create or refresh the `system` DSH profile (a preset is kept until changed, [ADR-0025](../decisions/adr/0025-api-first-composition.md)); ensure Chrome and Xvfb when the browser row is mounted |
 | `system browser install` | install the managed Chrome pinned in `chrome.lock.json` |
 | `system start [dsh args…]` | boot the profile (for example `--patch ./overlay.yml`) |
