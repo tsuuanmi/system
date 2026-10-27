@@ -1392,48 +1392,40 @@ describe('an attempt is not spent on an infrastructure failure (ADR-0069, D82 #3
     expect(after).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
   })
 
-  it('does not count a run that sent nothing: every failure a Worker\'s own before any send, as its source tells it', async () => {
+  it('weighs a run by what was sent: a task\'s own refusal before any send, or a step failing after one was sent, counts and says why; only sign-outs before any send are given back', async () => {
     const { ctx, workers } = await boot()
     await project(ctx)
-    const task = await ready(ctx, 'unsent', { maxAttempts: 1 })
-    // Its Worker's account is signed out before anything is sent, on each of the step's attempts.
+    // Refused before the send for its own configuration: sending it again would not change it, so the attempt is the task's, never a free retry.
+    const own = await ready(ctx, 'own-unsent', { maxAttempts: 1 })
+    workers.reply = () => ({ fail: 'config_error', disposition: 'CODE_FIX', sent: false })
+    const ownRun = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: own.taskId } })
+    expect(await settled(ctx, ownRun.runId)).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
+    expect(ctx.workers.source('scripted')!.get(workers.started[0]!.id)).toMatchObject({ status: 'failed', submitted: false })
+    const ownReport = await report(ctx, ownRun.runId)
+    expect(ownReport.reported.outcome.detail).not.toHaveProperty('infrastructure')
+    expect(chosen(ownReport.reported)).toMatch(/an attempt the board counts; step solo failed for a reason of its own \(config_error\)/)
+    expect(ownReport.task).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
+    expect(ownReport.board.outcome.detail).not.toHaveProperty('freeRetry')
+
+    // Step a is answered (sent); step b fails before its send on its Worker's sign-out, unmarked: with step a sent, the attempt pays for it.
+    const sentTask = await ready(ctx, 'sent', { maxAttempts: 1 })
+    workers.reply = (request) => (request.prompt.includes('B:') ? { fail: 'reauth_required', disposition: 'USER_ACTION', sent: false } : { text: 'alpha' })
+    const sentRun = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: sentTask.taskId } })
+    expect(await settled(ctx, sentRun.runId)).toMatchObject({ status: 'failed' })
+    const sent = await report(ctx, sentRun.runId)
+    expect(sent.reported.outcome.detail).not.toHaveProperty('infrastructure')
+    expect(chosen(sent.reported)).toMatch(/an attempt the board counts; .*something of the run was sent/)
+    expect(sent.task).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
+
+    // Its Worker's account is signed out before anything is sent, on each of the step's attempts: given back.
+    const unsentTask = await ready(ctx, 'unsent', { maxAttempts: 1 })
     workers.reply = () => ({ fail: 'reauth_required', disposition: 'USER_ACTION', sent: false })
-    const run = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    const run = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: unsentTask.taskId } })
     expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed', error: { kind: 'reauth_required' } })
     const { reported, board, task: after } = await report(ctx, run.runId)
     expect(reported.outcome.detail).toMatchObject({ infrastructure: { kind: 'unsent', reason: expect.stringMatching(/nothing of run .* was sent to any Worker/) } })
     expect(after).toMatchObject({ state: 'ready', attempts: { count: 0 } })
     expect(board.outcome.detail).toMatchObject({ infrastructure: { kind: 'unsent' }, freeRetry: { used: 1, counted: false } })
-  })
-
-  it('counts a run once something of it was sent, and says why it is not the infrastructure\'s', async () => {
-    const { ctx, workers } = await boot()
-    await project(ctx)
-    const task = await ready(ctx, 'sent', { maxAttempts: 1 })
-    // Step a is answered (sent); step b fails before its send on its Worker's sign-out, unmarked: with step a sent, the attempt pays for it.
-    workers.reply = (request) => (request.prompt.includes('B:') ? { fail: 'reauth_required', disposition: 'USER_ACTION', sent: false } : { text: 'alpha' })
-    const run = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
-    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed' })
-    const { reported, task: after } = await report(ctx, run.runId)
-    expect(reported.outcome.detail).not.toHaveProperty('infrastructure')
-    expect(chosen(reported)).toMatch(/an attempt the board counts; .*something of the run was sent/)
-    expect(after).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
-  })
-
-  it('counts a run that sent nothing when a step failed for the task\'s own reason: its input, policy, or configuration is the attempt\'s, never a free retry', async () => {
-    const { ctx, workers } = await boot()
-    await project(ctx)
-    const task = await ready(ctx, 'own-unsent', { maxAttempts: 1 })
-    // Refused before the send for its own configuration: sending it again would not change it.
-    workers.reply = () => ({ fail: 'config_error', disposition: 'CODE_FIX', sent: false })
-    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
-    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
-    expect(ctx.workers.source('scripted')!.get(workers.started[0]!.id)).toMatchObject({ status: 'failed', submitted: false })
-    const { reported, board, task: after } = await report(ctx, run.runId)
-    expect(reported.outcome.detail).not.toHaveProperty('infrastructure')
-    expect(chosen(reported)).toMatch(/an attempt the board counts; step solo failed for a reason of its own \(config_error\)/)
-    expect(after).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
-    expect(board.outcome.detail).not.toHaveProperty('freeRetry')
   })
 
   it('counts a last attempt whose first step\'s reservation its task\'s budget refused: never a free retry, so the task waits for input with the budget\'s reason', async () => {
