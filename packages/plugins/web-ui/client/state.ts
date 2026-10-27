@@ -1,20 +1,15 @@
-// The page's one state: the token and the API client, what the address names (the run, the view, the projects shown), what a
-// render may draw, the line a verdict leaves above the page, and what waits for the operator.
+// The page's one state: the token and the API client, what the address names, what a render may draw, the line a verdict leaves above the page, and what waits for the operator.
 import type { WaitingResponse } from '../src/api.js'
 import { byId, el, type Child } from './dom.js'
-
-// `app.ts` moved the token from the address into session storage before this module loaded.
 let token: string | null = null
 try { token = sessionStorage.getItem('system.token') } catch {}
 export const hasToken = (): boolean => !!token
-
 /** A failed call: the server's own words and its status, 0 when there was no answer. */
 export class ApiError extends Error {
   status: number
   constructor(message: string, status: number) { super(message); this.status = status }
 }
 export const asApiError = (error: unknown): ApiError => error instanceof ApiError ? error : new ApiError(error instanceof Error ? error.message : String(error), 0)
-/** The words of a failure, with its status as "(404)" or "(no answer)". */
 export const refusal = (error: unknown): string => { const e = asApiError(error); return `(${e.status || 'no answer'}): ${e.message}` }
 
 export async function api<T>(path: string, body?: unknown): Promise<T> {
@@ -25,37 +20,34 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
   if (!response.ok) throw new ApiError(value.error || response.statusText, response.status)
   return value as T
 }
-/** A read that may be absent (a plugin not running: 503) or refused: null when absent, `{ error }` when it failed. */
+/** A read that may be absent (a plugin not running: 503): null when absent, `{ error }` when it failed. */
 export async function optional<T>(path: string, absent: number[] = [503]): Promise<T | { error: ApiError } | null> {
   try { return await api<T>(path) } catch (error) { const e = asApiError(error); return absent.includes(e.status) ? null : { error: e } }
 }
-export const failed = <T extends object>(value: T | { error: ApiError } | null): value is { error: ApiError } => !!value && 'error' in value
+/** A read whose failure leaves the page as it would be without it. */
+export const quiet = async <T>(path: string): Promise<T | undefined> => { try { return await api<T>(path) } catch { return undefined } }
 
 export type Waits = WaitingResponse | { unknown: string }
+const query = new URLSearchParams(location.search), [run, view] = [query.get('run'), query.get('view')]
 export const app = {
-  current: new URLSearchParams(location.search).get('run'),
-  view: new URLSearchParams(location.search).get('view'),
-  /** A confirmation is open: the page does not refresh under it. */
-  confirming: false,
-  /** Home shows every project, or the one the address names (T253), until "All projects". */
-  homeProject: ((): string | null => { const q = new URLSearchParams(location.search); return !q.get('view') && !q.get('run') ? q.get('project') : null })(),
-  /** The project the Board shows (T253), or 'all'; null until chosen. */
-  boardProject: ((): string | null => { const q = new URLSearchParams(location.search); return q.get('view') === 'board' ? q.get('project') : null })(),
-  focusRequest: new URLSearchParams(location.search).get('request'),
+  current: run,
+  view,
+  confirming: false, // a confirmation is open: the page does not refresh under it
+  homeProject: !view && !run ? query.get('project') : null, // Home shows every project, or the one the address names (T253)
+  boardProject: view === 'board' ? query.get('project') : null, // the project the Board shows, or 'all'; null until chosen
+  focusRequest: query.get('request'),
   waits: null as Waits | null,
-  /** Set by the boot module: draws the page the address names. */
-  refresh: async (): Promise<void> => {},
+  refresh: async (): Promise<void> => {}, // set by the boot module: draws the page the address names
 }
 const PAGE_VIEWS = ['policy', 'board', 'workers', 'help', 'reports']
 /** The page the address names now: what a render must be of to be shown. */
 export const shownPage = (): string => app.view !== null && PAGE_VIEWS.includes(app.view) ? app.view : app.current ? 'run:' + app.current : 'home'
 export const refresh = (): Promise<void> => app.refresh()
 
-// A render that lands while a pointer or key is pressed waits for its release: replacing the button under a press would drop
-// the click, and with it the operator's verdict (T84). A page that finished rendering after the operator moved on is dropped.
+// A render that lands while a pointer or key is pressed waits for its release: replacing the button under a press would drop the
+// click, and with it the operator's verdict (T84). A page that finished rendering after the operator moved on is dropped.
 const main = byId('main')
-let pressed = false
-let pending: Array<Node | string> | null = null
+let pressed = false, pending: Array<Node | string> | null = null
 export function show(...parts: Child[]): void {
   const kept = parts.flat(Infinity as 1).filter((part): part is Node | string => part !== null && part !== undefined)
   const head = kept[0]
@@ -68,14 +60,11 @@ const release = () => setTimeout(() => {
   pressed = false
   if (pending) { const parts = pending; pending = null; main.replaceChildren(...parts) }
 }, 0)
-document.addEventListener('pointerdown', press, true)
-document.addEventListener('pointerup', release, true)
-document.addEventListener('pointercancel', release, true)
+document.addEventListener('pointerdown', press, true); document.addEventListener('pointerup', release, true); document.addEventListener('pointercancel', release, true)
 document.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') press() }, true)
 document.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') release() }, true)
 
-// What the operator's last verdict did, outside the refreshed page: it stays until dismissed. A verdict that was not recorded
-// is an alert, never only a line a refresh overwrites (INV-2). ok: true for done, false for refused, 'pending' for neither.
+// What the operator's last verdict did stays outside the refreshed page until dismissed; one not recorded is an alert (INV-2). ok: true for done, false for refused, 'pending' for neither.
 const outcome = byId('outcome')
 export function report(ok: boolean | 'pending', title: string, lines: Child[]): void {
   outcome.replaceChildren(el('div', { class: 'panel' + (ok === 'pending' ? '' : ok ? ' ok' : ' bad'), role: ok === false ? 'alert' : 'status' },
@@ -84,15 +73,12 @@ export function report(ok: boolean | 'pending', title: string, lines: Child[]): 
     el('button', { onclick: () => outcome.replaceChildren() }, 'Dismiss')))
   outcome.scrollIntoView({ block: 'nearest' })
 }
-/** An error state with its one next action; the page also tries again by itself every 5 seconds. */
 export const errorState = (text: string): HTMLElement => el('div', { class: 'panel bad error-state' }, el('p', { class: 'state failed' }, text), el('button', { type: 'button', onclick: () => void refresh() }, 'Try again'))
 /** A message in the header ("proposed …", "could not refresh: …") stays until the next refresh that succeeds. */
 export const status = byId('status')
 export const say = (text: string): void => { status.textContent = text; status.dataset.message = '1' }
 export const saySoftly = (error: unknown): void => say('could not refresh: ' + asApiError(error).message)
-
-// "Since you last looked" (T124): kept in this browser only (localStorage), never on the server: when the operator last marked
-// Home as seen, and each Worker's status then.
+// "Since you last looked" (T124), kept in this browser only (localStorage): when the operator last marked Home as seen, and each Worker's status then.
 export interface Seen { at: string; workers: Record<string, string> }
 export const seenOf = (): Seen | null => {
   try {
@@ -101,7 +87,6 @@ export const seenOf = (): Seen | null => {
   } catch { return null }
 }
 export const markSeen = (workers: Record<string, string>): void => { try { localStorage.setItem('system.seen', JSON.stringify({ at: new Date().toISOString(), workers })) } catch {} }
-
 /** What waits for the operator and they can act on, from one read on every page (GET waiting, T127). */
 export const readWaiting = async (): Promise<Waits> => {
   const seen = seenOf()

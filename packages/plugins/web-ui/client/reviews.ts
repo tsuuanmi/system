@@ -1,7 +1,6 @@
-// The board's tasks in review, one card each: the operator's Accept or Send back names the exact result shown (INV-5).
-// Absent when no board runs.
+// The board's tasks in review, one card each: the operator's Accept or Send back names the exact result shown (INV-5). Absent when no board runs.
 import type { AcceptedCard, ReviewCard, ReviewDecideResponse, ReviewsResponse } from '../src/api.js'
-import { absolute, ago, cardFold, copyId, el, expires, keptFold, relative, shortId, verdictButtons, type Child } from './dom.js'
+import { absolute, ago, cardFold, copyId, el, expires, keptFold, recording, relative, shortId, verdictButtons, type Child } from './dom.js'
 import { changeSummary, changeWarning, checkChips, checksDetail, evidenceView, landingLine, notRunChecks, pendingWarning, reviewOf, unrunWarning, verdictChips, type Evidence } from './evidence.js'
 import { whatIs } from './glossary.js'
 import { runLink } from './router.js'
@@ -38,10 +37,7 @@ export async function reviews(): Promise<ReviewsRead> {
     const e = asApiError(error)
     return e.status === 503 ? null : { failed: el('section', { id: 'reviews', tabindex: '-1', 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews'), el('p', { class: 'state failed' }, 'The reviews could not be read: ' + e.message + '. The page tries again every 5 seconds.')) }
   }
-  const decide = async (r: ReviewCard, verdict: 'accept' | 'reject', buttons: HTMLButtonElement[], clicked: HTMLButtonElement) => {
-    const labels = buttons.map((b) => b.textContent)
-    for (const b of buttons) b.disabled = true
-    clicked.textContent = 'Recording…'
+  const decide = (r: ReviewCard, verdict: 'accept' | 'reject', buttons: HTMLButtonElement[], clicked: HTMLButtonElement) => recording(buttons, clicked, async () => {
     const key = 'review-' + r.taskId
     try {
       const notRun = verdict === 'accept' ? checksNotRunOf(r) : {}
@@ -51,17 +47,10 @@ export async function reviews(): Promise<ReviewsRead> {
     } catch (error) {
       report(false, 'Not recorded: ' + (verdict === 'accept' ? 'Accept' : 'Send back') + ' on ' + r.title, ['The server refused it ' + refusal(error) + '. Nothing was decided: the task is still in review.'])
     }
-    buttons.forEach((b, i) => { b.disabled = false; b.textContent = labels[i] ?? '' })
-    await refresh()
-  }
+  }, refresh)
   const card = (r: ReviewCard, evidence: Evidence | undefined) => {
-    // Accept / Send back, what each does its accessible description (T191); the card is named by its title.
     const buttons = verdictButtons('marks it done', 'sends it back for another attempt, if it has one left', (verdict, pair, clicked) => void decide(r, verdict === 'approved' ? 'accept' : 'reject', pair, clicked), 'Accept', 'Send back')
-    const key = 'review-' + r.taskId
-    const read = evidence && !('error' in evidence) ? evidence : undefined
-    // The title; one line of context, when it expires (its project is its group's heading on Home, T256, and under its Details);
-    // then the change, the checks, and each reviewer's verdict as chips; the warnings that bear on the verdict; the two buttons;
-    // every long text, and what no response does, under one Details (T186, T239).
+    const key = 'review-' + r.taskId, read = evidence && !('error' in evidence) ? evidence : undefined
     return el('article', { class: 'panel request', id: 'review-' + r.taskId, tabindex: '-1', 'aria-labelledby': 'review-title-' + r.taskId },
       el('div', { class: 'line' }, el('h3', { id: 'review-title-' + r.taskId }, r.title)),
       el('p', { class: 'meta' }, !r.expiresAt ? 'No expiry known' : r.heldFor === 'operator' ? expires(r.expiresAt) : ['Its reviewer\'s until ', ago(r.expiresAt)]),
@@ -84,18 +73,14 @@ export async function reviews(): Promise<ReviewsRead> {
   }
   // Every card once, its evidence read; Home places each in its project's group (T253).
   const cards = new Map(await Promise.all(listed.map(async (r): Promise<[string, HTMLElement]> => [r.taskId, card(r, r.run ? await reviewOf(r.run.runId, subjectText(r.subject)) : undefined)])))
-  // A verdict's consequence stays in sight: each accepted result still on its way into the repository, its project named unless
-  // its group's heading or the page's filter already names it (T256).
+  // Each accepted result still on its way into the repository, its project named unless its group's heading or the page's filter already names it (T256).
   const acceptedView: Reviews['acceptedView'] = (list, level) => list?.length ? el('section', { 'aria-label': 'Accepted, on their way in' }, el(level, { class: 'kind' }, 'Accepted, on their way in', whatIs('landing')),
     list.map((a) => el('article', { class: 'panel request', 'aria-label': 'Accepted: ' + a.title }, el('h4', {}, a.title),
       el('p', { class: 'meta' }, level !== 'h4' && !app.homeProject ? 'Project ' + (a.project.title || a.project.projectId) + ' · task ' : 'Task ', shortId(a.taskId, 'Copy task ID')), landingLine(a.landing),
       a.run ? el('p', {}, runLink(a.run.runId, 'open its run')) : null))) : null
-  // The Reviews of some of the listed reviews (all of them by default): a page's own section (h2), or a kind within a project's group (h3).
+  // The Reviews of some of the listed reviews (all by default): a page's own section (h2), or a kind within a project's group (h3).
   const sectionOf: Reviews['sectionOf'] = (list = listed, id = 'reviews', level = 'h2', withAccepted = true) => {
-    const mine = heldOf(list)
-    const first = mine.reduce<string | undefined>((min, r) => !min || (r.expiresAt ?? '') < min ? r.expiresAt : min, undefined)
-    const soon = first !== undefined && Date.parse(first) - Date.now() < 3600000
-    // When the first held for the operator expires, and what then: in sight within the hour, else folded (T239).
+    const mine = heldOf(list), first = mine.reduce<string | undefined>((min, r) => !min || (r.expiresAt ?? '') < min ? r.expiresAt : min, undefined), soon = first !== undefined && Date.parse(first) - Date.now() < 3600000
     const expiry = (first: string): Child => {
       const said = [mine.length + (mine.length === 1 ? ' review is' : ' reviews are') + ' held for you; the first expires ',
         el('span', { class: soon ? 'soon' : '' }, relative(first) + ' — ' + absolute(first)), '. Unanswered by then, its task waits for input, which only a re-opening revives (board_reopen_review).']
@@ -109,6 +94,5 @@ export async function reviews(): Promise<ReviewsRead> {
     section.dataset.count = String(list.length)
     return section
   }
-  // Home's "Needs your attention" names each review held for the operator.
   return { listed, accepted: accepted ?? [], held: heldOf(listed), sectionOf, acceptedView }
 }

@@ -1,21 +1,18 @@
 // The approval queue, by batch: each verdict names the exact subject shown (INV-5). Absent when no queue runs.
 import type { ApprovalRequest, ApprovalsResponse, Batch, DecideResponse, PolicyResponse, ProjectsResponse, Subject, VerdictBody, ProjectCard } from '../src/api.js'
-import { absolute, cardFold, chip, copyId, el, expires, fold, qtyView, relative, shortId, verdictButtons, decision, type Child } from './dom.js'
+import { absolute, cardFold, chip, copyId, decision, el, expires, fold, qtyView, recording, relative, shortHash, shortId, verdictButtons, type Child } from './dom.js'
 import { changeView } from './changeview.js'
 import { describe, type Described } from './describe.js'
 import { whatIs } from './glossary.js'
-import { api, asApiError, refresh, refusal, report, type ApiError } from './state.js'
+import { api, asApiError, quiet, refresh, refusal, report, type ApiError } from './state.js'
 
 export const subjectText = (s: Subject): string => s.type + ' ' + s.ref + (s.version ? ' @ ' + s.version : '')
-/** The notes the operator is typing, kept through the refresh. */
 export const notes = new Map<string, string>()
 export const noteInput = (id: string, key = id, props: Record<string, string> = {}): HTMLInputElement => {
   const input = el('input', { id, ...props, value: notes.get(key) || '', oninput: () => notes.set(key, input.value) })
   return input
 }
-
-const VERB: Record<string, string> = { approved: 'Approved', rejected: 'Denied' }
-const NOUN: Record<string, string> = { approved: 'approval', rejected: 'denial' }
+const VERB: Record<string, string> = { approved: 'Approved', rejected: 'Denied' }, NOUN: Record<string, string> = { approved: 'approval', rejected: 'denial' }
 // Why a verdict was not applied, in plain words: each leaves its request as it was.
 const REFUSED: Record<string, string> = {
   'unknown-request': 'the queue does not know this request any more. Nothing was decided.',
@@ -24,15 +21,10 @@ const REFUSED: Record<string, string> = {
   'subject-changed': 'what it asks about changed since the page showed it. Nothing was decided: read it again, then decide.',
   failed: 'the queue could not store your verdict, and nothing of it changed. Try again.',
 }
-// A text as a person reads it first: the proposed set for a policy set's hash, a hash in parentheses left out, any other long
-// hash cut to its first 8 characters. The exact text stays folded beside it.
+// A text as a person reads it first: a policy set's hash is "the proposed set", a hash in parentheses is left out, any other long hash is cut; the exact text stays folded beside it.
 const LONG_HASH = /(?:sha256:)?[0-9a-f]{16,}/
-const plainly = (text: string) => text
-  .replace(/the set (?:sha256:)?[0-9a-f]{16,}/g, 'the proposed set')
-  .replace(/\s*\((?:at )?(?:sha256:)?[0-9a-f]{16,}\)/g, '')
-  .replace(/(?:sha256:)?[0-9a-f]{16,}/g, (hash) => hash.replace(/^sha256:/, '').slice(0, 8) + '…')
+const plainly = (text: string) => shortHash(text.replace(/the set (?:sha256:)?[0-9a-f]{16,}/g, 'the proposed set').replace(/\s*\((?:at )?(?:sha256:)?[0-9a-f]{16,}\)/g, ''), 16)
 const folded = (text: string, summary: string): Child[] => LONG_HASH.test(text) ? [plainly(text), el('details', {}, el('summary', {}, summary), el('code', { class: 'exact' }, text))] : [text]
-
 export interface Queue {
   batches: Batch[]
   requests: ApprovalRequest[]
@@ -44,40 +36,27 @@ export interface Queue {
   noteOf: (key: string) => string
 }
 export type QueueRead = Queue | { error: ApiError } | null
-
-/**
- * The open requests, each as a card the operator decides in place: on the home page, and on the page of what a request is about.
- * Null when no queue runs; `{ error }` when it could not be read.
- */
+/** The open requests, each a card the operator decides in place. Null when no queue runs; `{ error }` when it could not be read. */
 export async function queue(): Promise<QueueRead> {
   let batches: Batch[]
   try { ({ batches } = await api<ApprovalsResponse>('approvals')) } catch (error) { const e = asApiError(error); return e.status === 503 ? null : { error: e } }
   const requests = batches.flatMap((b) => b.requests)
   // The board's projects name what a charter or a task request is about; without a board, ids only.
-  const projects = new Map<string, ProjectCard>()
-  if (requests.some((r) => r.requester.component === 'board' || (r.requester.component === 'workflow' && (r.requester.runId || r.requester.taskId)))) {
-    try { for (const p of (await api<ProjectsResponse>('projects')).projects) projects.set(p.projectId, p) } catch {}
-  }
+  const wantsProjects = requests.some((r) => r.requester.component === 'board' || (r.requester.component === 'workflow' && (r.requester.runId || r.requester.taskId)))
+  const projects = new Map((wantsProjects ? (await quiet<ProjectsResponse>('projects'))?.projects ?? [] : []).map((p) => [p.projectId, p]))
   const described = new Map(requests.map((r) => [r.requestId, describe(r, projects)]))
   const told = (id: string): Described => described.get(id) as Described
   const noteFor = (key: string, label: string) => el('label', { for: 'note-' + key }, label, noteInput('note-' + key, key))
   const noteOf = (key: string) => (notes.get(key) || '').trim()
-  // One call for the verdicts shown; each result is reported, recorded or not, until dismissed.
-  const decide: Queue['decide'] = async (verdicts, note, batchId, buttons, clicked) => {
-    const labels = buttons.map((b) => b.textContent)
-    for (const b of buttons) b.disabled = true
-    clicked.textContent = 'Recording…'
-    const many = verdicts.length > 1
-    const first = verdicts[0] as VerdictBody
+  const decide: Queue['decide'] = (verdicts, note, batchId, buttons, clicked) => recording(buttons, clicked, async () => {
+    const many = verdicts.length > 1, first = verdicts[0] as VerdictBody
     const what = (v: VerdictBody) => VERB[v.verdict] + ': ' + told(v.requestId).title
     const lost = (v: VerdictBody) => 'your ' + NOUN[v.verdict] + ' of ' + told(v.requestId).title
     try {
       const { results } = await api<DecideResponse>('approvals/decide', { verdicts, ...(note ? { note } : {}), ...(batchId ? { batchId } : {}) })
-      const refused = results.filter((r) => r.refused)
-      const recorded = results.filter((r) => !r.refused)
+      const refused = results.filter((r) => r.refused), recorded = results.filter((r) => !r.refused)
       for (const v of verdicts) notes.delete(v.requestId)
       if (batchId && !refused.length) notes.delete(batchId)
-      // What happens next first, each failure with why; the request and record ids folded (T171).
       const lines = results.map((r) => {
         const v = verdicts.find((x) => x.requestId === r.requestId) as VerdictBody
         return r.refused ? 'Not recorded: ' + lost(v) + ': ' + (REFUSED[r.refused] || r.refused)
@@ -91,16 +70,11 @@ export async function queue(): Promise<QueueRead> {
       report(false, 'Not recorded: ' + (many ? 'your ' + verdicts.length + ' verdicts' : lost(first)),
         ['The server refused the call ' + refusal(error) + '.', 'Nothing was decided: ' + (many ? 'the requests are' : 'the request is') + ' still open in the queue.'])
     }
-    buttons.forEach((b, i) => { b.disabled = false; b.textContent = labels[i] ?? '' })
-    await refresh()
-  }
+  }, refresh)
   const verdictOf = (r: ApprovalRequest, verdict: VerdictBody['verdict']): VerdictBody => ({ requestId: r.requestId, subject: r.subject, verdict, ...(noteOf(r.requestId) ? { note: noteOf(r.requestId) } : {}) })
   const card = (r: ApprovalRequest) => {
-    const d = told(r.requestId)
-    // Approve / Deny, what each does its accessible description (T191); the card is named by its title.
+    const d = told(r.requestId), shown = el('div', {})
     const buttons = verdictButtons(d.yes, d.no, (verdict, pair, clicked) => void decide([verdictOf(r, verdict)], undefined, undefined, pair, clicked))
-    // A policy change shows what it changes: its effective modes and the record's diff (INV-5: the subject is its set's hash).
-    const shown = el('div', {})
     const showChange = async () => {
       try {
         const { changes } = await api<PolicyResponse>('policy')
@@ -108,16 +82,13 @@ export async function queue(): Promise<QueueRead> {
         shown.replaceChildren(change ? changeView(change) : el('p', { class: 'muted' }, 'The change of ' + r.requestId + ' is not among the latest.'))
       } catch (error) { shown.replaceChildren(el('p', { class: 'state failed' }, 'The change could not be read: ' + asApiError(error).message)) }
     }
-    // An irreversible consequence stays in sight, as a chip on the line (T172: never folded).
+    // An irreversible consequence stays in sight, as a chip on the line, never folded (T172).
     const undone = (text?: string) => /Cannot be undone/.test(text || '')
     const irreversible = undone(d.deny) ? 'Deny cannot be undone' : undone(d.approve) ? 'Approve cannot be undone' : undone(r.action.consequences) ? 'Cannot be undone' : null
     const approveDeny = (): Child[] => [el('dt', {}, 'If you approve'), el('dd', {}, d.approve), el('dt', {}, 'If you deny'), el('dd', {}, d.deny)]
-    // Its title and, as its one chip, an irreversible verdict; one line of context, when it expires; then the two buttons
-    // (T239); every other fact under one closed Details (T186).
     return el('article', { class: 'panel request', id: 'request-' + r.requestId, tabindex: '-1', 'aria-labelledby': 'title-' + r.requestId },
       el('div', { class: 'line' }, el('h3', { id: 'title-' + r.requestId }, d.title), irreversible ? chip(irreversible, 'warn') : null),
       el('p', { class: 'meta' }, expires(r.expiresAt)),
-      // A policy change's own diff stays one press away, beside the verdict buttons: never folded away (T186).
       el('div', { class: 'actions' }, buttons,
         r.action.class === 'policy-change' && r.requester.policyChangeId ? decision('Show change', 'shows what this request changes, below; decides nothing', { onclick: () => void showChange(), 'aria-label': 'Show the change of ' + r.requestId }) : null),
       shown,
@@ -143,30 +114,22 @@ export async function queue(): Promise<QueueRead> {
   }
   return { batches, requests, described, projects, card, decide, noteFor, noteOf }
 }
-
-/**
- * The approval queue's cards: every batch, or, on Home, a project's (T253: a batch stays whole, in its first request's project).
- * Its section is named by its heading level: a page's own section (h2), or a kind within a project's group (h3).
- */
+/** The approval queue's cards: every batch, or, on Home, a project's (a batch stays whole, in its first request's project); under a page's own heading (h2) or a project's group (h3). */
 export function approvals(q: QueueRead, shown?: Batch[], id = 'approvals', level: 'h2' | 'h3' = 'h2'): HTMLElement | null {
   if (!q) return null
   if ('error' in q) return el('section', { id, tabindex: '-1', 'aria-label': 'Approval queue' }, el(level, {}, 'Approvals'),
     el('p', { class: 'state failed' }, 'The approval queue could not be read: ' + q.error.message + '. Approvals unknown; retrying every 5 s.'))
   const { card, decide, noteFor, noteOf } = q
-  const batches = shown ?? q.batches
-  const requests = batches.flatMap((b) => b.requests)
+  const batches = shown ?? q.batches, requests = batches.flatMap((b) => b.requests)
   const earliest = requests.reduce<string | undefined>((min, r) => !min || r.expiresAt < min ? r.expiresAt : min, undefined)
-  // Its count is Home's tile; its next expiry, the first card's, or in sight when within the hour (T239).
   return el('section', { id, tabindex: '-1', 'aria-label': 'Approval queue' }, el(level, { class: 'kind' }, 'Approvals', whatIs('approval')),
     !requests.length || !earliest ? el('p', { class: 'muted' }, 'No approvals needed.')
       : Date.parse(earliest) - Date.now() < 3600000 ? el('p', { class: 'soon' }, 'Next expiry ' + relative(earliest)) : null,
     batches.map((batch) => {
-      const batchId = batch.batchId
+      const batchId = batch.batchId, n = batch.requests.length
       if (!batchId) return el('div', {}, batches.length > 1 ? el('h3', {}, 'Decided one by one') : null, batch.requests.map(card))
-      const n = batch.requests.length
       const buttons = verdictButtons('approves each request below as shown', 'denies each request below', (verdict, pair, clicked) => void decide(batch.requests.map((r) => ({
         requestId: r.requestId, subject: r.subject, verdict, ...(noteOf(r.requestId) ? { note: noteOf(r.requestId) } : {}) })), noteOf(batchId), batchId, pair, clicked), 'Approve all ' + n, 'Deny all ' + n)
-      // The batch's two buttons in sight; its note for all and its id under its one Details (T239).
       return el('section', { class: 'panel', 'aria-label': 'Batch ' + batchId },
         el('h3', {}, qtyView(n, 'related request'), whatIs('batch')),
         el('div', { class: 'actions' }, buttons),
