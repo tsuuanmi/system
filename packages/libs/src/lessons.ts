@@ -20,10 +20,10 @@ export const LESSONS_PATH = 'docs/engineering/lessons.md'
 /**
  * The bounds of the lessons section (INV-9): at most `lines` lessons, each at most `lineChars`
  * characters (cut), read from at most `fileChars` characters of the file, the whole section at most
- * `sectionBytes` UTF-8 bytes (3,100 estimated tokens: layer 5's share of the handbook's bound); a
+ * `sectionBytes` UTF-8 bytes (1,450 estimated tokens: layer 5's share of the handbook's bound, T321); a
  * lesson that does not fit is counted, never cut silently.
  */
-export const LESSONS_LIMITS = { lines: 30, lineChars: 400, fileChars: 32 * 1024, sectionBytes: 12_400 } as const
+export const LESSONS_LIMITS = { lines: 30, lineChars: 400, fileChars: 32 * 1024, sectionBytes: 5_800 } as const
 
 /** The section's first line. */
 export const LESSONS_HEADING = `Lessons of this repository (${LESSONS_PATH}: mistakes made here before, each with the check or test that now enforces it; do not repeat them):`

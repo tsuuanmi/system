@@ -417,14 +417,42 @@ differs by some tens of percent; the bytes are what is bounded, and no vendor's 
 
 **Each layer has a share** of the bound, so the layer that overflows can be named:
 
-| Layer | Share (tokens) | What fills it today (estimated from the bounds, not measured) |
+| Layer | Share (tokens) | What fills it, measured (T321, below) |
 |---|---|---|
-| 1 | 400 | the pointer, about 30 tokens; `heavy`: 15 titles, about 300 |
-| 2 | 1,300 | the gate view, at most 4,000 characters (about 1,000); the tier's lines |
-| 3 | 300 | none yet |
-| 4 | 900 | a role's prompt, about 150 to 300 |
-| 5 | 3,100 | at most 30 lessons of 400 characters and the heading, about 3,050; today 6 lessons, about 600 |
+| 1 | 600 | the pointer, about 100 tokens; `heavy`: the 15 invariants' titles (no link each: the pointer gives the anchor rule) and the ADRs that name a touched package (title and file, at most 12): 276 to 279 measured |
+| 2 | 1,100 | the gate view, at most 4,000 characters (1,000); the tier's line, 49 to 75 |
+| 3 | 550 | the live charter: 468 |
+| 4 | 2,300 | a role's prompt and rules, 955 to 1,060 for a writer; a review adds its guides: 1,138 (one area), 2,142 (a heavy change in two areas), 3,685 (paths unknown, every guide) |
+| 5 | 1,450 | the lessons that apply, at most 5,800 UTF-8 bytes (`LESSONS_LIMITS.sectionBytes`); today 453 |
 | **Total** | **6,000** | |
+
+**Measured (T321, 2026-10-27).** The slice was replayed with the real homes, the real guides and
+lessons, the live charter and the real path map (`scripts/handbook-bound.spec.ts` holds the shapes).
+The brief store of the last 50 tasks was not read: the replay covers the shapes a change can take,
+not each task's own paths.
+
+| Shape (role, tier) | Total | L1 | L2 | L3 | L4 | L5 |
+|---|---|---|---|---|---|---|
+| writer, one area (normal) | 3,071 | 146 | 1,049 | 468 | 955 | 453 |
+| review, one area (normal) | 3,251 | 143 | 1,049 | 468 | 1,138 | 453 |
+| writer, heavy change, two or more areas | 3,230 | 279 | 1,075 | 468 | 955 | 453 |
+| review, heavy change, two or more areas | 4,414 | 276 | 1,075 | 468 | 2,142 | 453 |
+| writer, paths unknown (heavy) | 3,335 | 279 | 1,075 | 468 | 1,060 | 453 |
+| review, paths unknown (heavy) | 5,957 | 276 | 1,075 | 468 | 3,685 | 453 |
+
+Over these shapes the total's p50 is 3,251 and p90 4,414; the maximum, a review with its paths
+unknown, is 5,957. Before this change layer 1 was 506 (a link on each title) and the unknown-paths
+review 6,184, over the bound. With six shapes the p99 is the maximum, and the shares cannot all
+hold each layer's maximum: the six maxima (279, 1,075, 468, 3,685, 453) sum to 5,960, which leaves
+no margin within 6,000. So the shares are set from the shapes whose paths are known: each layer's
+maximum there plus a margin (layer 1 279 to 600, room for the ADRs of the touched packages, at most
+12; layer 2 1,075 to 1,100; layer 3 468 to 550; layer 4 2,142 to 2,300; layer 5 453 to 1,450, room
+for the lessons to grow to their own bound), summing to 6,000. One shape passes a share by design:
+a review with its paths unknown is given every guide (INV-2), so its layer 4 (3,685) passes its
+share; that is recorded, never refused, while the total holds, and it is the shape nearest the
+bound. `scripts/handbook-bound.spec.ts` holds every shape within the bound and within its shares
+but that one. Lessons grown past their share are refused (a source's half), so the lessons' own
+bound is their share.
 
 This task's own brief (T249, a `docs` writer) carries about 6,300 bytes of handbook (its role text,
 its gate view, six lessons), about 1,600 tokens: an estimate read from the brief, not a measurement
@@ -432,10 +460,10 @@ by code.
 
 The lead's slice (T252) carries the [lead's playbook](../operations/lead-playbook.md) whole: about
 10,000 bytes, about 2,600 tokens (estimated from the file, not measured by code), over layer 4's
-900-token share. With the pointer and K1 to K3, the layer 2 lines (about 1,000), a charter (about
-300), and today's six lessons (about 600), the total is about 4,700 tokens, within the bound: the
-overflow of the share is recorded, never refused (below). Once the lessons fill their share (3,100),
-the lead's total would pass 6,000; the playbook's owner, the lead, shortens it first.
+2,300-token share (T321). With the pointer and K1 to K3, the layer 2 lines (about 1,000), the charter
+(468), and today's lessons (453), the total is about 4,900 tokens, within the bound: the overflow of
+the share is recorded, never refused (below). Once the lessons fill their share (1,450), the lead's
+total would pass 6,000; the playbook's owner, the lead, shortens it first.
 
 **The bound acts on the total.** A slice whose total is within 6,000 tokens is sent whatever its
 layers' shares; a layer over its share in such a slice is recorded, never refused. A slice over the
@@ -444,7 +472,7 @@ half when it drafts the brief. It counts the lessons at what they render to, wit
 source uses (libs `lessonsSectionOf`) on the lessons file of the repository the run's worktree was cut
 from, for the step's role and touched paths, and the gate view, which only the routed Worker's
 evidence decides, at its constructed maximum (1,000 tokens); the lessons too when their repository
-cannot be read (3,100). The source records the size it actually rendered. One exception to acting on
+cannot be read (1,450). The source records the size it actually rendered. One exception to acting on
 the total: a source's half counted over its layer's share is refused in either mode, so a source's
 bound that grows is never sent in the warn period.
 
@@ -460,6 +488,17 @@ bound that grows is never sent in the warn period.
    routed, as an unfilled placeholder does (`refuseInstructions`), with a `gate` decision naming the
    layers over their shares. The owner of a named layer shortens it (folds a lesson, moves a rule's
    text to its home and keeps the link); `continue` builds the slice again.
+   **A refusal never spends an attempt** (T321). The step's error is `config_error` (disposition
+   `CODE_FIX`: the layer's owner fixes the handbook), and the `handbook.bound` decision names what to
+   shorten. The task then waits for input on the board's question wait, as a step's own question
+   does ([a question from a run](workflow-engine.md#a-question-from-a-run)): the run is reported
+   blocked, not failed, so it is never counted and never draws on the free retries kept for the
+   infrastructure (`board.maxFreeRetries`, ADR-0069). Its question says what was refused; once the
+   layer is shortened, the answer continues the same attempt (T291) and the slice is built again.
+   A run that is not a task's, lost its holder, or already asked has no question wait, and its
+   failure is reported as any other. The refusal also files a board task of the
+   project (`workspace-write`, titled by the layers over their shares; one open task per set of
+   layers), which the lead sees without a notice channel (T320's notice, when built, replaces it).
 
 ## What a brief records
 

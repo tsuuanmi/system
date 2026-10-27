@@ -71,27 +71,27 @@ export interface LayerDeclaration {
  */
 export const HANDBOOK_LAYERS: readonly LayerDeclaration[] = [
   {
-    layer: 1, name: 'Constitution', owner: 'operator', share: 400, renderedBy: ['engine'],
+    layer: 1, name: 'Constitution', owner: 'operator', share: 600, renderedBy: ['engine'],
     homes: ['docs/architecture/invariants.md', 'docs/decisions/adr/README.md', 'docs/decisions/README.md#decision-rules', 'docs/governance/documentation.md'],
     version: 'git:<blob of docs/architecture/invariants.md under handbook.root>;adr:<the highest accepted ADR\'s number>',
   },
   {
-    layer: 2, name: 'Organisation policy', owner: 'operator (the lead proposes)', share: 1300, renderedBy: ['engine', 'source'],
+    layer: 2, name: 'Organisation policy', owner: 'operator (the lead proposes)', share: 1100, renderedBy: ['engine', 'source'],
     homes: ['the studio and project autonomy policies (approvals)', 'policies/system.json', 'docs/operations/'],
     version: 'policy:<id>@<version>,…:<hash of the set in force>:map@<id>@<riskTiers.version>,…; the gate view: the policy it was rendered from, recorded by the source',
   },
   {
-    layer: 3, name: 'Project charter', owner: 'operator, with the lead', share: 300, renderedBy: ['engine'],
+    layer: 3, name: 'Project charter', owner: 'operator, with the lead', share: 550, renderedBy: ['engine'],
     homes: ['the board\'s project record (project@1.x charter)'],
     version: 'charter:<projectId>:<charter.version>',
   },
   {
-    layer: 4, name: 'Role playbook', owner: 'lead', share: 900, renderedBy: ['engine'],
+    layer: 4, name: 'Role playbook', owner: 'lead', share: 2300, renderedBy: ['engine'],
     homes: ['the templates\' prompts (profile plugins)', 'docs/design/handbook.md#layer-4-role-playbooks (each rule of AGENTS.md, CONTRIBUTING.md, and docs/engineering/ one line, with its home and check)', 'docs/operations/lead-playbook.md'],
     version: 'playbook:<template>@<its package\'s version>:<sha256 of the playbook text the slice carries>',
   },
   {
-    layer: 5, name: 'Repository lessons', owner: 'lead and review', share: 3100, renderedBy: ['source'],
+    layer: 5, name: 'Repository lessons', owner: 'lead and review', share: 1450, renderedBy: ['source'],
     homes: ['docs/engineering/lessons.md'],
     version: 'git:<blob of the lessons file at the Worker repository\'s HEAD>, recorded by the source',
   },
@@ -367,7 +367,7 @@ const TIER_LINES: Record<RiskTier, string> = {
   heavy: '- This change is heavy by the policy\'s path map (ADR-0071), or its paths could not be read: after an approving review, a second review by another provider family, and the operator accepts the result; it is never accepted automatically.',
 }
 
-const POINTER = '- System\'s constitution binds every change: its invariants (docs/architecture/invariants.md in the System repository) and its accepted ADRs (docs/decisions/adr/README.md); the decision rules are docs/decisions/README.md#decision-rules. Read the ones a change bears on.'
+const POINTER = '- System\'s constitution binds every change: its invariants (docs/architecture/invariants.md in the System repository, each at the anchor `#inv-<n>-<title in lower case, spaces as hyphens>`) and its accepted ADRs (docs/decisions/adr/README.md, each a file of that directory); the decision rules are docs/decisions/README.md#decision-rules. Read the ones a change bears on.'
 
 /** What the engine read for a step's slice: its selection, the policy's version, the project's charter, and the handbook's homes. */
 export interface Read {
@@ -460,7 +460,7 @@ function templateVersion(e: Engine, template: string): string {
 export function engineHandbook(run: Pick<RunRow, 'template'>, spec: Pick<ResolvedNode, 'prompt'>, read: Read, version = 'unversioned'): HandbookSource {
   const { homes, selection } = read
   const parts: HandbookPart[] = [{ id: 'L1.pointer', layer: 1, text: POINTER }]
-  for (const inv of homes.invariants?.titles ?? []) parts.push({ id: inv.id, layer: 1, text: `- ${inv.id} ${inv.title} (${HOME.invariants}#${inv.anchor})`, applies: { tiers: ['heavy'] } })
+  for (const inv of homes.invariants?.titles ?? []) parts.push({ id: inv.id, layer: 1, text: `- ${inv.id} ${inv.title}`, applies: { tiers: ['heavy'] } })
   // A heavy change's ADRs, by the packages it touches; none to name while its paths are unknown.
   const packages = [...new Set((selection.touched ?? []).map(packageOf).filter((p): p is string => !!p))]
   if (selection.tier === 'heavy' && packages.length && homes.adrs && homes.adrText) {
@@ -468,7 +468,7 @@ export function engineHandbook(run: Pick<RunRow, 'template'>, spec: Pick<Resolve
       const text = homes.adrText!(a.file)
       return !!text && packages.some((p) => text.includes(p))
     })
-    for (const adr of named.slice(0, MAX_ADRS)) parts.push({ id: `ADR-${adr.number}`, layer: 1, text: `- ADR-${adr.number} ${adr.title} (docs/decisions/adr/${adr.file})`, applies: { tiers: ['heavy'] } })
+    for (const adr of named.slice(0, MAX_ADRS)) parts.push({ id: `ADR-${adr.number}`, layer: 1, text: `- ADR-${adr.number} ${adr.title} (${adr.file})`, applies: { tiers: ['heavy'] } })
     if (named.length > MAX_ADRS) parts.push({ id: 'ADR-more', layer: 1, text: `- and ${named.length - MAX_ADRS} more accepted ADRs name these packages (docs/decisions/adr/README.md)`, applies: { tiers: ['heavy'] } })
   }
   for (const tier of ['light', 'normal', 'heavy'] as const) parts.push({ id: `L2.tier.${tier}`, layer: 2, text: TIER_LINES[tier], applies: { tiers: [tier] } })
@@ -724,10 +724,39 @@ export function applyHandbook(e: Engine, run: RunRow, node: NodeRow, draft: Draf
   }
 }
 
+/**
+ * File a board task for a refused slice (T321, in place of T320's lead notice): the layers' owners
+ * shorten what the layers carry, and the lead sees it in the project's tasks. One open task per set
+ * of layers, so a refusal that repeats (a free retry) files nothing again. Best effort: a board that
+ * cannot take it is logged, never a second failure of a step that is already refused.
+ */
+export async function fileRefusal(e: Engine, built: Built, node: Pick<NodeRow, 'node_id'>): Promise<void> {
+  const { slice } = built
+  const named = [...slice.over, ...slice.sourceOver].map((l) => l.layer)
+  const layers = [...new Set(named)].sort()
+  const words = [...slice.over, ...slice.sourceOver].map((l) => `layer ${l.layer} (${LAYER.get(l.layer)!.name}, owner ${l.owner}) holds ${l.tokens} tokens of its ${l.share}`)
+  const title = `Handbook slice refused: ${layers.length ? `layer ${layers.join(', ')} over ${layers.length === 1 ? 'its share' : 'their shares'}` : 'no room in the brief'}`.slice(0, 200)
+  try {
+    if (!e.board) return
+    const open = await e.board.tasks({ projectId: built.projectId, states: ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval'] })
+    if (open.some((t) => t.title === title)) return
+    await e.board.propose({
+      projectId: built.projectId, title, actionClass: 'workspace-write',
+      goal: `Task ${built.taskId}'s step ${node.node_id} was refused at its start (handbook_over_bound): the slice holds ${slice.tokens} estimated tokens, the bound is ${HANDBOOK_BOUND}${words.length ? `; ${words.join('; ')}` : ''}. The attempt was not spent. Shorten what the named layers carry or move their shares (docs/design/handbook.md#the-6000-token-bound).`.slice(0, 2000),
+      acceptance: [{ id: 'fits', statement: `A slice of the same shape is within ${HANDBOOK_BOUND} tokens and every layer within its share` }],
+    })
+  } catch (error) {
+    e.ctx.logger.warn(`workflow: the refusal of ${node.node_id}'s handbook slice could not be filed as a task: ${(error as Error).message}`)
+  }
+}
+
 /** Fail a step whose slice is refused, before anything is routed or sent: the decision first, then `config_error`, no input receipt, so `continue` builds the slice again. */
 function refuse(e: Engine, run: RunRow, node: NodeRow, decision: ArtifactRef, message: string, lease: () => Lease): void {
   e.ctx.store.transaction(() => {
     const error: WorkflowError = { kind: 'config_error', disposition: dispositionOf('config_error'), message }
+    // The handbook's own bound, never the task's work (T321): the task waits for input on the board's
+    // question wait, so no attempt and no free retry is spent; the answer continues this attempt.
+    e.tasks.waitsOnHandbook(run.run_id, node.node_id, decision, `Step ${node.node_id}'s handbook slice was refused at its start, before anything was sent; no attempt was spent. ${message}. Once the named layer is shortened, answer to continue this attempt.`)
     e.writeNode(node, { state: 'FAILED', error: JSON.stringify(error) }, (r) => {
       const next: NodeRecord = { ...r, lastDecision: decision }
       delete next.inputReceipt
