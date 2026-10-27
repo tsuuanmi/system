@@ -12,13 +12,16 @@ import Leases from '@tsuuanmi/system-leases'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import StoreResources from '@tsuuanmi/system-resources'
 import Store from '@tsuuanmi/system-store'
-import { describe, expect, it, onTestFinished } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { charter, POLICY, until } from '../../profile-software-development/tests/pilot.ts'
 import * as Report from '../src/index.ts'
 import { type DigestSources } from '../src/digest.ts'
 import { type HealthSources } from '../src/health.ts'
 
 // The lead's digest and health table (PROP-0019 section 2.10), over a fixture day with known records.
+// The tests over the real core boot it and (one) put 1001 reports: under the full parallel suite that
+// outlasts vitest's 5 s, so the bound is the one the other real-core specs carry.
+vi.setConfig({ testTimeout: 120_000 })
 const DAY = '2026-10-26'
 const at = (hhmm: string): string => `${DAY}T${hhmm}:00.000Z`
 const COMMIT = 'a'.repeat(40)
