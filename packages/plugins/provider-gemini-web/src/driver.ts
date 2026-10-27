@@ -9,9 +9,8 @@
  * A bound chat is deleted from its own menu, only once it opens as itself (PROP-0004 Phase 5).
  */
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, splitAfterLastFence, waitForReport, waitForStableCompletion, withSources } from '@tsuuanmi/system-provider-core'
-import { type Condition, copiedMarkdown, type CopyRefusedEvent, type DriftEvent, outlineOf, preWrapText, type StallEvent, toLocator, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
+import { type Condition, copiedMarkdown, type CopyRefusedEvent, type DriftEvent, deletionUnverified, inspectConversationMenu, pageIdle, preWrapText, shippedMapOf, type StallEvent, toLocator, UiEngine, type UiMap, type UiOutline } from '@tsuuanmi/system-ui-ops'
 import type { Locator, Page, Route } from 'patchright-core'
 
 const MAP_URL = new URL('../ui/gemini-web.ui.yaml', import.meta.url)
@@ -19,7 +18,7 @@ const CONVERSATION = /^\/app\/([0-9a-f]{16})$/
 
 /** The shipped map, with an optional local overlay merged after it. */
 export function shippedMap(overlay?: string): UiMap {
-  return loadUiMap(readFileSync(MAP_URL, 'utf8'), overlay)
+  return shippedMapOf(MAP_URL, overlay)
 }
 
 export interface DriverTimeouts {
@@ -49,8 +48,6 @@ export interface DriverTimeouts {
   planHangMs?: number
 }
 
-/** The map entries the deletion depends on: each must be checked on the live site before anything is deleted. */
-const DELETION_ENTRIES = ['conversation.pane', 'conversation.options', 'conversation.delete', 'conversation.delete-dialog', 'conversation.delete-confirm', 'conversation.missing', 'conversation.open-options', 'conversation.choose-delete', 'conversation.confirm-delete']
 /** The site's RPC endpoint, which a deletion goes through. */
 const RPC_REQUEST = /\/_\/BardChatUi\/data\/batchexecute/
 
@@ -117,9 +114,6 @@ const ACCOUNT_LABEL = /^Google Account:\s*/
 const accountOf = (label: string | null): string | undefined => (label && ACCOUNT_LABEL.test(label) ? label.replace(ACCOUNT_LABEL, '').trim() || undefined : undefined)
 /** How often the account's button is looked for again while it is neither shown nor hidden. */
 const ACCOUNT_POLL_MS = 250
-
-/** How long a page may take to settle (its Stop control gone) before it counts as busy and is not kept. */
-const PAGE_IDLE_WAIT_MS = 3000
 
 export class GeminiWebDriver implements ProviderDriver<Page> {
   readonly provider = 'gemini-web'
@@ -470,7 +464,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
 
   /** The deletion's map entries not yet checked on the live site: while any is, nothing is deleted. */
   deletionUnverified(): string[] {
-    return unverifiedEntries(this.map, DELETION_ENTRIES)
+    return deletionUnverified(this.map)
   }
 
   /**
@@ -478,13 +472,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
    * deletion's map entries without opening the operator's browser. The menu is closed with Escape.
    */
   async inspectConversation(page: Page, binding: string): Promise<UiOutline[]> {
-    const shown = await this.openConversation(page, binding)
-    const outlines = [await outlineOf(page, `conversation page (${shown})`)]
-    if (shown !== 'shown') return outlines
-    const opened = await this.engine(page).act('conversation.open-options').then(() => true, () => false)
-    outlines.push(await outlineOf(page, opened ? 'conversation menu' : 'conversation menu (not opened)'))
-    await page.keyboard.press('Escape')
-    return outlines
+    return inspectConversationMenu(page, this.engine(page), await this.openConversation(page, binding))
   }
 
   /** Open a bound conversation: shown as itself (its own path, its turns), positively missing, or neither. */
@@ -554,13 +542,9 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     return this.bindingOf(page) === binding && (await this.engine(page).count('turn.user')) > 0
   }
 
-  /**
-   * Nothing generating, no dialog or menu open: a session-bound account keeps the page for the
-   * session's next turn. Right after an answer the Stop control may linger a moment, so it waits
-   * briefly (`PAGE_IDLE_WAIT_MS`) before calling the page busy.
-   */
+  /** Nothing generating, no dialog or menu open: a session-bound account keeps the page for the session's next turn. */
   async pageIdle(page: Page): Promise<boolean> {
-    return this.engine(page).waitFor({ state: 'page.idle' }, PAGE_IDLE_WAIT_MS).then(() => true, () => false)
+    return pageIdle(this.engine(page))
   }
 
   /** Where the tabs are shown, Chat must be the active one. */

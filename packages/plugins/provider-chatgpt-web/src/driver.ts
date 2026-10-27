@@ -7,9 +7,8 @@
  * - running is Stop in the action slot; completion also needs the answer's finished
  *   marker and stable text (the event stream stays open, so it is never consulted).
  */
-import { readFileSync } from 'node:fs'
 import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, splitAfterLastFence, waitForReport, waitForStableCompletion, withMissingSources } from '@tsuuanmi/system-provider-core'
-import { copiedMarkdown, type CopyRefusedEvent, type DriftEvent, type HealEvent, linksIn, outlineOf, preWrapText, type StallEvent, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
+import { copiedMarkdown, type CopyRefusedEvent, type DriftEvent, type HealEvent, deletionUnverified, inspectConversationMenu, linksIn, pageIdle, preWrapText, shippedMapOf, type StallEvent, UiEngine, type UiMap, type UiOutline } from '@tsuuanmi/system-ui-ops'
 import type { Frame, Locator, Page, Route } from 'patchright-core'
 
 /** How long the logged-out home must hold, with no composer, before it counts as signed out. */
@@ -54,14 +53,12 @@ const NO_GUARDS = { guards: false } as const
 
 const MAP_URL = new URL('../ui/chatgpt-web.ui.yaml', import.meta.url)
 const CONVERSATION = /^\/c\/([0-9a-f-]{36})(?:[/?#]|$)/
-/** The map entries the deletion depends on: each must be checked on the live site before anything is deleted. */
-const DELETION_ENTRIES = ['conversation.pane', 'conversation.options', 'conversation.delete', 'conversation.delete-dialog', 'conversation.delete-confirm', 'conversation.missing', 'conversation.open-options', 'conversation.choose-delete', 'conversation.confirm-delete']
 /** Every request that could delete or change a conversation: during a deletion only the bound one's deletion passes. */
 const DELETE_REQUEST = /\/backend-api\/conversations?(?:\/[^?#]*)?(?:[?#]|$)/
 
 /** The shipped map, with an optional local overlay merged after it. */
 export function shippedMap(overlay?: string): UiMap {
-  return loadUiMap(readFileSync(MAP_URL, 'utf8'), overlay)
+  return shippedMapOf(MAP_URL, overlay)
 }
 
 /** The tools popover entry that proves each account feature. */
@@ -77,9 +74,6 @@ function siteErrorPage(): ProviderError {
   SITE_ERROR_PAGES.add(error)
   return error
 }
-
-/** How long a page may take to settle (its Stop control gone) before it counts as busy and is not kept. */
-const PAGE_IDLE_WAIT_MS = 3000
 
 export class ChatGptWebDriver implements ProviderDriver<Page> {
   readonly provider = 'chatgpt-web'
@@ -319,13 +313,9 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     return this.bindingOf(page) === binding && (await this.engine(page).count('turn.user')) > 0
   }
 
-  /**
-   * Nothing generating, no dialog or menu open: a session-bound account keeps the page for the
-   * session's next turn. Right after an answer the Stop control may linger a moment, so it waits
-   * briefly (`PAGE_IDLE_WAIT_MS`) before calling the page busy.
-   */
+  /** Nothing generating, no dialog or menu open: a session-bound account keeps the page for the session's next turn. */
   async pageIdle(page: Page): Promise<boolean> {
-    return this.engine(page).waitFor({ state: 'page.idle' }, PAGE_IDLE_WAIT_MS).then(() => true, () => false)
+    return pageIdle(this.engine(page))
   }
 
   /** Select Chat if it is not already the pressed mode, then require it. */
@@ -418,7 +408,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
 
   /** The deletion's map entries not yet checked on the live site: while any is, nothing is deleted. */
   deletionUnverified(): string[] {
-    return unverifiedEntries(this.map, DELETION_ENTRIES)
+    return deletionUnverified(this.map)
   }
 
   /**
@@ -426,13 +416,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
    * deletion's map entries without opening the operator's browser. The menu is closed with Escape.
    */
   async inspectConversation(page: Page, binding: string): Promise<UiOutline[]> {
-    const shown = await this.openConversation(page, binding)
-    const outlines = [await outlineOf(page, `conversation page (${shown})`)]
-    if (shown !== 'shown') return outlines
-    const opened = await this.engine(page).act('conversation.open-options').then(() => true, () => false)
-    outlines.push(await outlineOf(page, opened ? 'conversation menu' : 'conversation menu (not opened)'))
-    await page.keyboard.press('Escape')
-    return outlines
+    return inspectConversationMenu(page, this.engine(page), await this.openConversation(page, binding))
   }
 
   /** Open a bound conversation: shown as itself (its own path, its turns), positively missing, or neither. */
