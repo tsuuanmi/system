@@ -15,6 +15,23 @@ afterEach(async () => {
 })
 
 describe('removability matrix harness', () => {
+  it.each(['accounts', 'display', 'browser', 'providers', 'agent-runtimes', 'llm'])('health is ok with row %s off, and names its dependents off with their reason (T325)', async (id) => {
+    const system = await bootBundle(id, ['profile-software-development'])
+    booted.push(system)
+    const health = async (): Promise<{ state: string; checks: Array<{ name: string; state: string; detail: string }> }> => {
+      const response = await fetch(system.mcp!.url, {
+        method: 'POST', signal: AbortSignal.timeout(60_000), body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'status', arguments: { checks: true } } }),
+        headers: { authorization: `Bearer ${system.mcp!.operator}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      })
+      const text = await response.text()
+      const data = text.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim()).at(-1) ?? text
+      return (JSON.parse(data) as { result: { structuredContent: { health: never } } }).result.structuredContent.health
+    }
+    const plugins = (await health()).checks.find((c) => c.name === 'plugins')!
+    expect(plugins.state).toBe('ok')
+    expect(plugins.detail).toMatch(/off: \S+ waits for service [\w-]+, whose row is off/)
+  })
+
   it('classifies every row of the bundle as required or optional, once', () => {
     const { required, optional } = classes()
     const ids = bundleRows().map((r) => r.id)

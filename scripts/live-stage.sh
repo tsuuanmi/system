@@ -14,8 +14,8 @@
 #   4. the canary (scripts/canary.ts run): health, a board task on a canary project through
 #      algorithm-development (its attempt, its dossier's evidence, its result on the board), an ask,
 #      and a research run, on the fake Workers; then the removability smoke (T317, `pnpm test:removability`)
-#      in that checkout, under --removability: `warn` (the default while the matrix is not yet green) logs
-#      a failure and goes on, `on` stops the stage on it;
+#      in that checkout, under --removability: `on` (the default, the matrix being green: T325) stops
+#      the stage on a failure, `warn` logs it and goes on;
 #   5. `system shutdown --profile system-test`; the daemon is never killed.
 # It never reads or writes the live profile's data directory, profile, port, or unit. Exit 0: the
 # canary passed; 1: a step failed (named); 2: usage.
@@ -28,7 +28,7 @@ usage() {
 }
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-CHECK_WITH='' HOME_DIR='' NODE_DIR='' PNPM_DIR='' ENV_FILE='' PATCH='' WAIT=180 REMOVABILITY=warn
+CHECK_WITH='' HOME_DIR='' NODE_DIR='' PNPM_DIR='' ENV_FILE='' PATCH='' WAIT=180 REMOVABILITY=on
 while (($#)); do
   case $1 in
     --check-with | --dsh-home | --node-dir | --pnpm-dir | --env-file | --patch | --wait | --removability)

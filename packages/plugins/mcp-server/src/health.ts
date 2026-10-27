@@ -46,7 +46,7 @@ export interface HealthSources {
   /** Events of `type` committed since `sinceIso`. */
   events?: (type: string, sinceIso: string) => Array<{ data?: Record<string, unknown> | undefined }>
   /** Plugins of the composition that failed to activate or wait for a service no one supplies. */
-  plugins?: () => Array<{ name: string; state: 'failed' | 'pending'; detail: string }>
+  plugins?: () => Array<{ name: string; state: 'failed' | 'pending' | 'off'; detail: string }>
   /**
    * The plugins of the composition as the plugin host read them (REQ-HOST-7): whether a row mounts
    * each, its manifest's state and why it is not valid, and what the manifest check found in it.
@@ -205,10 +205,13 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
   // A plugin that is not running takes its tools and its dependents with it: work cannot run as composed.
   if (sources.plugins) {
     checks.push(await guarded('plugins', () => {
-      const broken = sources.plugins!()
+      const all = sources.plugins!()
+      const broken = all.filter((p) => p.state !== 'off')
+      // A dependent of a row that is off waits as Cordis makes it wait: it is off with that reason, not down.
+      const off = all.filter((p) => p.state === 'off')
       return broken.length
         ? { name: 'plugins', state: 'down', detail: `${listOf(broken.map((p) => `${p.name} ${p.state}: ${p.detail}`), '; ')}. See the daemon's log, fix the configuration, and restart (docs/operations/runbooks.md)` }
-        : ok('plugins', 'every plugin of the composition is active')
+        : ok('plugins', ['every plugin of the composition is active', ...(off.length ? [`off: ${listOf(off.map((p) => `${p.name} ${p.detail}`), '; ')}`] : [])].join('; '))
     }))
   }
   // A finding of the manifest check fails closed: the host cannot keep that plugin from running, so it
