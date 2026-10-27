@@ -378,7 +378,7 @@ export class StoreApprovals extends Approvals {
 
   async check(action: Action): Promise<AutonomyVerdict> {
     this.validAction(action)
-    const { actionClass, rule: { policy, mode, named, raised }, failedChecks, policies, forbidden } = this.set.judge(action)
+    const { actionClass, rule: { policy, mode, named, raised }, failedChecks, policies, forbidden, commandRule } = this.set.judge(action)
     const source = named ? `${policy.id}'s rule for ${actionClass}` : `${policy.id}'s default, as no rule of it names ${actionClass}`
     const reason = (m: typeof mode): string => forbidden ? (m === mode ? `${forbidden}: forbidden whatever a rule says` : `not ${m}: ${forbidden}`)
       : raised ? (m === mode ? `${source} says ${raised}, raised to ask: ${actionClass} always asks` : rank(m) < rank(mode) ? `not ${m}: ${actionClass} always asks` : `not ${m}: nothing that applies to ${actionClass} is that strict`)
@@ -389,7 +389,7 @@ export class StoreApprovals extends Approvals {
       schema: 'decision@1.4', decisionType: 'autonomy', question: `Which mode does the policy give a ${action.class} action?`, inputs: [],
       candidates: MODES.map((m) => ({ option: m, selected: m === mode, reasons: [reason(m)] })),
       decider: { type: 'policy', id: policy.id, version: String(policy.version), hash: this.set.hash(action.projectId) },
-      outcome: { option: mode, detail: { actionClass, policies: policies.map((p) => p.id), ...(failedChecks.length ? { failedChecks } : {}), ...(forbidden ? { forbidden } : {}) } }, deterministic: true,
+      outcome: { option: mode, detail: { actionClass, policies: policies.map((p) => p.id), ...(failedChecks.length ? { failedChecks } : {}), ...(forbidden ? { forbidden } : {}), ...(commandRule ? { commandRule } : {}) } }, deterministic: true,
     }, { producer: { type: 'policy', ref: policy.id } })
     return { mode, ...(failedChecks.length ? { failedChecks } : {}), policy: { id: policy.id, version: policy.version }, decision: decision.id as ArtifactRef }
   }
@@ -1260,6 +1260,7 @@ export class StoreApprovals extends Approvals {
     if (!ACTION_CLASSES.includes(action.class)) throw invalid(`${String(action.class)} is not an action class`)
     if (action.projectId !== undefined && (typeof action.projectId !== 'string' || !ID.test(action.projectId))) throw invalid(`projectId ${JSON.stringify(action.projectId)} is not an id`)
     if (action.command !== undefined && (!Array.isArray(action.command) || action.command.some((word) => typeof word !== 'string'))) throw invalid('command must be an argv: a list of strings')
+    if (action.commandRule !== undefined && (typeof action.commandRule !== 'string' || !/^[a-z][a-z0-9.-]{0,63}$/.test(action.commandRule))) throw invalid('commandRule must be a command rule id')
     if (action.checks !== undefined && !isRecord(action.checks)) throw invalid('checks must be an object of check names to whether they passed')
   }
 

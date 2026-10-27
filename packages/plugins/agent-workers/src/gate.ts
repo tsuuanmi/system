@@ -9,20 +9,23 @@
  * review-member profile, ADR-0049) has every call denied: its material is its prompt alone.
  * @module @tsuuanmi/system-agent-workers/gate
  */
+import { execFile } from 'node:child_process'
 import { lstatSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import { COMMIT_ID, HOST_TOOLS_SERVER, type ToolCall, type ToolGate, type ToolVerdict, WORKSPACE_GIT_TOOLS, WORKSPACE_READS_SERVER, WORKSPACE_READ_TOOLS } from '@tsuuanmi/system-agent-runtime-core'
 import {
-  type ActionClass, type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, type Check, SHELL_METACHARACTER, webAccessOf, type WebTool, withinClassification,
+  type ActionClass, type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, type Check, type CommandPathScope, commandRulesOf, SHELL_METACHARACTER, webAccessOf, type WebTool, withinClassification,
 } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
 import { contentId, isRecord } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
+import { matchCommandRule, REF_NAME } from './command-rules.ts'
 import { namesLocalPath, WEB_PROBE_QUERY, webTarget } from './research.ts'
 
 /**
@@ -432,13 +435,6 @@ function findRule(args: string[], workspace: string): boolean {
 
 const HEAD_TAIL: Record<string, RegExp> = { '-n': /^\+?\d+$/, '-c': /^\+?\d+$/ }
 const LS_FLAGS = among('-l', '-a', '-A', '-la', '-al', '-lA', '-1', '-R', '-h', '-lh', '-lah', '-alh', '-F')
-/**
- * A ref name, a hex id, or one with `^` suffixes: `/`-separated segments, each starting with a letter,
- * a digit, or `_`, holding no `..` and no segment that starts with `.`. So it can never name a path
- * that climbs out of the directory git runs in (`src/../../etc/passwd`): `git diff` takes two words
- * outside the repository for files, diffing them with no index (T276).
- */
-const REF_NAME = '[A-Za-z0-9_](?:[A-Za-z0-9_-]|\\.(?![./])|/(?=[A-Za-z0-9_]))*\\^*'
 /** A revision word: a {@link REF_NAME}, or a range of two (`a..b`, `a...b`): never an option, never a path that leaves the directory. */
 const REVISION = new RegExp(`^${REF_NAME}(?:\\.\\.\\.?${REF_NAME})?$`)
 /** `show`'s `<rev>:<path>`: one {@link REF_NAME}, the path relative to the repository root (its `..` and `.git` segments refused). */
@@ -1041,12 +1037,17 @@ export function classify(call: ToolCall, workspace: string, options: ClassifyOpt
     // there), only for a test file inside it; outside it, refused before the policy is asked.
     if (isOneTestRun(argv)) {
       const file = argv[ONE_TEST_RUN.length]!
+      // A relative path is the policy's command rules' to judge (the shell starts in the worktree); it stays a command.
+      if (!file.startsWith('/')) return { class: 'command', command: argv, summary: clamp(`${tool}: ${command}`), consequences: `Runs this exact command in the run's workspace: ${command}\n${ANSWER}` }
       if (!pathWord(workspace, file)) return { refused: `${tool}: ${clamp(file)} is not a test file inside the workspace (an absolute path, with no "..", that stays inside it on disk): one test file runs only inside the run's worktree`, reason: 'outside-workspace' }
       return { class: 'workspace-write', summary: clamp(command), consequences: `Runs the one test file ${file} inside the run's workspace, its output readable; it writes only the test runner's caches there. ${ANSWER}` }
     }
     // The tests related to the files a Worker changed (T299): a write of the workspace (the runner's caches), only for files inside it.
     if (isRelatedTestRun(argv)) {
-      const outside = argv.slice(RELATED_TEST_RUN.length).find((file) => !pathWord(workspace, file))
+      const files = argv.slice(RELATED_TEST_RUN.length)
+      const outside = files.find((file) => file.startsWith('/') && !pathWord(workspace, file))
+      // A relative path is the policy's command rules' to judge (the shell starts in the worktree); it stays a command.
+      if (outside === undefined && files.some((file) => !file.startsWith('/'))) return { class: 'command', command: argv, summary: clamp(`${tool}: ${command}`), consequences: `Runs this exact command in the run's workspace: ${command}\n${ANSWER}` }
       if (outside !== undefined) return { refused: `${tool}: ${clamp(outside)} is not a file inside the workspace (an absolute path, with no "..", that stays inside it on disk): the related tests run only on the run's worktree`, reason: 'outside-workspace' }
       return { class: 'workspace-write', summary: clamp(command), consequences: `Runs the tests of the run's workspace that relate to the files named, inside it; it writes only the test runner's caches there. ${ANSWER}` }
     }
@@ -1072,6 +1073,11 @@ export interface GateRun {
   /** The Worker's kind, its runtime (`claude-agent-sdk`, `codex-sdk`, …): its denials are counted by it (T207). */
   workerKind?: string | undefined
   workspace: string
+  /**
+   * The repository the run's worktree is cut from (a real path), when the run works in one: a
+   * command rule's `repository-read` paths may be under it, read-only. Absent: the worktree only.
+   */
+  repository?: string | undefined
   /** The run's session: an approved call runs in a later run of it. */
   sessionId?: string | undefined
   /** The workflow run the agent run belongs to, for the decisions' and events' lineage. */
@@ -1197,6 +1203,89 @@ function mismatch(request: ApprovalRequest, call: { ref: string; version: string
   if (request.requester.runId !== call.runId) return 'requester run'
   if (request.requester.sessionId !== call.sessionId) return 'requester session'
   return undefined
+}
+
+const execFileAsync = promisify(execFile)
+const GIT_ENV = { PATH: process.env.PATH ?? '/usr/bin:/bin', LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
+
+/**
+ * Whether `word` is a path a command rule allows under `scope` (`autonomy-policy@1.4`): relative to
+ * the worktree (the runtime starts a Worker's shell there) or absolute; no `..`, never git's own data
+ * (`.git`, as written or on disk), every symlink followed on disk. `run-worktree` is inside the
+ * worktree below its top, and never `.system`; `repository-read` is inside the worktree or the run's
+ * repository, read-only, `.system` included; `scratch-file` is `run-worktree` that is an untracked
+ * regular file (not a link, not a directory), as `git ls-files` says; `test-target` is `run-worktree`
+ * that names one test file or one directory as a test runner's filter selects it ({@link testTarget}).
+ */
+async function commandPath(workspace: string, repository: string | undefined, word: string, scope: CommandPathScope): Promise<boolean> {
+  if (word === '' || word.startsWith('-') || word.startsWith('~') || /^file:/i.test(word) || word.includes('\0')) return false
+  const segments = word.split('/').map((s) => s.toLowerCase())
+  if (segments.includes('..') || segments.includes('.git')) return false
+  if (scope !== 'repository-read' && segments.includes('.system')) return false
+  const worktree = resolve(workspace)
+  const absolute = isAbsolute(word) ? resolve(word) : resolve(worktree, word)
+  const roots = scope === 'repository-read' && repository !== undefined ? [worktree, resolve(repository)] : [worktree]
+  const root = roots.find((r) => inside(r, absolute) && within(r, absolute) && !gitData(r, absolute))
+  if (root === undefined) return false
+  if (scope === 'repository-read') return true
+  const rel = relative(worktree, absolute)
+  if (rel === '' || rel.split(sep).includes('.system')) return false
+  if (scope === 'run-worktree') return true
+  if (scope === 'test-target') return testTarget(worktree, word, absolute, rel)
+  try {
+    if (!lstatSync(absolute).isFile()) return false
+    await execFileAsync('git', ['--literal-pathspecs', '-C', worktree, '-c', 'core.fsmonitor=false', 'ls-files', '--error-unmatch', '--', rel], { env: GIT_ENV, timeout: 10_000, killSignal: 'SIGKILL' })
+    return false
+  } catch (error) {
+    // Exit 1: git knows no such tracked file, so it is untracked (or ignored). Any other failure refuses.
+    return code(error) === 1 && (() => {
+      try {
+        return lstatSync(absolute).isFile()
+      } catch {
+        return false
+      }
+    })()
+  }
+}
+
+/** The test files a worktree has at most for a `test-target` check (INV-9): past it, no word is one. */
+const TEST_TARGET_FILES = 20_000
+
+/**
+ * Whether `word` (a `run-worktree` path, `absolute` and `rel` its forms) names one test file or one
+ * directory of the worktree as a test runner's filter selects it, and nothing else. vitest takes a
+ * path word as a filter, not a path: a test file is selected when its path relative to the root
+ * holds the word (or its relative form) as a substring, or, for an absolute word, starts with it.
+ * So `tests` or `a.spec.ts` would select test files across the whole repository. The word must exist
+ * (a regular file with a test file's name, or a tests directory, `tests`, `test`, or `__tests__`, or
+ * a directory inside one; no link), and every test file of the
+ * worktree (`git ls-files`, tracked and untracked but not ignored) that the filter selects must be
+ * that file or under that directory.
+ */
+async function testTarget(worktree: string, word: string, absolute: string, rel: string): Promise<boolean> {
+  try {
+    const stat = lstatSync(absolute)
+    // A directory is a tests directory or one inside it: `packages` names what it selects, and that is a suite.
+    const testsDirectory = stat.isDirectory() && rel.split(sep).some((segment) => /^(tests?|__tests__)$/.test(segment))
+    if (!(testsDirectory || (stat.isFile() && TEST_FILE.test(absolute)))) return false
+  } catch {
+    return false
+  }
+  let listed: string
+  try {
+    listed = (await execFileAsync('git', ['--literal-pathspecs', '-C', worktree, '-c', 'core.fsmonitor=false', 'ls-files', '-z', '-c', '-o', '--exclude-standard'], { env: GIT_ENV, timeout: 10_000, killSignal: 'SIGKILL', maxBuffer: 32 * 1024 * 1024 })).stdout
+  } catch {
+    return false
+  }
+  const tests = listed.split('\0').filter((path) => path !== '' && TEST_FILE.test(path))
+  if (tests.length > TEST_TARGET_FILES) return false
+  const under = rel.split(sep).join('/')
+  // vitest keeps a word's trailing `/` on its relative form too.
+  const filters = [word.toLowerCase(), (word.endsWith('/') ? `${under}/` : under).toLowerCase()]
+  return tests.every((path) => {
+    const selected = filters.some((f) => path.toLowerCase().includes(f)) || (isAbsolute(word) && join(worktree, path).startsWith(word))
+    return !selected || path === under || path.startsWith(`${under}/`)
+  })
 }
 
 const RULE = { type: 'rule', id: 'agent-workers.tool-gate', version: '1' } as const
@@ -1349,7 +1438,7 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
   }
 
   /** An `ask`: the request already opened for this exact call in this session, or a new one. */
-  const ask = async (approvals: Approvals, call: ToolCall, action: ToolAction, verdict: AutonomyVerdict): Promise<ToolVerdict> => {
+  const ask = async (approvals: Approvals, call: ToolCall, action: ToolAction, verdict: AutonomyVerdict, ruledProject?: string): Promise<ToolVerdict> => {
     if (!run.sessionId) return refuse(call, `the policy asks the operator about this ${action.class} call, and run ${run.runId} has no session a later run could continue once approved, so it cannot wait`, 'no-session', [verdict.decision], action.class)
     const scope = `session:${run.sessionId}`
     const inputHash = contentId(call.input)
@@ -1371,7 +1460,7 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
       requester: {
         component: 'worker', runId: run.runId, sessionId: run.sessionId,
         // Judged again under the project its verdict was (a research run's, T262).
-        ...(researchProject() !== undefined ? { projectId: researchProject()! } : {}),
+        ...((researchProject() ?? ruledProject) !== undefined ? { projectId: (researchProject() ?? ruledProject)! } : {}),
         // The board task it serves, so that task's project's lead may answer it (ADR-0076); never judged on.
         ...(run.taskId ? { taskId: run.taskId } : {}),
         ...(call.callId && call.callId.length <= 128 ? { toolUseId: call.callId } : {}),
@@ -1491,8 +1580,23 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
     }
     // A research run's calls are judged under its task's project's policy too (T262): the policy that
     // gives the web grant also binds, so a project's forbid holds whatever the grant says.
-    const projectId = researchProject()
-    let verdict = await approvals.check({ class: action.class, ...(action.command ? { command: action.command } : {}), ...(projectId !== undefined ? { projectId } : {}) })
+    let projectId = researchProject()
+    // A command a command rule of the policy allows (autonomy-policy@1.4) is judged as a workspace
+    // write, under the run's project's policy set when it has one (the studio's rules, narrowed by the
+    // project's): the decision names the rule.
+    let ruled: string | undefined
+    if (action.class === 'command' && action.historyRead !== true && action.command) {
+      const forProject = run.projectId ?? projectId
+      const policies = (await approvals.policy(forProject)).policies
+      const rule = await matchCommandRule(commandRulesOf(policies), action.command, { path: (word, scope) => commandPath(run.workspace, run.repository, word, scope) })
+      if (rule) {
+        ruled = rule.id
+        projectId = forProject
+      }
+    }
+    let verdict = await approvals.check({ class: action.class, ...(action.command ? { command: action.command } : {}), ...(ruled ? { commandRule: ruled } : {}), ...(projectId !== undefined ? { projectId } : {}) })
+    // The rule made it a workspace write unless commands are forbidden (then the verdict is forbid, and the class stays command).
+    if (ruled && verdict.mode !== 'forbid') action = { class: 'workspace-write', summary: action.summary, consequences: action.consequences, ...(action.command ? { command: action.command } : {}) }
     // A git history read (T276) the policy asks about as a command is judged as a workspace write, as
     // the policy judges a command on its commands list: it runs where writes run unasked; a forbidden
     // command class, or writes that are not unasked, leave the command's own verdict.
@@ -1532,7 +1636,7 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
         return { decision: 'allow' }
       }
       case 'ask':
-        return ask(approvals, call, action, verdict)
+        return ask(approvals, call, action, verdict, ruled ? projectId : undefined)
       default:
         return refuse(call, `the autonomy policy gave a mode the gate does not know (${String(verdict.mode)})`, 'unknown-mode', [verdict.decision], action.class)
     }

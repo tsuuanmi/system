@@ -1,7 +1,7 @@
 {
-  "schema": "autonomy-policy@1.3",
+  "schema": "autonomy-policy@1.4",
   "id": "system.policy",
-  "version": 2,
+  "version": 3,
   "scope": "project",
   "projectId": "system",
   "narrows": "studio-default",
@@ -17,6 +17,106 @@
     "defaultSeconds": 86400,
     "maxSeconds": 1209600
   },
+  "commandRules": [
+    { "id": "read-cat", "program": "cat", "positionals": [{ "kind": "path", "scope": "repository-read", "min": 1, "max": 20 }], "note": "reads files inside the run's worktree or its repository" },
+    { "id": "read-head", "program": "head", "countFlag": true, "options": [{ "name": "-n", "kind": "number", "atMost": 100000 }], "positionals": [{ "kind": "path", "scope": "repository-read", "min": 1, "max": 20 }], "note": "the first lines of files inside the run's worktree or its repository" },
+    { "id": "read-tail", "program": "tail", "countFlag": true, "options": [{ "name": "-n", "kind": "number", "atMost": 100000 }], "positionals": [{ "kind": "path", "scope": "repository-read", "min": 1, "max": 20 }], "note": "the last lines of files inside the run's worktree or its repository" },
+    { "id": "read-wc", "program": "wc", "flags": ["-l"], "required": ["-l"], "positionals": [{ "kind": "path", "scope": "repository-read", "min": 1, "max": 20 }], "note": "counts the lines of files inside the run's worktree or its repository" },
+    { "id": "read-ls", "program": "ls", "flagLetters": "1alAhRF", "positionals": [{ "kind": "path", "scope": "repository-read", "max": 20 }], "note": "lists directories inside the run's worktree or its repository" },
+    {
+      "id": "read-grep", "program": "grep", "flagLetters": "rniwlcEFHo",
+      "options": [{ "name": "-m", "kind": "number", "atMost": 100000 }, { "name": "-A", "kind": "number", "atMost": 1000 }, { "name": "-B", "kind": "number", "atMost": 1000 }, { "name": "-C", "kind": "number", "atMost": 1000 }],
+      "positionals": [{ "kind": "word", "min": 1, "max": 1 }, { "kind": "path", "scope": "repository-read", "min": 1, "max": 20 }],
+      "note": "searches files for a pattern word, inside the run's worktree or its repository"
+    },
+    {
+      "id": "read-grep-e", "program": "grep", "flagLetters": "rniwlcEFHo", "required": ["-e"],
+      "options": [{ "name": "-e", "kind": "word" }, { "name": "-m", "kind": "number", "atMost": 100000 }, { "name": "-A", "kind": "number", "atMost": 1000 }, { "name": "-B", "kind": "number", "atMost": 1000 }, { "name": "-C", "kind": "number", "atMost": 1000 }],
+      "positionals": [{ "kind": "path", "scope": "repository-read", "min": 1, "max": 20 }],
+      "note": "searches files for each -e pattern word, inside the run's worktree or its repository"
+    },
+    {
+      "id": "read-rg", "program": "rg", "flagLetters": "niwlcFHo",
+      "options": [{ "name": "-m", "kind": "number", "atMost": 100000 }, { "name": "-A", "kind": "number", "atMost": 1000 }, { "name": "-B", "kind": "number", "atMost": 1000 }, { "name": "-C", "kind": "number", "atMost": 1000 }, { "name": "-g", "kind": "word" }, { "name": "-t", "kind": "word", "pattern": "^[A-Za-z0-9_]+$" }],
+      "positionals": [{ "kind": "word", "min": 1, "max": 1 }, { "kind": "path", "scope": "repository-read", "min": 1, "max": 20 }],
+      "note": "searches files for a pattern word, inside the run's worktree or its repository"
+    },
+    {
+      "id": "read-rg-e", "program": "rg", "flagLetters": "niwlcFHo", "required": ["-e"],
+      "options": [{ "name": "-e", "kind": "word" }, { "name": "-m", "kind": "number", "atMost": 100000 }, { "name": "-A", "kind": "number", "atMost": 1000 }, { "name": "-B", "kind": "number", "atMost": 1000 }, { "name": "-C", "kind": "number", "atMost": 1000 }, { "name": "-g", "kind": "word" }, { "name": "-t", "kind": "word", "pattern": "^[A-Za-z0-9_]+$" }],
+      "positionals": [{ "kind": "path", "scope": "repository-read", "min": 1, "max": 20 }],
+      "note": "searches files for each -e pattern word, inside the run's worktree or its repository"
+    },
+    { "id": "read-echo", "program": "echo", "positionals": [{ "kind": "any", "max": 40 }], "note": "prints its words" },
+    { "id": "read-pwd", "program": "pwd", "note": "prints the working directory" },
+    { "id": "read-true", "program": "true", "note": "does nothing, succeeds" },
+    { "id": "read-false", "program": "false", "note": "does nothing, fails" },
+    { "id": "read-sleep", "program": "sleep", "positionals": [{ "kind": "number", "atMost": 99, "min": 1, "max": 1 }], "note": "waits at most 99 seconds" },
+    { "id": "read-node-version", "program": "node", "words": ["--version"], "note": "prints node's version" },
+    { "id": "read-pnpm-version", "program": "pnpm", "words": ["--version"], "note": "prints pnpm's version" },
+    {
+      "id": "git-status", "program": "git", "words": ["status"], "flags": ["--short", "-s", "--porcelain", "-uall", "-uno", "--ignored"],
+      "options": [{ "name": "--untracked-files=", "kind": "word", "oneOf": ["all", "no"] }],
+      "note": "the run's worktree status"
+    },
+    {
+      "id": "git-diff", "program": "git", "words": ["diff"], "flags": ["--stat", "--name-only", "--cached", "--name-status", "--"],
+      "positionals": [{ "kind": "revision", "max": 2 }, { "kind": "path", "scope": "repository-read", "max": 20 }],
+      "note": "differences between revisions, the index, and the worktree"
+    },
+    {
+      "id": "git-log", "program": "git", "words": ["log"], "flags": ["--oneline", "--stat", "--name-only", "--all", "--"], "countFlag": true,
+      "options": [
+        { "name": "-n", "kind": "number", "atMost": 100000 }, { "name": "--format=", "kind": "any", "pattern": "^[A-Za-z0-9%:,._-]+$" },
+        { "name": "--grep=", "kind": "word" }, { "name": "--author=", "kind": "word" }, { "name": "--since=", "kind": "word" }, { "name": "--until=", "kind": "word" }
+      ],
+      "positionals": [{ "kind": "revision", "max": 2 }, { "kind": "path", "scope": "repository-read", "max": 20 }],
+      "note": "the history of revisions and paths"
+    },
+    {
+      "id": "git-show", "program": "git", "words": ["show"], "flags": ["--stat", "--name-only"],
+      "options": [{ "name": "--format=", "kind": "any", "pattern": "^[A-Za-z0-9%:,._-]+$" }],
+      "positionals": [{ "kind": "revision", "max": 2 }, { "kind": "revision-path", "max": 2 }],
+      "note": "a revision, or a file of a revision"
+    },
+    { "id": "git-branch", "program": "git", "words": ["branch"], "flags": ["-a", "-r", "--show-current", "-v", "-vv"], "note": "lists branches" },
+    {
+      "id": "git-grep", "program": "git", "words": ["grep"], "flagLetters": "niwlcEF",
+      "positionals": [{ "kind": "word", "min": 1, "max": 1 }, { "kind": "path", "scope": "repository-read", "max": 20 }],
+      "note": "searches tracked files for a pattern word"
+    },
+    {
+      "id": "git-grep-e", "program": "git", "words": ["grep"], "flagLetters": "niwlcEF", "required": ["-e"],
+      "options": [{ "name": "-e", "kind": "word" }],
+      "positionals": [{ "kind": "path", "scope": "repository-read", "max": 20 }],
+      "note": "searches tracked files for each -e pattern word"
+    },
+    { "id": "git-ls-files", "program": "git", "words": ["ls-files"], "positionals": [{ "kind": "path", "scope": "repository-read", "max": 20 }], "note": "lists tracked files" },
+    { "id": "git-rev-parse", "program": "git", "words": ["rev-parse"], "flags": ["--show-toplevel", "--abbrev-ref", "--short", "--verify"], "positionals": [{ "kind": "revision", "max": 4 }], "note": "names revisions" },
+    { "id": "git-merge-base", "program": "git", "words": ["merge-base"], "flags": ["--is-ancestor", "-a", "--all"], "positionals": [{ "kind": "revision", "min": 2, "max": 4 }], "note": "the common ancestor of revisions" },
+    {
+      "id": "test-vitest-run", "program": "corepack", "words": ["pnpm", "vitest", "run"],
+      "options": [{ "name": "--reporter=", "kind": "word", "oneOf": ["dot", "default", "verbose", "basic"] }],
+      "positionals": [{ "kind": "path", "scope": "test-target", "min": 1, "max": 20 }],
+      "note": "the run's own test files or tests directories, never the whole suite (the checks run it)"
+    },
+    {
+      "id": "test-vitest-exec-run", "program": "corepack", "words": ["pnpm", "exec", "vitest", "run"],
+      "options": [{ "name": "--reporter=", "kind": "word", "oneOf": ["dot", "default", "verbose", "basic"] }],
+      "positionals": [{ "kind": "path", "scope": "test-target", "min": 1, "max": 20 }],
+      "note": "the run's own test files or tests directories, never the whole suite (the checks run it)"
+    },
+    {
+      "id": "check-script", "program": "corepack", "words": ["pnpm"], "flags": ["-s"],
+      "positionals": [{ "kind": "word", "min": 1, "max": 1, "pattern": "^(lint|typecheck|check(:[a-z0-9-]+)?)$" }],
+      "note": "the repository's read-only checks"
+    },
+    { "id": "test-related", "program": "corepack", "words": ["pnpm", "test:related"], "positionals": [{ "kind": "path", "scope": "run-worktree", "min": 1, "max": 64 }], "note": "the tests that relate to files of the run's worktree (T299)" },
+    { "id": "edit-git-mv", "program": "git", "words": ["mv"], "positionals": [{ "kind": "path", "scope": "run-worktree", "min": 2, "max": 2 }], "note": "moves a path of the run's own tree" },
+    { "id": "edit-git-rm", "program": "git", "words": ["rm"], "flagLetters": "rq", "positionals": [{ "kind": "path", "scope": "run-worktree", "min": 1, "max": 20 }], "note": "removes paths of the run's own tree" },
+    { "id": "edit-pnpm-install", "program": "corepack", "words": ["pnpm", "install"], "flags": ["--offline", "--frozen-lockfile"], "required": ["--offline"], "note": "installs dependencies in the worktree from the offline store" },
+    { "id": "scratch-rm", "program": "rm", "positionals": [{ "kind": "path", "scope": "scratch-file", "min": 1, "max": 20 }], "note": "removes the run's own untracked scratch files" }
+  ],
   "webAccess": {
     "version": 1,
     "rules": [

@@ -36,8 +36,8 @@ says "the lead's", the lead does it in its own session, which System does not ga
 
 | Id | Rule | Check |
 |---|---|---|
-| LD9 | Judge a command by its words, the exact argv: approve it only when every word reads and nothing writes. Never by a pattern of its first word (`git` reads and writes). | **none**; the gate already denies a shell metacharacter (P2) |
-| LD10 | Approve removing the Worker's own untracked scratch inside its worktree (a file it made this run, `git status` shows untracked); nothing tracked, nothing outside the worktree. | **none** |
+| LD9 | Judge a command by its words, the exact argv: approve it only when every word reads and nothing writes. Never by a pattern of its first word (`git` reads and writes). The routine commands (the read-only programs, a run's own tests and checks, its tree edits, removing its scratch) are the policy's command rules, which the gate decides and records (T319b, [command rules](../design/approvals.md#command-rules)): they never ask, and the lead keeps no judge of its own for them. What reaches the lead is a command no rule covers. | **none**; the gate already denies a shell metacharacter (P2) |
+| LD10 | Approve removing the Worker's own untracked scratch inside its worktree (a file it made this run, `git status` shows untracked); nothing tracked, nothing outside the worktree. The `scratch-rm` rule already does this for a plain path that is an untracked regular file: a command that asks is one the rule refused (a tracked file, a link, a directory). | **none** |
 | LD11 | Deny with what to run instead: a reading tool, an absolute path, a listed command. A denial without one costs the Worker another try. | **none** |
 | LD12 | Never approve a write to System's own directories (`.system/` in a worktree, the DSH home, `.git`): they are System's records, never a Worker's. | in part: the gate denies a write in `.git`; `.system/` and the rest: **none** |
 

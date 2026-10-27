@@ -3,8 +3,8 @@
  * `autonomy-policy@1.x` cannot state (docs/reference/schemas.md#autonomy-policy), and the mode a
  * policy set gives an action. Pure: no store, no clock. Code decides, never a model.
  */
-import type { Action, ActionClass, AutonomyPolicy, Check, ContentHash, Mode, ModeChange } from '@tsuuanmi/system-approvals-core'
-import { ALWAYS_ASK, applyingPolicies as applying, MODES, riskMapProblems, SHELL_METACHARACTER, tierByRiskProblems, waitSeconds as expiryOf, webAccessLines, webAccessProblems } from '@tsuuanmi/system-approvals-core'
+import type { Action, ActionClass, AutonomyPolicy, Check, CommandRule, ContentHash, Mode, ModeChange } from '@tsuuanmi/system-approvals-core'
+import { ALWAYS_ASK, applyingPolicies as applying, commandRulesOf, MODES, riskMapProblems, SHELL_METACHARACTER, tierByRiskProblems, waitSeconds as expiryOf, webAccessLines, webAccessProblems } from '@tsuuanmi/system-approvals-core'
 import { contentId, SchemaRegistry, unique } from '@tsuuanmi/system-libs'
 
 /** Every action class (`common@1`'s `actionClass`), in the order `policy()` reports them. */
@@ -36,6 +36,8 @@ export interface Judgement {
   policies: AutonomyPolicy[]
   /** Why the action is forbidden whatever a rule says (an argv word with a shell metacharacter). */
   forbidden?: string
+  /** The command rule that made a command `workspace-write` (the caller's matcher named it; the policies hold it). */
+  commandRule?: string
 }
 
 /** The policies a set holds at most: the studio's and 100 projects' (INV-9; `policy-change@1.0`). */
@@ -80,6 +82,47 @@ export function commandProblems(line: string): string[] {
 }
 
 /**
+ * The problems of a policy's command rules that the schema cannot state: an id used twice, a
+ * `required` flag the rule does not allow, a pattern that is no regular expression, a number or
+ * path kind with a field of another kind, or a path with no scope.
+ */
+function commandRuleProblems(rules: readonly CommandRule[]): string[] {
+  const problems: string[] = []
+  const ids = new Set<string>()
+  for (const rule of rules) {
+    const name = `command rule ${rule.id}`
+    if (ids.has(rule.id)) problems.push(`${name}: another command rule has the same id`)
+    ids.add(rule.id)
+    for (const word of rule.required ?? []) {
+      if (!(rule.flags ?? []).includes(word) && !(rule.options ?? []).some((o) => o.name === word)) problems.push(`${name}: required ${word} is neither one of its flags nor one of its options`)
+    }
+    for (const [i, group] of (rule.positionals ?? []).entries()) {
+      if (group.kind === 'path' && group.scope === undefined) problems.push(`${name}: positional group ${i + 1} is a path with no scope`)
+      if (group.kind !== 'path' && group.scope !== undefined) problems.push(`${name}: positional group ${i + 1} names a scope but is not a path`)
+      if (group.min !== undefined && group.max !== undefined && group.min > group.max) problems.push(`${name}: positional group ${i + 1} has min above max`)
+      if (group.pattern !== undefined) {
+        try {
+          new RegExp(group.pattern)
+        } catch {
+          problems.push(`${name}: positional group ${i + 1}'s pattern is not a regular expression`)
+        }
+      }
+    }
+    for (const option of rule.options ?? []) {
+      if (option.kind === 'path') problems.push(`${name}: option ${option.name} takes a path, which no rule allows (a path is a positional word)`)
+      if (option.pattern !== undefined) {
+        try {
+          new RegExp(option.pattern)
+        } catch {
+          problems.push(`${name}: option ${option.name}'s pattern is not a regular expression`)
+        }
+      }
+    }
+  }
+  return problems
+}
+
+/**
  * Every problem of a configured policy set, in order; empty when it loads. Each policy must be a
  * valid `autonomy-policy@1.x` with one rule per action class, `expiry.defaultSeconds` and every
  * rule's `expiresSeconds` within `expiry.maxSeconds`, no rule giving a class in `ALWAYS_ASK` auto
@@ -120,6 +163,7 @@ export function policyProblems(policies: unknown, schemas: SchemaRegistry = new 
       problems.push(`${name}: expiry.defaultSeconds (${policy.expiry.defaultSeconds}) is more than expiry.maxSeconds (${policy.expiry.maxSeconds})`)
     }
     for (const line of policy.commands ?? []) for (const problem of commandProblems(line)) problems.push(`${name}: ${problem}`)
+    for (const problem of commandRuleProblems(policy.commandRules ?? [])) problems.push(`${name}: ${problem}`)
     // The path map's patterns are read by code the schema's pattern cannot state in full (a `..` segment, `**` inside a segment).
     if (policy.riskTiers !== undefined) for (const problem of riskMapProblems(policy.riskTiers)) problems.push(`${name}: ${problem}`)
     // The tier-by-risk map's keys and tiers, read by code as the schema states them (ADR-0073).
@@ -242,13 +286,15 @@ export class PolicySet {
     if (unsafe >= 0) {
       return { actionClass: action.class, rule: { ...this.effective(action.class, action.projectId), mode: 'forbid' }, failedChecks: [], policies, forbidden: `argv word ${unsafe + 1} holds a shell metacharacter` }
     }
-    const listed = action.class === 'command' && argv !== undefined && allows(policies[0]!, argv)
-      && policies.slice(1).every((p) => p.commands === undefined || allows(p, argv))
-      && this.effective('command', action.projectId).mode !== 'forbid'
-    const actionClass: ActionClass = listed ? 'workspace-write' : action.class
+    const open = action.class === 'command' && argv !== undefined && this.effective('command', action.projectId).mode !== 'forbid'
+    const listed = open && allows(policies[0]!, argv!) && policies.slice(1).every((p) => p.commands === undefined || allows(p, argv!))
+    // A command rule (autonomy-policy@1.4): one of the rules in force for the set (the studio's, narrowed by the project's).
+    const named = action.commandRule
+    const ruled = open && named !== undefined && argv!.length > 0 && commandRulesOf(policies).some((r) => r.id === named)
+    const actionClass: ActionClass = listed || ruled ? 'workspace-write' : action.class
     const rule = this.effective(actionClass, action.projectId)
     const failedChecks = rule.mode === 'auto' || rule.mode === 'notify' ? rule.requires.filter((c) => action.checks?.[c] !== true) : []
-    return { actionClass, rule, failedChecks, policies }
+    return { actionClass, rule, failedChecks, policies, ...(ruled && !listed ? { commandRule: named! } : {}) }
   }
 
   /** How long a request for the class waits: the shortest applying rule's expiry, else the stricter default, never more than the stricter maximum. */

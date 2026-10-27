@@ -2505,7 +2505,7 @@ export class AgentWorkers extends Service {
     // Every tool call passes the run's gate before it runs; the runtime's own policy still holds.
     // Under the review-member profile, the gate denies every one.
     const gate = runGate(this.ctx, {
-      runId: row.run_id, worker: row.worker, workerKind: worker.runtime, workspace, sessionId: row.session_id ?? undefined, workflowRunId: row.workflow_run_id ?? undefined,
+      runId: row.run_id, worker: row.worker, workerKind: worker.runtime, workspace, ...(workspace !== worker.workspace ? { repository: realpathSync(worker.workspace) } : {}), sessionId: row.session_id ?? undefined, workflowRunId: row.workflow_run_id ?? undefined,
       classification: row.classification as 'public' | 'operator-shared' | 'local-private', ...(member ? { profile: REVIEW_MEMBER } : worker.research ? { profile: 'research' as const } : {}),
       // A research run's web calls are judged under its task's project's policy and grant too, and name its step (T262).
       ...(row.project_id ? { projectId: row.project_id } : {}), ...(row.task_id ? { taskId: row.task_id } : {}), ...(row.step_node ? { nodeId: row.step_node } : {}),

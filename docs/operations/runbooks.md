@@ -709,8 +709,8 @@ the single-family fallback). Accounts × roles only
       asks; these web calls run unasked once the egress check passes): studio research: WebSearch,
       WebFetch unasked when the egress check passes, at most 40 per run, content up to
       operator-shared`. This one approval turns it on.
-   2. The `system` project's policy, [`policies/system.json`](../../policies/system.json) (version 2),
-      carries the same grant, which narrows the studio's (a project's grant can lower its tools,
+   2. The `system` project's policy, [`policies/system.json`](../../policies/system.json) (version 3,
+      which adds the standard [command rules](../design/approvals.md#command-rules)), carries the same grant, which narrows the studio's (a project's grant can lower its tools,
       bound, or classification, never raise them; a project with none keeps the studio's). It
       reaches the live set as any change to that file does, through its own `policy-change`
       approval; until then the project's policy in force has no grant and the studio's applies.
