@@ -60,4 +60,20 @@ describe('system lead', () => {
     expect(lines.at(-1)).toBe('acked 1; unknown or handled already: b')
     await expect(leadInbox(parseLead(['inbox'])!, async () => ({ isError: true, text: 'refused', structured: undefined }))).rejects.toThrow('refused')
   })
+
+  it('digest and health read the day and the table through their tools (PROP-0019 2.10), and refuse a day that is not a date', async () => {
+    expect(parseLead(['digest', '--project', 'alpha', '--day', '2026-10-26', '--json'])).toEqual({ action: 'digest', json: true, project: 'alpha', day: '2026-10-26', ids: [] })
+    expect(parseLead(['health'])).toEqual({ action: 'health', json: false, ids: [] })
+    for (const bad of [['digest', '--day', 'yesterday'], ['health', '--day', '2026-10-26'], ['digest', '--day', '2026-10-26', '--day', '2026-10-27'], ['digest', 'extra']]) expect(parseLead(bad), bad.join(' ')).toBeUndefined()
+    const seen: Array<[string, Record<string, unknown>]> = []
+    const lines: string[] = []
+    const call = async (tool: string, args: Record<string, unknown>) => {
+      seen.push([tool, args])
+      return { isError: false, text: `# ${tool}\n`, structured: { schema: 'x' } } satisfies ToolOutcome
+    }
+    expect(await leadInbox(parseLead(['digest', '--project', 'alpha', '--day', '2026-10-26'])!, call, (line) => lines.push(line))).toBe(0)
+    expect(await leadInbox(parseLead(['health', '--json'])!, call, (line) => lines.push(line))).toBe(0)
+    expect(seen).toEqual([['lead_digest', { projectId: 'alpha', day: '2026-10-26' }], ['lead_health', {}]])
+    expect(lines).toEqual(['# lead_digest', JSON.stringify({ schema: 'x' }, null, 2)])
+  })
 })

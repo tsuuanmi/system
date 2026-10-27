@@ -761,17 +761,19 @@ export interface LeadNoticeView { id: string; project: string; kind: string; tit
 
 /**
  * `system lead wait [--project <id>] [--timeout <s>]`, `system lead inbox [--project <id>]`, and
- * `system lead ack [--project <id>] <id>...` (D107), each with `--json`; undefined for an unknown
+ * `system lead ack [--project <id>] <id>...` (D107), `system lead digest [--project <id>] [--day <date>]`
+ * and `system lead health [--project <id>]` (PROP-0019 2.10), each with `--json`; undefined for an unknown
  * word, flag, or value. A timeout is a whole number of seconds from 1 to 86400.
  */
-export function parseLead(rest: readonly string[]): { action: 'wait' | 'inbox' | 'ack'; json: boolean; project?: string; timeoutSeconds?: number; ids: string[] } | undefined {
+export function parseLead(rest: readonly string[]): { action: 'wait' | 'inbox' | 'ack' | 'digest' | 'health'; json: boolean; project?: string; day?: string; timeoutSeconds?: number; ids: string[] } | undefined {
   const [action, ...words] = rest
-  if (action !== 'wait' && action !== 'inbox' && action !== 'ack') return undefined
-  const out: { action: 'wait' | 'inbox' | 'ack'; json: boolean; project?: string; timeoutSeconds?: number; ids: string[] } = { action, json: false, ids: [] }
+  if (action !== 'wait' && action !== 'inbox' && action !== 'ack' && action !== 'digest' && action !== 'health') return undefined
+  const out: { action: 'wait' | 'inbox' | 'ack' | 'digest' | 'health'; json: boolean; project?: string; day?: string; timeoutSeconds?: number; ids: string[] } = { action, json: false, ids: [] }
   for (let i = 0; i < words.length; i++) {
     const word = words[i]!
     if (word === '--json') out.json = true
     else if (word === '--project' && out.project === undefined && words[i + 1] && !words[i + 1]!.startsWith('--')) out.project = words[++i]!
+    else if (word === '--day' && action === 'digest' && out.day === undefined && /^\d{4}-\d{2}-\d{2}$/.test(words[i + 1] ?? '')) out.day = words[++i]!
     else if (word === '--timeout' && action === 'wait' && out.timeoutSeconds === undefined && /^[1-9]\d{0,5}$/.test(words[i + 1] ?? '') && Number(words[i + 1]) <= 86_400) out.timeoutSeconds = Number(words[++i])
     else if (action === 'ack' && !word.startsWith('--')) out.ids.push(word)
     else return undefined
@@ -789,6 +791,13 @@ export const formatLeadNotice = (n: LeadNoticeView): string[] => [`[${n.kind}] $
  */
 export async function leadInbox(parsed: NonNullable<ReturnType<typeof parseLead>>, call: typeof callTool = callTool, print: (line: string) => void = console.log, now: () => number = Date.now): Promise<number> {
   const base = parsed.project !== undefined ? { projectId: parsed.project } : {}
+  if (parsed.action === 'digest' || parsed.action === 'health') {
+    // The day's digest and the health table (PROP-0019 2.10): a read; a lead token's own project when none is named.
+    const outcome = await call(parsed.action === 'digest' ? 'lead_digest' : 'lead_health', { ...base, ...(parsed.day !== undefined ? { day: parsed.day } : {}) })
+    if (outcome.isError) throw new Error(outcome.text)
+    print(parsed.json ? JSON.stringify(outcome.structured, null, 2) : outcome.text.trimEnd())
+    return 0
+  }
   const deadline = parsed.timeoutSeconds !== undefined ? now() + parsed.timeoutSeconds * 1000 : Infinity
   for (;;) {
     const left = Math.max(0, Math.ceil((deadline - now()) / 1000))

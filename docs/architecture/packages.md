@@ -26,7 +26,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [lead-inbox](../../packages/plugins/lead-inbox/README.md) | gateways | `leadInbox` | `lead-inbox` | `store`, `eventLog`, `accounts` (optional), `agentWorkers` (optional), `board` (optional), `mcp` (optional), `resources` (optional), `workers` (optional), `workflow` (optional) | `gateway-core`, `ledger-core`, `libs` |
 | [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `accounts` (optional), `agentWorkers` (optional), `artifacts` (optional), `board` (optional), `browser` (optional), `credentials` (optional), `eventLog` (optional), `pluginHost` (optional), `providers` (optional), `resources` (optional), `store` (optional), `turns` (optional), `workers` (optional), `workflow` (optional) | `gateway-core`, `libs`, `plugin-host-core`, `resources-core` |
 | [notify](../../packages/plugins/notify/README.md) | gateways | — | `notify` | `store`, `eventLog`, `credentials` (optional), `egress` (optional), `mcp` (optional) | `gateway-core`, `ledger-core`, `libs`, `workers-core` |
-| [report](../../packages/plugins/report/README.md) | gateways | — | `report` | `artifacts`, `eventLog`, `approvals` (optional), `board` (optional), `digests` (optional), `mcp` (optional), `resources` (optional), `workflow` (optional) | `approvals-core`, `board-core`, `digest-core`, `gateway-core`, `ledger-core`, `libs`, `resources-core` |
+| [report](../../packages/plugins/report/README.md) | gateways | — | `report` | `artifacts`, `eventLog`, `store`, `agentWorkers` (optional), `approvals` (optional), `board` (optional), `digests` (optional), `mcp` (optional), `pluginHost` (optional), `resources` (optional), `workers` (optional), `workflow` (optional) | `approvals-core`, `board-core`, `digest-core`, `gateway-core`, `ledger-core`, `libs`, `resources-core` |
 | [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow`, `accounts` (optional), `agentWorkers` (optional), `approvals` (optional), `artifacts` (optional), `board` (optional), `eventLog` (optional), `leadInbox` (optional), `resources` (optional), `workers` (optional) | `approvals-core`, `board-core`, `gateway-core`, `ledger-core`, `libs`, `workers-core` |
 | [board](../../packages/plugins/board/README.md) | orchestration | `board` | `board` | `store`, `artifacts`, `leases`, `approvals`, `eventLog` (optional), `mcp` (optional) | `approvals-core`, `board-core`, `gateway-core`, `ledger-core`, `libs` |
 | [board-core](../../packages/board-core/README.md) | orchestration | defines `board`, defines `leases` | — | — | `approvals-core` |
@@ -261,11 +261,15 @@ flowchart TB
   provider_gemini_web -.-> event_log
   report --> artifacts
   report --> event_log
+  report --> store
+  report -.-> agent_workers
   report -.-> approvals
   report -.-> board
   report -.-> digest
   report -.-> mcp_server
+  report -.-> plugin_host
   report -.-> resources
+  report -.-> workers
   report -.-> workflow
   resources --> store
   resources --> artifacts

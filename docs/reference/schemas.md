@@ -1150,6 +1150,19 @@ guesses.
   from the worktree. Example:
   [`review-guides.touched.json`](../../schemas/examples/review-guides.touched.json).
 
+### `lead-digest`
+
+- The body of a `report` artifact, and the output of MCP `lead_digest` (PROP-0019 section 2.10):
+  one UTC day of one project, from recorded data only. `landed` (task, run, commit), `decided` (the
+  lead's own verdicts, acceptances, other decisions, and starts), `waiting` (reviews held and open
+  requests with `brief` and `expiresAt`, as of `asOf`), `failed` (rejected attempts and failed
+  daily checks, with the task a daily check filed), `byHand` (commits on the landed branch no
+  landing decision names), and `measures` (D108): `landedBySystem`, `landedByHand`, `leadTouches`,
+  `reruns`, `redDev`, `incidents`. A measure no source could give is `{ unknown }`, never 0 (INV-2).
+  A finished day is stored once and read back as it was. Example:
+  [`lead-digest.day.json`](../../schemas/examples/lead-digest.day.json). `mcp-report@1.7` adds the
+  `lead_digest` and `lead_health` tools' inputs and the health table's output.
+
 ### `check-run`
 
 - The body of an `evidence` artifact: a workflow run's required checks as the Worker source that

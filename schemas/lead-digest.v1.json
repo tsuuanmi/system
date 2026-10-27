@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:lead-digest:v1",
+  "title": "Lead digest of a day",
+  "description": "Body of a `report` artifact, and the `lead_digest` tool's output (PROP-0019 section 2.10): one UTC day of one project, from recorded data only: what landed, what the lead decided on its own token, what waits on the operator, what failed, and the day's measures (D108). Written once a day is over, so the operator can read yesterday's as it was. A measure no source could give is `{ unknown }`, never 0 (INV-2).",
+  "type": "object",
+  "required": ["schema", "projectId", "day", "period", "asOf", "landed", "decided", "waiting", "failed", "byHand", "measures", "notes"],
+  "properties": {
+    "schema": { "const": "lead-digest@1.0" },
+    "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "day": { "description": "The UTC day.", "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+    "period": {
+      "type": "object",
+      "required": ["since", "until"],
+      "properties": {
+        "since": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+        "until": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+      },
+      "additionalProperties": false
+    },
+    "asOf": { "description": "When the digest was read: what waits on the operator is as of then.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "landed": {
+      "description": "The results merged in the day through System, once each, oldest first.",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": ["taskId", "runId", "at"],
+        "properties": {
+          "taskId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "title": { "type": "string", "maxLength": 200 },
+          "runId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "commit": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" },
+          "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "decided": {
+      "description": "What the lead decided in the day on its own token: verdicts in the queue, acceptances, other decisions on the project's runs, and the runs it started (`what`: the decision's type, or `start`).",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": ["at", "what", "id"],
+        "properties": {
+          "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+          "what": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "option": { "type": "string", "maxLength": 200 },
+          "taskId": { "type": "string", "maxLength": 200 },
+          "runId": { "type": "string", "maxLength": 200 },
+          "id": { "description": "The decision's id, or the run's for a start.", "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "waiting": {
+      "description": "What waits on the operator as of `asOf`, the soonest to expire first: reviews held and open requests, each with how to read it and when it expires.",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": ["kind", "id", "title", "expiresAt", "brief"],
+        "properties": {
+          "kind": { "enum": ["review", "request"] },
+          "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "title": { "type": "string", "maxLength": 200 },
+          "expiresAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+          "brief": { "description": "The command or tool that reads it.", "type": "string", "minLength": 1, "maxLength": 300 },
+          "pendingChecks": { "type": "array", "maxItems": 32, "items": { "type": "string", "maxLength": 200 } }
+        },
+        "additionalProperties": false
+      }
+    },
+    "failed": {
+      "description": "What failed in the day, oldest first: an attempt rejected, refused, or never started, and a failed daily check of the branch tip with the task it filed.",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": ["kind", "at", "status"],
+        "properties": {
+          "kind": { "enum": ["attempt", "daily-check"] },
+          "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+          "status": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "taskId": { "type": "string", "maxLength": 200 },
+          "runId": { "type": "string", "maxLength": 200 },
+          "reason": { "type": "string", "maxLength": 300 },
+          "filedTask": { "description": "The task the failure filed.", "type": "string", "maxLength": 200 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "byHand": {
+      "description": "The commits on a branch the project landed on, in the day, that no landing decision names: a landing outside System.",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": ["commit", "at", "subject"],
+        "properties": {
+          "commit": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" },
+          "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+          "subject": { "type": "string", "maxLength": 200 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "measures": {
+      "description": "The day's measures (D108). The lists above hold at most 64 entries each; these count every one.",
+      "type": "object",
+      "required": ["landedBySystem", "landedByHand", "leadTouches", "reruns", "redDev", "incidents"],
+      "properties": {
+        "landedBySystem": { "type": "integer", "minimum": 0 },
+        "landedByHand": { "$ref": "#/$defs/count" },
+        "leadTouches": { "description": "The lead's decisions and starts of the day (the lead-touch metric's sources, counted per day).", "type": "integer", "minimum": 0 },
+        "reruns": { "description": "Runs of a task that already had one, started in the day.", "type": "integer", "minimum": 0 },
+        "redDev": { "description": "Daily checks that failed on the branch tip.", "$ref": "#/$defs/count" },
+        "incidents": { "description": "Agent runs of the project that stalled or ended with their liveness unknown, and live updates that failed.", "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "notes": {
+      "description": "What could not be read or was cut, in words.",
+      "type": "array",
+      "maxItems": 16,
+      "items": { "type": "string", "maxLength": 500 }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "count": {
+      "description": "A whole number, or why no source could give one.",
+      "oneOf": [
+        { "type": "object", "required": ["value"], "properties": { "value": { "type": "integer", "minimum": 0 } }, "additionalProperties": false },
+        { "type": "object", "required": ["unknown"], "properties": { "unknown": { "type": "string", "minLength": 1, "maxLength": 300 } }, "additionalProperties": false }
+      ]
+    }
+  }
+}

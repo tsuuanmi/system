@@ -765,6 +765,23 @@ plugin `default` once its row is on and `candidate` once it is off, and `system 
 its lifecycle decision (`system plugins --json`) shows the state it left
 ([plugin host](../design/plugin-host.md)). A start with the same rows records nothing.
 
+## Read the day
+
+The lead's digest and the health table read the record only and change nothing
+([PROP-0019 section 2.10](../proposals/0019-lead-logic-in-system.md)).
+
+1. `system lead digest --project <id>` is today so far; `--day 2026-10-26` is a finished UTC day,
+   stored the first time it is read and read back unchanged. It lists what landed, what the lead
+   decided on its own token, what waits on the operator (with how to read it and when it expires),
+   what failed (a daily check's failure names the task it filed), and the day's measures: landed
+   by System and by hand, lead touches, reruns, red dev, incidents.
+2. A measure shown `unknown (why)` could not be read (no repository known, the daily check off):
+   it is never 0. Commits under "no landing decision" were not landed through System.
+3. `system lead health --project <id>` is one row per source, each `ok`, `degraded`, or `unknown`
+   with its reason. Start with the `degraded` rows (a paused dispatch, an unavailable Worker, a
+   held worktree, a failed sink); an `unknown` row names the source that was not mounted or failed.
+4. `--json` prints the records. A lead token reads its own project only.
+
 ## Turn a plugin off
 
 When a row misbehaves (wrong digests, a website driver failing every turn), turn it off while the

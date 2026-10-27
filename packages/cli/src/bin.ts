@@ -157,6 +157,12 @@ const USAGE = `Usage: system <command> [--profile system|system-test]
                             --timeout passes first): the loop a lead runs instead of polling
   lead inbox [--project <id>] [--json]
                             print the unread notices; lead ack [--project <id>] <id>... marks them handled
+  lead digest [--project <id>] [--day <date>] [--json]
+                            the day's digest (UTC, default today): what landed, what the lead decided, what waits on the
+                            operator, what failed, and the day's measures; a finished day is stored and read back
+  lead health [--project <id>] [--json]
+                            the project's health table: dispatch, Workers, quota, sinks, live update, landing queue,
+                            worktrees, enforce switches; each ok, degraded, or unknown with its reason
   lead-token issue <project>   issue a project's lead token (lead-<project>.token beside operator.token, owner-only; replaces one
                             issued before): its holder decides as lead:<project>, within a closed list of rights System enforces
   lead-token revoke <project>  revoke it: requests with it are refused at once

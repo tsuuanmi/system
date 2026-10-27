@@ -41,6 +41,19 @@ decides nothing, and no model takes part.
   `workflow.run.started` (with `startedBy`), `workflow.task.landing`, the decisions people made on
   the runs (`ctx.artifacts.list` by run), and the board's moves to ready. The report's last section,
   `maturity`, is the same over the 30 days to its end. [`src/metrics.ts`](src/metrics.ts) is pure.
+- **The lead's digest and health table** (PROP-0019 section 2.10, `mcp-report` 1.7): MCP
+  `lead_digest` (client scope; a lead token reaches its own project only; `day`, UTC, default
+  today) and `lead_health`; `system lead digest [--project] [--day]` and `system lead health`.
+  The digest names what landed, what the lead decided on its own token, what waits on the
+  operator (brief and expiry), what failed, and D108's day measures: landed by System and by hand (a
+  first-parent commit on a branch the project landed on that no merged landing names, read with
+  `git log`), lead touches, reruns, red dev (a failed daily check), incidents. A finished day is
+  stored as `lead-digest@1.0` and read back unchanged; today's is read now. The health table has
+  one row per source (dispatch, Workers, quota, notification and lead sinks, live update, landing
+  queue, worktrees, each enforce switch), each `ok`, `degraded`, or `unknown`; a source not
+  mounted or failing is `unknown`, never `ok` (INV-2). [`src/digest.ts`](src/digest.ts) and
+  [`src/health.ts`](src/health.ts) are pure; [`src/lead.ts`](src/lead.ts) reads. Read-only; the
+  digest's push to a sink at an hour is not built here: it will be its own switch, off.
 - **What a cap counts as 0** (D25, `mcp-report` 1.1,
   [resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)): per pool and in all,
   the records without token counts, a cost, or turns, and the runs recorded in the period whose
