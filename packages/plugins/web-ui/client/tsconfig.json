@@ -1,6 +1,7 @@
 {
   // The page's own code: the DOM, not Node, and strict. `tsc -p` here writes lib/client/; the root typecheck runs it with --noEmit.
-  // app.ts is still the old script: where a type is not yet known it says `any` or `!`, each a TODO(T304) (see its first lines).
+  // app.ts is the classic entry that imports boot.js; every other file is an ES module under 600 lines with no `any` (tests/client-source.spec.ts).
+  // The API's response types are src/api.d.ts, imported with `import type` (a declaration file: nothing of it is emitted).
   "extends": "../../../../tsconfig.build.base.json",
   "compilerOptions": {
     "target": "ES2023",
@@ -8,6 +9,8 @@
     "module": "ES2022",
     "moduleResolution": "Bundler",
     "types": [],
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "declaration": false,
     "sourceMap": false,
     "rewriteRelativeImportExtensions": false,
