@@ -110,6 +110,11 @@ describe('system project new (PROP-0016 I5 part 0)', () => {
     expect(rendered.missing).toEqual(rendered.commands)
     expect(rendered.studio).toMatchObject({ id: studio.id, version: studio.version + 1, commands: rendered.commands })
     expect(rendered.project).toMatchObject({ id: 'dna.policy', scope: 'project', projectId: 'dna', narrows: studio.id, commands: rendered.commands })
+    // A new project starts with the standard command rules (T319b): the routine reads, tests, edits, and scratch removals never ask.
+    expect(rendered.project.schema).toBe('autonomy-policy@1.4')
+    expect((rendered.project.commandRules as Array<{ id: string }>).map((r) => r.id)).toEqual(expect.arrayContaining(['read-cat', 'git-log', 'test-vitest-run', 'edit-git-rm', 'scratch-rm']))
+    // A rule is in force only where the studio holds it too (a project policy only narrows): the studio change carries them.
+    expect(rendered.studio).toMatchObject({ schema: 'autonomy-policy@1.4', commandRules: rendered.project.commandRules })
     // The charter: objective, scope, non-goals, done-when, budget lines.
     const charter = rendered.charter.charter as Record<string, unknown>
     expect(rendered.charter).toMatchObject({ projectId: 'dna', title: 'dna: the dna repository', template: 'algorithm-development', clientRequestId: 'project-new:dna' })
@@ -291,11 +296,12 @@ describe('system project new (PROP-0016 I5 part 0)', () => {
     expect(host.filed.map((f) => f.tool)).toEqual(['board_charter', 'approvals_policy_propose'])
   })
 
-  it('files the project policy when the studio policy already lists every command', async () => {
+  it('files the project policy when the studio policy already lists every command and holds every command rule', async () => {
     const { home, repository, root } = fixture()
     const studio = bundleStudioPolicy()
-    const listed = renderProject({ kind: 'software-repository', id: 'dna', repository, targetBranch: 'main', coordination: join(root, 'c'), home, studio, now: NOW }).commands
-    const host = fakeHost({ policies: [{ ...studio, commands: listed }] })
+    const first = renderProject({ kind: 'software-repository', id: 'dna', repository, targetBranch: 'main', coordination: join(root, 'c'), home, studio, now: NOW })
+    const listed = first.commands
+    const host = fakeHost({ policies: [{ ...studio, schema: 'autonomy-policy@1.4', commands: listed, commandRules: first.project.commandRules }] })
     await projectNew({ kind: 'software-repository', id: 'dna', repository, dryRun: false, coordination: join(root, 'coord') }, deps(home, host))
     expect((host.filed[1]!.input as { policy: Policy }).policy).toMatchObject({ id: 'dna.policy', scope: 'project', commands: listed })
   })

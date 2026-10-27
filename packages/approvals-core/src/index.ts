@@ -57,11 +57,13 @@ export const ALWAYS_ASK: readonly ActionClass[] = ['merge', 'external-send', 'de
 
 /**
  * A shell metacharacter, or a character a shell or a naive split treats specially: `; & | $` and
- * the backquote, `< > ( )`, `{ } [ ]`, `* ? ~`, quotes, backslash, and newline, carriage return,
- * tab, and NUL. An argv word holding one is forbidden at `check`, and a commands-list entry holding
- * one is refused when its policy loads: argv is matched word for word, never through a shell.
+ * the backquote, `< > ( )`, `{ } [ ]`, `* ?`, a `~` where a shell expands it (at the start of a
+ * word, or after a `=` or a `:`, as bash does in `--prefix=~/x`; so `HEAD~1` holds none), quotes,
+ * backslash, and newline, carriage return, tab, and NUL. An argv word holding one is forbidden at
+ * `check`, and a commands-list entry holding one is refused when its policy loads: argv is matched
+ * word for word, never through a shell.
  */
-export const SHELL_METACHARACTER = /[;&|$`<>(){}[\]*?~'"\\\n\r\t\0]/
+export const SHELL_METACHARACTER = /[;&|$`<>(){}[\]*?'"\\\n\r\t\0]|(^|[=:])~/
 
 export type Mode = 'auto' | 'notify' | 'ask' | 'forbid'
 /** Modes from least to most strict; the effective mode is the strictest of the policies. */
@@ -94,7 +96,7 @@ export function waitSeconds(policies: readonly AutonomyPolicy[], actionClass: Ac
 
 /** `autonomy-policy@1.x`: `@1.1` adds the optional path map `riskTiers` (ADR-0071); `@1.2` the tier a step takes at its task's risk tier, `tierByRisk` (ADR-0073); `@1.3` the optional `webAccess` grants (ADR-0074). */
 export interface AutonomyPolicy {
-  schema: 'autonomy-policy@1.0' | 'autonomy-policy@1.1' | 'autonomy-policy@1.2' | 'autonomy-policy@1.3'
+  schema: 'autonomy-policy@1.0' | 'autonomy-policy@1.1' | 'autonomy-policy@1.2' | 'autonomy-policy@1.3' | 'autonomy-policy@1.4'
   id: string
   version: number
   scope: 'studio' | 'project'
@@ -121,6 +123,49 @@ export interface AutonomyPolicy {
    * applies a grant only to a call the policy said `ask` for. With none, every web call asks.
    */
   webAccess?: WebAccessGrants
+  /**
+   * `@1.4`, optional: structured command rules (./command-rules.ts). A command the gate's matcher
+   * says one allows is judged as `workspace-write`, as a listed command is; the decision names the rule.
+   */
+  commandRules?: CommandRule[]
+}
+
+/**
+ * The command rules in force for a policy set (the studio's, then the project's), as the commands
+ * list is judged: only the studio policy grants, and a project policy only narrows. A rule is in
+ * force when the studio policy holds it and every other policy that carries `commandRules` holds a
+ * rule of the same id with the same definition; a project policy can drop a rule, never add or widen one.
+ */
+export function commandRulesOf(policies: readonly AutonomyPolicy[]): CommandRule[] {
+  const [studio, ...rest] = policies
+  const same = (a: CommandRule, b: CommandRule): boolean => canonical(a) === canonical(b)
+  return (studio?.commandRules ?? []).filter((rule) => rest.every((p) => p.commandRules === undefined || p.commandRules.some((r) => r.id === rule.id && same(r, rule))))
+}
+
+/** A JSON value's text with its object keys sorted: two rules written in another key order are the same rule. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+  if (value !== null && typeof value === 'object') return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canonical((value as Record<string, unknown>)[k])}`).join(',')}}`
+  return JSON.stringify(value)
+}
+
+/** What a command-rule word is: `path` is judged by the rule's scope; see the schema's `commandValueKind`. */
+export type CommandValueKind = 'any' | 'word' | 'number' | 'revision' | 'revision-path' | 'path'
+/** Where a path word may be (see the schema's `positionals.scope`). */
+export type CommandPathScope = 'run-worktree' | 'repository-read' | 'scratch-file' | 'test-target'
+
+/** One command rule of `autonomy-policy@1.4`: its shape is the schema's `commandRule`. */
+export interface CommandRule {
+  id: string
+  program: string
+  words?: string[]
+  flags?: string[]
+  flagLetters?: string
+  countFlag?: boolean
+  required?: string[]
+  options?: Array<{ name: string; kind: CommandValueKind; oneOf?: string[]; pattern?: string; atMost?: number }>
+  positionals?: Array<{ kind: CommandValueKind; min?: number; max?: number; oneOf?: string[]; pattern?: string; scope?: CommandPathScope; atMost?: number }>
+  note: string
 }
 
 /** The path maps of a policy set (the studio's, then the project's), each with the policy that carries it. */
@@ -144,6 +189,13 @@ export interface Action {
    * {@link SHELL_METACHARACTER} is forbidden, whatever its class.
    */
   command?: string[]
+  /**
+   * For `command`: the id of the command rule (`autonomy-policy@1.4`) the caller's matcher says
+   * allows the argv. The policy accepts it only when the rules in force for the action
+   * ({@link commandRulesOf}: the studio's, narrowed by the project's) hold a rule of that id; the argv is then judged as `workspace-write`
+   * (unless the `command` class is forbidden), and the decision names the rule.
+   */
+  commandRule?: string
   /** For auto and notify rules: which of their required checks passed. */
   checks?: Partial<Record<Check, boolean>>
 }

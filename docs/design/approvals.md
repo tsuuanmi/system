@@ -394,6 +394,52 @@ event's data is declared by `agent-tool-event@1.1` (T211; 1.1 adds `use-read-too
 an entry that is not a valid denial (a code the schema does not list, an explanation past 300
 characters, a field no denial carries) is counted apart, never by reason.
 
+### Command rules
+
+`autonomy-policy@1.4` adds `commandRules` (T319b, D107): the routine commands a lead used to approve
+with judges of its own scripts are policy, decided at the gate, so they never ask. A rule names the
+`program`, the literal `words` after it (a subcommand), the `flags` and `flagLetters` it allows, the
+`options` that take a value (a number with its `atMost`, a `oneOf` list, or a `pattern`), the
+`required` flags and options, and the `positionals`: groups of words of a `kind` (`any`, `word`,
+`number`, `revision`, `revision-path`, `path`), each with its count bounds.
+
+- **Parsed, never guessed.** The gate has already split the command on single spaces and refused
+  every empty word and metacharacter (`; & | $`, backticks, `< >`, quotes, a `~` at a word's start
+  or after `=` or `:`, where bash expands it; `HEAD~1` holds none). No rule allows a word that starts
+  with `#`: the shell drops it and every word after it as a comment, so `vitest run #a.spec.ts` would
+  run the whole suite. A rule allows a command only when every word is one the rule names, an option has its value,
+  and the counts are met; an unknown option (`--output=…`), a cut-short argument, an extra word, or
+  a program with a different subcommand (`git commit`, `git push`) leaves it a `command`, which asks.
+- **Path scopes.** `run-worktree`: relative to the worktree or absolute inside it, no `..`, never
+  `.git` or `.system`, never the worktree's top. `repository-read`: the same inside the worktree or
+  under the run's repository, read only, `.system` included, `.git` never. `scratch-file`:
+  `run-worktree`, and an untracked regular file (`git ls-files`), never a link or a directory (so
+  `rm` of a tracked file asks). `test-target`: `run-worktree`, an existing test file or a tests
+  directory (`tests`, `test`, `__tests__`, or inside one) that the test runner's filter selects alone.
+  vitest takes the word as a filter, a substring of each test file's path, not as a path, so the gate
+  lists the worktree's test files (`git ls-files`) and requires that every one the word selects is
+  that file or under that directory: `tests`, `a.spec.ts`, or `packages/p` (which also selects
+  `packages/p-core`) ask. Every symlink is followed on disk.
+- **Only the studio grants.** As with the commands list, a rule is in force when the studio policy
+  holds it and every project policy that carries `commandRules` holds a rule of the same id with the
+  same definition: a project policy can drop a rule, never add or widen one.
+- **Decided by the policy, recorded.** The gate's matcher (`agent-workers/src/command-rules.ts`)
+  finds the rule; the policy accepts it only if the rules in force hold that id, and judges the command as `workspace-write`, as a
+  listed command is. The `autonomy` decision's detail names the `commandRule`. A `command` mode of
+  forbid still forbids; a `workspace-write` mode that asks still asks. A run with a reading tool for
+  `cat`, `grep`, `ls` is still told to use it (`use-read-tool`) before any rule is read.
+- **A run's own tests.** `corepack pnpm [exec] vitest run <files or tests directories>` (at most 20,
+  `--reporter=dot|default|verbose|basic`) and never the whole suite with no path: that runs in the
+  checks (T299, D100). `corepack pnpm [-s] lint|typecheck|check|check:<name>`, `test:related`, `git mv`,
+  `git rm [-r] [-q]`, `corepack pnpm install --offline [--frozen-lockfile]`, and `rm` of scratch files
+  are rules too.
+- **Taking effect.** Rules are part of the policy set, in force only after the operator approves a
+  [policy change](#a-policy-change) carrying them; the lead never approves it. `policies/system.json`
+  (version 3) holds the standard rules for the system project, in force once the studio policy
+  holds the same rules through its own change. The project template (`system project new`) writes
+  the same rules into every new project's policy, and into the studio change it files when the
+  studio lacks them, as it does for missing commands.
+
 ### A deferred call
 
 - **The request** binds to the exact call (INV-5): subject `{ type: content, ref:

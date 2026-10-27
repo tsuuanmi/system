@@ -6,7 +6,7 @@
   "type": "object",
   "required": ["schema", "id", "version", "scope", "rules", "default", "expiry"],
   "properties": {
-    "schema": { "enum": ["autonomy-policy@1.0", "autonomy-policy@1.1", "autonomy-policy@1.2", "autonomy-policy@1.3"] },
+    "schema": { "enum": ["autonomy-policy@1.0", "autonomy-policy@1.1", "autonomy-policy@1.2", "autonomy-policy@1.3", "autonomy-policy@1.4"] },
     "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "version": {
       "description": "Changes whenever the policy's effect changes; decisions name it.",
@@ -94,6 +94,12 @@
       },
       "additionalProperties": false
     },
+    "commandRules": {
+      "description": "1.4 adds structured command rules (design/approvals.md#command-rules): a command the gate parses into words, no word holding a shell metacharacter, whose program, subcommand words, options, and positional words all satisfy one rule is judged as `workspace-write`, as a listed command is, and its recorded `autonomy` decision names the rule. A word no rule allows, an argument cut short, or a path outside the rule's scope leaves the command a `command`. A command of a `command` mode of forbid stays forbidden. As with `commands`, only the studio policy grants: a rule is in force for a project's runs when the studio policy holds it and every project policy that carries commandRules holds a rule of the same id with the same definition, so a project policy can drop a rule, never add or widen one. Each is put in force by a policy-change approval, and the effective `workspace-write` mode (the strictest of the policies that apply) still decides.",
+      "type": "array",
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/commandRule" }
+    },
     "webAccess": {
       "description": "1.3 adds web access of a research role (ADR-0074): a WebSearch or WebFetch call of a Worker run under the named role profile runs unasked when the egress check passes on its query or URL and the run's content is classified at most maxClassification, at most maxWebCallsPerRun per run; past the bound, on an egress refusal, or for any other role, it asks. external-send still always asks in every rule: the agent gate applies a grant only to a call the policy said ask for. The studio policy must grant it; a project policy that carries webAccess only narrows it.",
       "type": "object",
@@ -121,18 +127,95 @@
   "allOf": [
     {
       "if": { "properties": { "riskTiers": { "type": "object" } }, "required": ["riskTiers"] },
-      "then": { "description": "@1.1 fields (riskTiers) are refused before @1.1.", "properties": { "schema": { "enum": ["autonomy-policy@1.1", "autonomy-policy@1.2", "autonomy-policy@1.3"] } } }
+      "then": { "description": "@1.1 fields (riskTiers) are refused before @1.1.", "properties": { "schema": { "enum": ["autonomy-policy@1.1", "autonomy-policy@1.2", "autonomy-policy@1.3", "autonomy-policy@1.4"] } } }
     },
     {
       "if": { "properties": { "tierByRisk": { "type": "object" } }, "required": ["tierByRisk"] },
-      "then": { "description": "@1.2 fields (tierByRisk) are refused before @1.2.", "properties": { "schema": { "enum": ["autonomy-policy@1.2", "autonomy-policy@1.3"] } } }
+      "then": { "description": "@1.2 fields (tierByRisk) are refused before @1.2.", "properties": { "schema": { "enum": ["autonomy-policy@1.2", "autonomy-policy@1.3", "autonomy-policy@1.4"] } } }
     },
     {
       "if": { "properties": { "webAccess": { "type": "object" } }, "required": ["webAccess"] },
-      "then": { "description": "@1.3 fields (webAccess) are refused before @1.3.", "properties": { "schema": { "const": "autonomy-policy@1.3" } } }
+      "then": { "description": "@1.3 fields (webAccess) are refused before @1.3.", "properties": { "schema": { "enum": ["autonomy-policy@1.3", "autonomy-policy@1.4"] } } }
+    },
+    {
+      "if": { "properties": { "commandRules": { "type": "array" } }, "required": ["commandRules"] },
+      "then": { "description": "@1.4 fields (commandRules) are refused before @1.4.", "properties": { "schema": { "const": "autonomy-policy@1.4" } } }
     }
   ],
   "$defs": {
+    "commandRule": {
+      "description": "One command shape: the program, literal words after it, the options and positional words it may carry. Every word must be matched; none is guessed.",
+      "type": "object",
+      "required": ["id", "program", "note"],
+      "properties": {
+        "id": { "description": "Unique in the policy; the autonomy decision names it.", "type": "string", "pattern": "^[a-z][a-z0-9.-]{0,63}$" },
+        "program": { "description": "The command's first word, exactly.", "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+        "words": {
+          "description": "Literal words that follow the program, in order (a subcommand, `pnpm exec vitest run`).",
+          "type": "array",
+          "maxItems": 6,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9_.:=-]{1,64}$" }
+        },
+        "flags": {
+          "description": "Option words allowed exactly; none takes a value.",
+          "type": "array",
+          "maxItems": 40,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^-[A-Za-z0-9_=.:-]{1,63}$" }
+        },
+        "flagLetters": { "description": "Single-letter flags that may be clustered in one word (`-rn`): `-` and one or more of these letters.", "type": "string", "pattern": "^[A-Za-z0-9]{1,32}$" },
+        "countFlag": { "description": "Allow `-N`, a count of digits (`log -5`, `head -20`), at most once.", "type": "boolean" },
+        "required": {
+          "description": "Flags (from `flags`) and options (by `name`, from `options`) that must appear.",
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^-[A-Za-z0-9_=.:-]{1,63}$" }
+        },
+        "options": {
+          "description": "Options that take a value: `name` followed by the next word, or, when it ends with `=`, joined in one word (`--format=`, `--reporter=`).",
+          "type": "array",
+          "maxItems": 24,
+          "items": {
+            "type": "object",
+            "required": ["name", "kind"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^-[A-Za-z0-9_.:-]{1,62}=?$" },
+              "kind": { "$ref": "#/$defs/commandValueKind" },
+              "oneOf": { "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,64}$" } },
+              "pattern": { "description": "A regular expression the whole value must also match (at most 200 characters).", "type": "string", "minLength": 1, "maxLength": 200 },
+              "atMost": { "description": "For a number: its upper bound.", "type": "integer", "minimum": 0, "maximum": 1000000 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "positionals": {
+          "description": "The words that are neither flags nor option values, in groups tried in order: a word goes to the first group that has room and accepts it. Every group's `min` must be reached.",
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": {
+              "kind": { "$ref": "#/$defs/commandValueKind" },
+              "min": { "type": "integer", "minimum": 0, "maximum": 64, "default": 0 },
+              "max": { "type": "integer", "minimum": 1, "maximum": 64, "default": 1 },
+              "oneOf": { "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,64}$" } },
+              "pattern": { "description": "A regular expression the whole word must also match (at most 200 characters).", "type": "string", "minLength": 1, "maxLength": 200 },
+              "scope": { "description": "For a path: run-worktree (relative to the worktree or absolute inside it; no `..`, no .git or .system), repository-read (the same, or under the run's repository, read only; no .git), scratch-file (run-worktree, an untracked regular file, never a link or a directory), or test-target (run-worktree, an existing test file or directory that a test runner's substring filter selects alone: every test file the word selects is that file or under that directory).", "enum": ["run-worktree", "repository-read", "scratch-file", "test-target"] },
+              "atMost": { "description": "For a number: its upper bound.", "type": "integer", "minimum": 0, "maximum": 1000000 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "note": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" }
+      },
+      "additionalProperties": false
+    },
+    "commandValueKind": {
+      "description": "any: any word; word: a word that does not start with `-`; number: digits; revision: a hex id, HEAD, HEAD~N, a branch name, or a..b of those; revision-path: `<revision>:<path>` with no `..` or .git; path: a path word, judged by its `scope`.",
+      "enum": ["any", "word", "number", "revision", "revision-path", "path"]
+    },
     "webAccessRule": {
       "type": "object",
       "required": ["profile", "tools", "maxClassification", "note"],

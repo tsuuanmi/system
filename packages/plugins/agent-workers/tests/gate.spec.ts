@@ -915,11 +915,11 @@ describe('classify: a tool call as the action the policy judges', () => {
     // Outside the worktree: beside it, climbing out of it, through a link out of it, elsewhere, or relative (the gate does not see where it runs).
     symlinkSync(outside, join(ws, 'link-tests'))
     writeFileSync(join(outside, 'y.spec.ts'), 'x')
-    for (const path of [join(outside, 'x.spec.ts'), `${ws}/../outside/x.spec.ts`, join(ws, 'link-tests', 'y.spec.ts'), '/etc/x.test.ts', 'packages/x/tests/x.spec.ts']) {
+    for (const path of [join(outside, 'x.spec.ts'), `${ws}/../outside/x.spec.ts`, join(ws, 'link-tests', 'y.spec.ts'), '/etc/x.test.ts']) {
       expect(classify(bash(`corepack pnpm vitest run ${path}`), ws), path).toMatchObject({ refused: expect.stringContaining('not a test file inside the workspace'), reason: 'outside-workspace' })
     }
-    // Only exactly one test file: any other form stays the exact-argv command it was, for the policy's list.
-    for (const command of [`corepack pnpm vitest run ${inside} ${inside}`, `corepack pnpm vitest run --watch ${inside}`, `corepack pnpm vitest ${inside}`, `pnpm vitest run ${inside}`, `corepack pnpm vitest run ${join(ws, 'package.json')}`]) {
+    // Only exactly one absolute test file: any other form (a relative path: the policy's command rules judge it) stays the exact-argv command it was, for the policy's list.
+    for (const command of ['corepack pnpm vitest run packages/x/tests/x.spec.ts',`corepack pnpm vitest run ${inside} ${inside}`, `corepack pnpm vitest run --watch ${inside}`, `corepack pnpm vitest ${inside}`, `pnpm vitest run ${inside}`, `corepack pnpm vitest run ${join(ws, 'package.json')}`]) {
       expect(classify(bash(command), ws), command).toMatchObject({ class: 'command' })
     }
   })
@@ -931,11 +931,11 @@ describe('classify: a tool call as the action the policy judges', () => {
     for (const options of [{}, { shellReads: true }] as const) {
       expect(classify(bash(`corepack pnpm test:related ${a} ${b}`), ws, options)).toMatchObject({ class: 'workspace-write', summary: `corepack pnpm test:related ${a} ${b}` })
     }
-    for (const path of [join(outside, 'a.ts'), `${ws}/../outside/a.ts`, '/etc/passwd', 'packages/x/src/a.ts']) {
+    for (const path of [join(outside, 'a.ts'), `${ws}/../outside/a.ts`, '/etc/passwd']) {
       expect(classify(bash(`corepack pnpm test:related ${a} ${path}`), ws), path).toMatchObject({ refused: expect.stringContaining('not a file inside the workspace'), reason: 'outside-workspace' })
     }
     // No file, an option, or another program: the exact-argv command it was, for the policy's list.
-    for (const command of ['corepack pnpm test:related', `corepack pnpm test:related --help ${a}`, `pnpm test:related ${a}`, `corepack pnpm test:related ${a} -- -t x`]) {
+    for (const command of ['corepack pnpm test:related', `corepack pnpm test:related ${a} packages/x/src/a.ts`,`corepack pnpm test:related --help ${a}`, `pnpm test:related ${a}`, `corepack pnpm test:related ${a} -- -t x`]) {
       expect(classify(bash(command), ws), command).toMatchObject({ class: 'command' })
     }
   })

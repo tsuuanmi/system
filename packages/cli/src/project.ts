@@ -131,7 +131,7 @@ interface TemplateManifest {
   workflowTemplate: string
   toolchains: Toolchain[]
   role: Record<string, unknown>
-  policy: { rules: Policy['rules']; default: string; expiry: Policy['expiry'] }
+  policy: { rules: Policy['rules']; default: string; expiry: Policy['expiry']; commandRules?: Array<Record<string, unknown>> }
   autoAccept: { enabled: boolean }
 }
 
@@ -270,9 +270,20 @@ export function renderProject(input: RenderInput): Rendered {
   const commands = [...new Set([...chain.setup, ...Object.values(chain.checks), ...chain.generated?.commands ?? []])]
   const listed = new Set(input.studio.commands ?? [])
   const missing = commands.filter((c) => !listed.has(c))
-  const studio = missing.length ? { ...input.studio, version: input.studio.version + 1, commands: [...input.studio.commands ?? [], ...missing] } : undefined
+  // The template's command rules (autonomy-policy@1.4) are in force only where the studio policy holds
+  // them too (a project policy only narrows): the ones it lacks, or holds otherwise, go into its change.
+  const rules = manifest.policy.commandRules ? fillJson(manifest.policy.commandRules, values) : []
+  const held = (input.studio.commandRules ?? []) as Array<Record<string, unknown>>
+  const missingRules = rules.filter((rule) => !held.some((h) => JSON.stringify(h) === JSON.stringify(rule)))
+  const studio = missing.length || missingRules.length
+    ? {
+        ...input.studio, version: input.studio.version + 1, commands: [...input.studio.commands ?? [], ...missing],
+        ...missingRules.length ? { schema: 'autonomy-policy@1.4', commandRules: [...held.filter((h) => !missingRules.some((r) => r.id === h.id)), ...missingRules] } : {},
+      }
+    : undefined
   const project: Policy = {
-    schema: 'autonomy-policy@1.0',
+    // The template's command rules (autonomy-policy@1.4): the routine reads, tests, and edits of a run's own worktree run unasked from the first day.
+    schema: manifest.policy.commandRules ? 'autonomy-policy@1.4' : 'autonomy-policy@1.0',
     id: `${input.id}.policy`,
     version: 1,
     scope: 'project',
@@ -282,6 +293,7 @@ export function renderProject(input: RenderInput): Rendered {
     default: manifest.policy.default,
     commands,
     expiry: manifest.policy.expiry,
+    ...rules.length ? { commandRules: rules } : {},
   }
   const role = fillJson(manifest.role, values)
   role.workspace = input.repository
@@ -303,8 +315,10 @@ export function renderProject(input: RenderInput): Rendered {
   }
   const patch = patchText(input, manifest, role, setup, !!chain.generated)
   const policyChange = {
-    note: 'The studio policy lists the commands the project runs unasked (a command runs unasked only when every applying commands list holds it); the project policy narrows it to exactly them. Both rest on the set in force: file the project policy once the studio change is decided, and add its riskTiers path map when the repository\'s layout is known.',
-    studio: studio ? { filed: true, adds: missing, policy: studio } : { filed: false, adds: [], why: 'the studio policy already lists every command' },
+    note: 'The studio policy lists the commands the project runs unasked (a command runs unasked only when every applying commands list holds it), and holds the command rules (a rule is in force only when the studio holds it, and the project policy the same rule); the project policy narrows it to exactly them. Both rest on the set in force: file the project policy once the studio change is decided, and add its riskTiers path map when the repository\'s layout is known.',
+    studio: studio
+      ? { filed: true, adds: missing, ...missingRules.length ? { addsCommandRules: missingRules.map((r) => r.id) } : {}, policy: studio }
+      : { filed: false, adds: [], why: 'the studio policy already lists every command and holds every command rule' },
     project: { filed: !studio, policy: project },
   }
   const text = (name: string): string => fill(readFileSync(join(dir, name), 'utf8'), values)
