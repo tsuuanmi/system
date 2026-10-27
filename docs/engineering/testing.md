@@ -338,7 +338,8 @@ With up to nine tasks at once, a full run per check (3,309 tests in 283 files, 2
 bottleneck: tests with a 5 s bound failed under the load (T299). The full suite now runs once per
 task, at the landing; everything before it runs what the change relates to.
 
-- `pnpm test:related <file>…` (`--dry-run` to print the selection only) runs the test files related
+- `pnpm test:related <file>…` (`--dry-run` to print the selection only; vitest's options follow, with or without `--`, as in
+  `test:related a.ts --silent --reporter=dot`: the files end at the first word that starts with `-`) runs the test files related
   to the files given: each given test file; and, for any other file, the tests of its package and of
   every package that depends on it, through the same graph as `test:affected` (code, test helpers,
   and the packages that locate its data files). The scripts' tests, which check the whole repository
