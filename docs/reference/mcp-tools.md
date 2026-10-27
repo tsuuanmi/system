@@ -477,7 +477,7 @@ Scope: `client`
 | `taskId` | string | yes |  |
 | `generation` | integer |  | The lease generation the caller holds (a fence, INV-4) |
 | `note` | string |  | A progress line, not stored: the run that serves the task gives its result |
-| `answers` | array |  | Answers to a question wait, each item {question, answer}: question is the question's index from 0 in the task's waiting.questions (board_task), answer your text; every question once, e.g. [{"question": 0, "answer": "Use the v2 API"}]. Answering every one sends the task through the gate for its next attempt |
+| `answers` | array |  | Answers to a question wait, each item {question, answer}: question is the question's index from 0 in the task's waiting.questions (board_task), answer your text; every question once, e.g. [{"question": 0, "answer": "Use the v2 API"}]. Answering every one continues the attempt that asked, through the gate, its count unchanged |
 
 ## `brainstorm`
 

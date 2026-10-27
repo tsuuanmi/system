@@ -957,7 +957,7 @@ second execution path (INV-1).
     before each step, a spent line starting no further step and blocking the task with a funding
     request from the ledger's count, the funded attempt pointed at the completed steps, and no
     funding asked on the last attempt (`retries-spent`); a step's questions blocking its task, the
-    answers briefing the next attempt, and none offered outside a board task; the board's
+    answers briefing the attempt they continue (T291), and none offered outside a board task; the board's
     `TASKS.md` in every brief, written git-ignored into the run's own worktree by a scripted source
     with one, the result bound to the worktree's subject without it, nothing committed, nothing
     read back;

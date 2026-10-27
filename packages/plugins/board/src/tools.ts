@@ -96,7 +96,7 @@ export const INPUTS: Record<BoardTool, ToolSpec['inputSchema']> = {
     note: zod.string().min(1).max(2000).optional().describe('A progress line, not stored: the run that serves the task gives its result'),
     // The shape of an answer is said once, on the array, which the generated reference shows (T99 D7).
     answers: zod.array(zod.strictObject({ question: zod.number().int().min(0).max(7), answer: zod.string().min(1).max(2000) })).min(1).max(8).optional()
-      .describe('Answers to a question wait, each item {question, answer}: question is the question\'s index from 0 in the task\'s waiting.questions (board_task), answer your text; every question once, e.g. [{"question": 0, "answer": "Use the v2 API"}]. Answering every one sends the task through the gate for its next attempt'),
+      .describe('Answers to a question wait, each item {question, answer}: question is the question\'s index from 0 in the task\'s waiting.questions (board_task), answer your text; every question once, e.g. [{"question": 0, "answer": "Use the v2 API"}]. Answering every one continues the attempt that asked, through the gate, its count unchanged'),
   },
   board_cancel: { taskId: id(), note: shortText().optional() },
   board_pause: { projectId: id() },

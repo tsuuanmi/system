@@ -47,6 +47,8 @@ class Carrier {
   readonly steps: CarryStep[] = []
   /** The `commit` steps it was asked, to keep an ended attempt's tree. */
   readonly kept: LandStep[] = []
+  /** The runs and worktrees it was asked to run required checks on. */
+  readonly checked: Array<{ runId: string; workspace: string }> = []
   keeps = false
   lint: 'passed' | 'failed' = 'passed'
   answer: (step: CarryStep) => Carried | undefined | Promise<Carried | undefined> = (step) => ({
@@ -71,6 +73,7 @@ class Carrier {
         return { outcome: 'committed', repository: '/repo', branch: `system/run/${step.runId}`, head: 'e'.repeat(40), committed: true, base: { branch: 'main', sha: step.subject.ref }, contained: false, stat: '' }
       },
       check: async (step) => {
+        this.checked.push({ runId: step.runId, workspace: step.workspace })
         const results = step.checks.map((check) => ({ check, outcome: this.lint, exitCode: this.lint === 'passed' ? 0 : 1, reason: `exited ${this.lint === 'passed' ? 0 : 1}` }))
         const evidence = ctx.artifacts.put({
           kind: 'evidence', bodySchema: 'check-run@1.0', classification: step.classification, producer: { type: 'system', ref: 'carrier' }, runId: step.runId,
@@ -273,6 +276,146 @@ describe('ctx.workflow starts a board task\'s next attempt from its previous att
     const carried = b.ctx.workflow.dossier({ taskId: ready.taskId, limit: 50 }).entries.find((e) => e.attempt === 3 && e.text.includes('starts from the tree of attempt'))
     expect(carried).toMatchObject({ kind: 'evidence', attempt: 3, author: { type: 'system' }, commits: ['c'.repeat(40)] })
     expect(carried!.text).toBe(`Attempt 3 (run ${three.runId}) starts from the tree of attempt 2 (run ${two.runId}): its change is kept as commit ${'c'.repeat(40)} on system/run/${two.runId}, on top of ${b.head}.`)
+  })
+
+  it('continues an answered question\'s attempt from the carried change, never from the asking run\'s results: its writing step runs again in this run\'s worktree, and the required checks run there (T291, INV-5)', async () => {
+    const b = await boot()
+    const asks = [{ text: '{"questions": ["Keep the API?"]}' }]
+    b.workers.reply = (request: Rendered): Reply => {
+      if (request.requirement.capabilities.includes('develop')) {
+        writeFileSync(join(b.workers.worktrees.get(request.runId!)!, 'a.c'), `int a = ${b.workers.started.length};\n`)
+        return { text: 'changed a.c' }
+      }
+      return asks.shift() ?? { text: 'checked' }
+    }
+    const task = await readyTask(b.ctx, 'asks after writing', { writes: { type: 'git-head', ref: b.head }, actionClass: 'workspace-write' })
+    const first = await attempt(b.ctx, task)
+    expect(first).toMatchObject({ status: 'failed', error: { kind: 'question' } })
+    expect(first.nodes.map((n) => [n.nodeId, n.state])).toEqual([['develop:1', 'COMPLETED'], ['check:1', 'FAILED']])
+    expect(await b.ctx.board.answer(task.taskId, ['yes'])).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+
+    // The carry gives the new run's worktree the change; the steps the asking run completed on its own tree are not kept.
+    const before = b.workers.started.length
+    const second = await attempt(b.ctx, task)
+    expect(carryOf(b.ctx, second.runId)).toMatchObject({ state: 'carried', from: { runId: first.runId, nodeId: 'develop:1' } })
+    const continued = b.ctx.artifacts.list({ kind: 'decision', decisionType: 'admission', runId: second.runId, limit: 100 }).map((a) => decisionOf(b.ctx, a.id as ArtifactRef))
+      .find((d) => d.decider.id === 'workflow.task-continue')
+    expect(continued?.outcome).toMatchObject({ option: 'fresh', detail: { attempt: 1, from: first.runId, writers: ['develop:1'], kept: [] } })
+    // The writing step ran again in this run's worktree, and every result of the run names it, never the asking run's.
+    const sent = b.workers.started.slice(before)
+    expect(sent.map((s) => s.runId)).toEqual([second.runId, second.runId])
+    expect(sent.at(-1)!.prompt).toContain('yes')
+    const tree = b.workers.worktrees.get(second.runId)!
+    expect(tree).not.toBe(b.workers.worktrees.get(first.runId))
+    const develop = second.nodes.find((n) => n.nodeId === 'develop:1')!
+    expect((b.ctx.artifacts.get(develop.result!)!.body as { workspace: string }).workspace).toBe(tree)
+    // The required check ran on this run's own worktree, so the result is accepted on attempt 1.
+    expect(b.carrier.checked).toEqual([{ runId: second.runId, workspace: tree }])
+    expect(second).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
+    expect(await b.ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+  })
+
+  it('carries the tree of a writing step that asked after changing it, and continues that step on it, on the same attempt (T291)', async () => {
+    const b = await boot()
+    const asks = [{ text: '{"questions": ["Keep the API?"]}' }]
+    b.workers.reply = (request: Rendered): Reply => {
+      if (request.requirement.capabilities.includes('develop')) {
+        // The step changes the tree, then asks before it finishes.
+        writeFileSync(join(b.workers.worktrees.get(request.runId!)!, 'a.c'), `int a = ${b.workers.started.length};\n`)
+        return asks.shift() ?? { text: 'changed a.c' }
+      }
+      return { text: 'checked' }
+    }
+    const task = await readyTask(b.ctx, 'develop asks', { writes: { type: 'git-head', ref: b.head }, actionClass: 'workspace-write' })
+    const first = await attempt(b.ctx, task)
+    expect(first).toMatchObject({ status: 'failed', error: { kind: 'question' } })
+    expect(first.nodes.map((n) => [n.nodeId, n.state])).toEqual([['develop:1', 'FAILED'], ['check:1', 'WAITING']])
+    await b.ctx.board.answer(task.taskId, ['yes'])
+
+    const before = b.workers.started.length
+    const second = await attempt(b.ctx, task)
+    // The asking step's own tree is carried, though the step never completed: its edits are in the new worktree.
+    expect(b.carrier.steps.at(-1)).toMatchObject({ runId: second.runId, from: { runId: first.runId, workspace: b.workers.worktrees.get(first.runId) } })
+    expect(carryOf(b.ctx, second.runId)).toMatchObject({ state: 'carried', from: { runId: first.runId, nodeId: 'develop:1' } })
+    const continued = b.ctx.artifacts.list({ kind: 'decision', decisionType: 'admission', runId: second.runId, limit: 100 }).map((a) => decisionOf(b.ctx, a.id as ArtifactRef))
+      .find((d) => d.decider.id === 'workflow.task-continue')
+    expect(continued?.outcome).toMatchObject({ option: 'continue', detail: { attempt: 1, from: first.runId, nodeId: 'develop:1', kept: [], writers: [] } })
+    expect(continued?.outcome.detail).not.toHaveProperty('lost')
+    // The asking step runs again, told its worktree holds the change, with the answers; then the step after it.
+    const sent = b.workers.started.slice(before)
+    expect(sent.map((s) => s.requirement.capabilities.includes('develop') ? 'develop:1' : 'check:1')).toEqual(['develop:1', 'check:1'])
+    expect(sent[0]!.prompt).toContain('already holds the change step develop:1 of attempt 1 made')
+    expect(sent[0]!.prompt).toContain('yes')
+    expect(second).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
+    expect(await b.ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+  })
+
+  it('continues a writing step that asked before changing anything: its empty tree is nothing lost, and it runs again with the answers on the same attempt (T291)', async () => {
+    const b = await boot()
+    // A source that holds the tree refuses to carry one with no change in it.
+    b.carrier.answer = () => ({ outcome: 'refused', cause: 'empty', reason: 'the worktree holds no change: there is no work to carry' })
+    const asks = [{ text: '{"questions": ["Keep the API?"]}' }]
+    b.workers.reply = (request: Rendered): Reply => {
+      if (request.requirement.capabilities.includes('develop')) {
+        const reply = asks.shift()
+        if (reply) return reply
+        writeFileSync(join(b.workers.worktrees.get(request.runId!)!, 'a.c'), `int a = ${b.workers.started.length};\n`)
+        return { text: 'changed a.c' }
+      }
+      return { text: 'checked' }
+    }
+    const task = await readyTask(b.ctx, 'develop asks first', { writes: { type: 'git-head', ref: b.head }, actionClass: 'workspace-write' })
+    const first = await attempt(b.ctx, task)
+    expect(first).toMatchObject({ status: 'failed', error: { kind: 'question' } })
+    await b.ctx.board.answer(task.taskId, ['yes'])
+
+    const before = b.workers.started.length
+    const second = await attempt(b.ctx, task)
+    expect(carryOf(b.ctx, second.runId)).toMatchObject({ state: 'fresh', cause: 'empty', from: { runId: first.runId, nodeId: 'develop:1' } })
+    const continued = b.ctx.artifacts.list({ kind: 'decision', decisionType: 'admission', runId: second.runId, limit: 100 }).map((a) => decisionOf(b.ctx, a.id as ArtifactRef))
+      .find((d) => d.decider.id === 'workflow.task-continue')
+    expect(continued?.outcome).toMatchObject({ option: 'continue', detail: { attempt: 1, from: first.runId, nodeId: 'develop:1' } })
+    expect(continued?.outcome.detail).not.toHaveProperty('lost')
+    // The asking step runs again with the answers, and no brief speaks of edits that never existed.
+    const sent = b.workers.started.slice(before)
+    expect(sent.map((s) => s.requirement.capabilities.includes('develop') ? 'develop:1' : 'check:1')).toEqual(['develop:1', 'check:1'])
+    expect(sent[0]!.prompt).toContain('yes')
+    for (const started of sent) expect(started.prompt).not.toContain('does not hold the edits')
+    expect(second).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
+    expect(await b.ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+  })
+
+  it('does not resume a writing step that asked when its tree is not carried: the run starts again in a new session, every brief saying the edits are gone (T291)', async () => {
+    const b = await boot()
+    b.carrier.answer = () => undefined
+    const asks = [{ text: '{"questions": ["Keep the API?"]}' }]
+    b.workers.reply = (request: Rendered): Reply => {
+      if (request.requirement.capabilities.includes('develop')) {
+        writeFileSync(join(b.workers.worktrees.get(request.runId!)!, 'a.c'), `int a = ${b.workers.started.length};\n`)
+        return asks.shift() ?? { text: 'changed a.c' }
+      }
+      return { text: 'checked' }
+    }
+    const task = await readyTask(b.ctx, 'develop asks, not carried', { writes: { type: 'git-head', ref: b.head }, actionClass: 'workspace-write' })
+    const first = await attempt(b.ctx, task)
+    expect(first).toMatchObject({ status: 'failed', error: { kind: 'question' } })
+    await b.ctx.board.answer(task.taskId, ['yes'])
+
+    const before = b.workers.started.length
+    const second = await attempt(b.ctx, task)
+    expect(carryOf(b.ctx, second.runId)).toMatchObject({ state: 'fresh' })
+    const continued = b.ctx.artifacts.list({ kind: 'decision', decisionType: 'admission', runId: second.runId, limit: 100 }).map((a) => decisionOf(b.ctx, a.id as ArtifactRef))
+      .find((d) => d.decider.id === 'workflow.task-continue')!
+    expect(continued.outcome).toMatchObject({ option: 'fresh', detail: { attempt: 1, from: first.runId, nodeId: 'develop:1', lost: expect.stringMatching(/^its carry is fresh/) } })
+    // Every brief of the run says the edits are gone, pointing at the decision.
+    const sent = b.workers.started.slice(before)
+    expect(sent.length).toBeGreaterThan(0)
+    for (const started of sent) {
+      expect(started.prompt).toContain('does not hold the edits step develop:1 made in attempt 1 before it asked')
+      expect(started.prompt).not.toContain('already holds the change')
+    }
+    expect(second).toMatchObject({ status: 'completed' })
+    expect(await b.ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
   })
 
   it('keeps an ended attempt\'s change as its result when it ends, the sha in its dossier and its outcome; one that cannot be kept is said, never skipped (T271)', async () => {

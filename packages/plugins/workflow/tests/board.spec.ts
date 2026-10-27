@@ -541,7 +541,7 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     const handbook = handbookPointer(ctx, brief)!
     expect(brief.artifacts).toEqual([{ ref: firstResult, role: 'input', note: `the accepted result of ${first.taskId}: first` }, handbook.pointer])
     expect(JSON.stringify(brief)).not.toContain('the first result')
-    expect(started.prompt).toBe(`Board task ${second.taskId} of project p1, attempt 1.\nGoal: build on the first\nAcceptance criteria:\n- a1: it builds\nIf you cannot finish without an answer from a person, answer with only this JSON object and nothing else: {"questions": ["..."]}, with 1 to 8 questions of at most 500 characters each. The task then waits for the answers, and its next attempt is given them.\n\ngo on\n\nRead these too:\n\n<artifact id="${firstResult}" role="input" note="the accepted result of ${first.taskId}: first">\nthe first result\n</artifact>\n\n${handbook.rendered}`)
+    expect(started.prompt).toBe(`Board task ${second.taskId} of project p1, attempt 1.\nGoal: build on the first\nAcceptance criteria:\n- a1: it builds\nIf you cannot finish without an answer from a person, answer with only this JSON object and nothing else: {"questions": ["..."]}, with 1 to 8 questions of at most 500 characters each. The task then waits for the answers, and this attempt continues with them: asking spends no attempt.\n\ngo on\n\nRead these too:\n\n<artifact id="${firstResult}" role="input" note="the accepted result of ${first.taskId}: first">\nthe first result\n</artifact>\n\n${handbook.rendered}`)
   })
 
   it('counts against a task\'s budget the usage the ledger records under the runs that served it and the executions they started, each record once (PROP-0010)', async () => {
@@ -1049,7 +1049,7 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(decisionsOf(ctx, 'admission', 'workflow.task-admission').filter((d) => d.outcome.option === 'refuse')).toHaveLength(2)
   })
 
-  it('blocks a task on the questions a step asks instead of answering (question); answered, its next attempt is briefed with the answers (PROP-0010, INV-6)', async () => {
+  it('blocks a task on the questions a step asks instead of answering (question); answered, the attempt continues, its next run briefed with the answers (PROP-0010, INV-6, T291)', async () => {
     const { ctx, workers } = await boot()
     await project(ctx)
     const task = await ready(ctx, 'unclear')
@@ -1073,15 +1073,17 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(ctx.eventLog.query({ runId: run.runId, type: 'workflow.run.failed' })[0]).toMatchObject({ data: { template: 'chain', kind: 'question', disposition: 'USER_ACTION' } })
     expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'question', questions: ['Which band width?', 'Keep the old API?'] }, attempts: { count: 1 } })
 
-    // The lead answers every question: the next attempt goes through the gate (read: auto) and is briefed with the answers.
+    // The lead answers every question: the attempt that asked continues (T291), through the gate (read: auto), its count
+    // unchanged, and is briefed with the answers.
     await ctx.board.answer(task.taskId, ['64 is enough', 'yes, keep it'])
-    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready' })
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready', attempts: { count: 1 } })
     workers.reply = () => ({ text: 'the answer' })
     const next = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
     expect((await reported(ctx, next.runId)).task?.outcome).toMatchObject({ status: 'accepted', state: 'done' })
     const brief = ctx.artifacts.get(workers.started[1]!.brief!)!.body as { attempt: number; artifacts: Array<{ role: string; note: string }> }
-    expect(brief.attempt).toBe(2)
-    expect(brief.artifacts).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'review', note: 'the answers to the 2 question(s) attempt 1 asked, and the decision that made attempt 2' })]))
+    expect(brief.attempt).toBe(1)
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+    expect(brief.artifacts).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'review', note: 'the answers to the 2 question(s) attempt 1 asked, and the decision that continues it' })]))
     expect(workers.started[1]!.prompt).toContain('64 is enough')
   })
 

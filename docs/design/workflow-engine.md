@@ -1200,12 +1200,12 @@ person's answer. The protocol is the brief's: every brief of a board task's run 
 | a step's answer is questions | when its execution completes and before its acceptance: the whole answer (in one fenced block, or none) parses as `{"questions": [...]}`, 1 to 8 non-empty questions of at most 500 characters (`questionsOf` in libs; anything else is a result, and an answer is never parsed past a bound); a `gate` decision (`workflow.task-question`, `ask`, inputs: the answer) on the step; the step fails as `question` (`USER_ACTION`) with no result; the questions on the run's `workflow_tasks` row; `workflow.task.question` | — |
 | the run winds down | nothing new is promoted after a failed step, as for any failure | — |
 | the board takes the wait | before the run ends: `board.block(question, questions)` under the holder's generation; the task waits for input, and the run fails as `question`, its outcome `blocked` | a board not loaded, or not answering: asked again; one that refuses (the holder lapsed, the task not running) leaves the run to end as a failed one, which its report reconciles (`reconcileRun`), an attempt the board counts |
-| answered | `board.answer` (the lead's `board_update`, or the operator) records the questions and answers in its `board` decision; the next attempt goes through the gate | — |
-| the next attempt | its brief points at that decision (role `review`, "the answers to the N question(s) attempt n asked"), and its run resumes the session before it when it can ([resume from a brief](#a-board-tasks-brief)) | — |
+| answered | `board.answer` (the lead's `board_update`, or the operator) records the questions and answers in its `board` decision; the attempt that asked continues through the gate, its count unchanged (T291, [board](board.md#what-ends-an-input-wait)) | — |
+| the continued attempt | its run is the same attempt again; its brief points at that decision (role `review`, "the answers to the N question(s) attempt n asked, and the decision that continues it"); at its first turn, once its carry settled, it takes the asking run's steps (`workflow.task-continue`): the completed ones bound to no run's tree keep their results, and the asking step resumes its session, the answers its next message; a step bound to the asking run's tree, or an asking writing step whose edits were not carried, starts the template again on the same attempt, recorded | — |
 
 - **Authority** (INV-6): the questions are model text, data for a person. The move they cause
   only asks a person and starts nothing: the task stops, and only an answer (a trusted move by the
-  lead or the operator) and the gate start its next attempt.
+  lead or the operator) and the gate continue its attempt.
 - **Bounded** (INV-9): one question wait per attempt (the first step that asks ends the run), at
   most 8 questions of 500 characters, the board's own bounds; the wait expires
   (`input-expired`), and the attempts are the board's.

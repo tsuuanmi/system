@@ -74,7 +74,7 @@ export class TaskCarries {
    * out). Never throws on the engine's own records: one it cannot read is a reason to start from HEAD,
    * recorded, never a reason to refuse the start (INV-2).
    */
-  plan(task: BoardTask, runId: string, fresh = false): TaskCarry | undefined {
+  plan(task: BoardTask, runId: string, fresh = false, thisAttempt: number = task.attempts.count + 1): TaskCarry | undefined {
     // The previous run is found by its own record, never by the attempts counted: a run the board
     // did not count (it failed only on the infrastructure, ADR-0069) leaves the count where it was
     // before it, and is still the previous run, whose work this one may carry.
@@ -88,27 +88,33 @@ export class TaskCarries {
       writer = previous ? this.writerOf(previous.run_id) : undefined
       if (!previous || !writer) return undefined
       attempt = this.served(previous) ?? attempt
-      why = this.refusal(task, previous, writer, fresh)
+      why = this.refusal(task, previous, writer, fresh, thisAttempt)
       ended = this.ended(previous, this.e.nodeRows(previous.run_id))
     } catch (error) {
       if (attempt < 1 && !previous) return undefined
-      return this.unread(task, runId, `the engine's record of attempt ${attempt}${previous ? ` (run ${previous.run_id})` : ''} could not be read (${(error as Error).message.slice(0, 300)})`)
+      return this.unread(task, runId, thisAttempt, `the engine's record of attempt ${attempt}${previous ? ` (run ${previous.run_id})` : ''} could not be read (${(error as Error).message.slice(0, 300)})`)
     }
     const tree = subjectId({ type: 'git-head', ...writer.subject })
+    // A writing step that asked questions left its tree before it finished: its change is what it made before it asked (T291).
+    const asked = (previous.question ? JSON.parse(previous.question) as TaskQuestion : undefined)?.nodeId === writer.nodeId
     const decision = this.e.ctx.artifacts.recordDecision({
       decisionType: 'admission',
-      question: `Does run ${runId}, attempt ${task.attempts.count + 1} of board task ${task.taskId}, start from the work ${attempt === task.attempts.count + 1 ? `run ${previous.run_id}, not counted, left of the same attempt` : `attempt ${attempt} left`} in its worktree?`,
+      question: `Does run ${runId}, attempt ${thisAttempt} of board task ${task.taskId}, start from the work ${attempt === thisAttempt ? `run ${previous.run_id}, ${thisAttempt === task.attempts.count ? 'whose answered question continues it,' : 'not counted,'} left of the same attempt` : `attempt ${attempt} left`} in its worktree?`,
       inputs: [writer.result],
       candidates: [
         { option: 'carry', selected: !why, reasons: why ? [`not carry: ${why}`] : [
-          `step ${writer.nodeId} of run ${previous.run_id} (attempt ${attempt}) completed its change, ${tree}`,
-          `the attempt ended after it without being accepted (${ended}): its change is the attempt's result, kept on its run's branch, and the next attempt builds on it rather than making it again`,
+          asked
+            ? `step ${writer.nodeId} of run ${previous.run_id} (attempt ${attempt}) changed the tree, ${tree}, then asked questions before it finished`
+            : `step ${writer.nodeId} of run ${previous.run_id} (attempt ${attempt}) completed its change, ${tree}`,
+          asked
+            ? `the answers continue the attempt (${ended}): what the step changed before it asked is kept on its run's branch, and the run builds on it rather than making it again`
+            : `the attempt ended after it without being accepted (${ended}): its change is the attempt's result, kept on its run's branch, and the next attempt builds on it rather than making it again`,
           'the Worker source that holds the tree carries it before the run\'s first step, only while it is still that tree: replayed on the commit the task writes now, the repository\'s HEAD, or on its own base when the replay conflicts',
         ] },
         { option: 'fresh', selected: !!why, reasons: why ? [why, 'the run\'s worktree is cut from the repository\'s HEAD, as for any attempt'] : ['not fresh: the earlier work is the task\'s own, intact as its writing step left it, and the task did not opt out'] },
       ],
       decider: RULE,
-      outcome: { option: why ? 'fresh' : 'carry', detail: { taskId: task.taskId, attempt: task.attempts.count + 1, from: previous.run_id, fromAttempt: attempt, nodeId: writer.nodeId, result: writer.result, workspace: writer.workspace, subject: writer.subject, ...(fresh ? { optedOut: true } : {}) } },
+      outcome: { option: why ? 'fresh' : 'carry', detail: { taskId: task.taskId, attempt: thisAttempt, from: previous.run_id, fromAttempt: attempt, nodeId: writer.nodeId, result: writer.result, workspace: writer.workspace, subject: writer.subject, ...(fresh ? { optedOut: true } : {}) } },
       deterministic: true,
     }, { ...PRODUCER, runId }).id as ArtifactRef
     return {
@@ -118,18 +124,18 @@ export class TaskCarries {
   }
 
   /** {@link plan} when the previous attempt's record cannot be read: `fresh`, decided and recorded with why, with no tree named. */
-  private unread(task: BoardTask, runId: string, what: string): TaskCarry {
+  private unread(task: BoardTask, runId: string, thisAttempt: number, what: string): TaskCarry {
     const why = `${what}, so its work is not carried`
     const decision = this.e.ctx.artifacts.recordDecision({
       decisionType: 'admission',
-      question: `Does run ${runId}, attempt ${task.attempts.count + 1} of board task ${task.taskId}, start from the work attempt ${task.attempts.count} left in its worktree?`,
+      question: `Does run ${runId}, attempt ${thisAttempt} of board task ${task.taskId}, start from the work attempt ${task.attempts.count} left in its worktree?`,
       inputs: [],
       candidates: [
         { option: 'carry', selected: false, reasons: [`not carry: ${why}`] },
         { option: 'fresh', selected: true, reasons: [why, 'the run\'s worktree is cut from the repository\'s HEAD, as for any attempt'] },
       ],
       decider: RULE,
-      outcome: { option: 'fresh', detail: { taskId: task.taskId, attempt: task.attempts.count + 1, fromAttempt: task.attempts.count } },
+      outcome: { option: 'fresh', detail: { taskId: task.taskId, attempt: thisAttempt, fromAttempt: task.attempts.count } },
       deterministic: true,
     }, { ...PRODUCER, runId }).id as ArtifactRef
     this.e.ctx.logger.warn(`workflow: run ${runId} of board task ${task.taskId} starts from HEAD: ${why}`)
@@ -398,14 +404,38 @@ export class TaskCarries {
     return rows.find((r) => (r.outcome ? (JSON.parse(r.outcome) as TaskOutcome).status : undefined) !== 'not-started')
   }
 
-  /** The run's latest writing step that completed with an agent's result on a git working tree, and that tree. */
+  /**
+   * The run's latest writing step that left an agent's result on a git working tree, and that tree: a
+   * writing step that asked questions instead of answering (T291), whose answer is that result and whose
+   * edits made before it asked are in that tree, else the latest one that completed. The asking step is
+   * the run's last turn, so its tree is the one the run left.
+   */
   private writerOf(runId: string): Writer | undefined {
+    const asked = this.askedWriter(runId)
+    if (asked) return asked
     const writers = this.e.nodeRows(runId).filter((n) => n.state === 'COMPLETED' && (JSON.parse(n.spec) as ResolvedNode).capabilities.includes('develop'))
     const last = writers.at(-1)
     const result = last ? (JSON.parse(last.record) as NodeRecord).outputReceipt?.result : undefined
-    const body = result ? this.e.ctx.artifacts.get(result)?.body as { schema?: string; workspace?: unknown; subject?: Subject } | undefined : undefined
-    if (!last || !result || !body?.schema?.startsWith('agent-result@') || typeof body.workspace !== 'string' || body.subject?.type !== 'git-head' || !body.subject.version) return undefined
-    return { nodeId: last.node_id, result, workspace: body.workspace, subject: { ref: body.subject.ref, version: body.subject.version } }
+    return last && result ? this.treeOf(last.node_id, result) : undefined
+  }
+
+  /** The writing step of the run that asked the questions its board task waited on, with the tree its asking answer was made on (T291). */
+  private askedWriter(runId: string): Writer | undefined {
+    const row = this.e.tasks.row(runId)
+    const question = row?.question ? JSON.parse(row.question) as TaskQuestion : undefined
+    if (question?.state !== 'raised') return undefined
+    const node = this.e.nodeRow(runId, question.nodeId)
+    if (!node || !(JSON.parse(node.spec) as ResolvedNode).capabilities.includes('develop')) return undefined
+    // The question's gate decision names the step's answer, its only input.
+    const result = (this.e.ctx.artifacts.get(question.decision)?.body as { inputs?: ArtifactRef[] } | undefined)?.inputs?.[0]
+    return result ? this.treeOf(node.node_id, result) : undefined
+  }
+
+  /** `result`'s working tree, when it is an agent's result on a git working tree at a known version. */
+  private treeOf(nodeId: string, result: ArtifactRef): Writer | undefined {
+    const body = this.e.ctx.artifacts.get(result)?.body as { schema?: string; workspace?: unknown; subject?: Subject } | undefined
+    if (!body?.schema?.startsWith('agent-result@') || typeof body.workspace !== 'string' || body.subject?.type !== 'git-head' || !body.subject.version) return undefined
+    return { nodeId, result, workspace: body.workspace, subject: { ref: body.subject.ref, version: body.subject.version } }
   }
 
   /** The kinds the run and its failed steps failed as. */
@@ -415,9 +445,9 @@ export class TaskCarries {
   }
 
   /** Why the run's work is not carried, or undefined when every bound holds (fail closed: any doubt is a reason). */
-  private refusal(task: BoardTask, previous: TaskRow, writer: Writer, fresh: boolean): string | undefined {
+  private refusal(task: BoardTask, previous: TaskRow, writer: Writer, fresh: boolean, thisAttempt: number): string | undefined {
     const what = `run ${previous.run_id}`
-    if (fresh) return `the start of attempt ${task.attempts.count + 1} asked for a fresh start: the task opts out of building on ${what}'s change (as when a review rejected its approach)`
+    if (fresh) return `the start of attempt ${thisAttempt} asked for a fresh start: the task opts out of building on ${what}'s change (as when a review rejected its approach)`
     const served = this.served(previous)
     // The attempt before this one, or this same attempt when the board did not count the previous run
     // (it failed only on the infrastructure, ADR-0069, and gave its attempt back).

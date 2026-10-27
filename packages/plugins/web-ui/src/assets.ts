@@ -757,7 +757,7 @@ export const APP_JS = `'use strict'
     const project = (id) => projects.get(id)
     const name = (id) => (project(id) && project(id).title) || id
     const charter = /^project:(.+):charter:(\\d+)$/.exec(ref)
-    const task = /^board-task:(.+):attempt:(\\d+)$/.exec(ref)
+    const task = /^board-task:(.+?):attempt:(\\d+)(?::answered:.+)?$/.exec(ref)
     const call = /^agent-tool-call:([^:]+):(.+)$/.exec(ref)
     const projectText = r.requester.projectId ? ' of project ' + name(r.requester.projectId) : ''
     // A board task by its title when the board lists it, else by its id.

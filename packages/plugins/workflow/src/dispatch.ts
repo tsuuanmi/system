@@ -655,7 +655,7 @@ export class Dispatcher {
       }
       const live = this.liveAsk(task.taskId, n)
       if (live) {
-        why(live.state === 'approved' ? `approved, waiting for ${live.worker} to be free (ask ${live.ask_id})` : `an ask for attempt ${n + 1} is ${live.state === 'starting' ? 'starting its run' : `open (ask ${live.ask_id}${live.request_id ? `, request ${live.request_id}` : ''})`}`)
+        why(live.state === 'approved' ? `approved, waiting for ${live.worker} to be free (ask ${live.ask_id})` : `an ask for attempt ${n + 1 - (n > 0 && await this.e.board?.continuing(task.taskId).catch(() => false) ? 1 : 0)} is ${live.state === 'starting' ? 'starting its run' : `open (ask ${live.ask_id}${live.request_id ? `, request ${live.request_id}` : ''})`}`)
         continue
       }
       const held = projectPaused.get(project.projectId)
@@ -1097,7 +1097,7 @@ export class Dispatcher {
     if (body?.decisionType !== 'approval' || body.outcome?.option !== 'approved' || typeof body.outcome.detail?.requestId !== 'string') return undefined
     const request = await this.e.ctx.get('approvals')?.get(body.outcome.detail.requestId).catch(() => undefined)
     const bound = request && request.state === 'approved' && request.requester.component === 'board' && request.requester.taskId === task.taskId
-      && request.subject.ref === `board-task:${task.taskId}:attempt:${task.attempts.count}` && request.action.class === task.actionClass
+      && (request.subject.ref === `board-task:${task.taskId}:attempt:${task.attempts.count}` || request.subject.ref.startsWith(`board-task:${task.taskId}:attempt:${task.attempts.count}:answered:`)) && request.action.class === task.actionClass
       && request.resolution?.cause === 'verdict' && request.resolution.decision === task.lastDecision && request.resolution.approval !== undefined
     return bound ? { requestId: request.requestId, decision: task.lastDecision, approval: request.resolution!.approval! } : undefined
   }
@@ -1252,7 +1252,11 @@ export class Dispatcher {
     const task = await board.task(row.task_id)
     if (!task) return `task ${row.task_id} is unknown to the board`
     if (task.state !== 'ready') return `task ${row.task_id} is ${task.state} now${task.run ? ` (run ${task.run.runId})` : ''}`
-    if (task.attempts.count !== row.attempt) return `task ${row.task_id} is at attempt ${task.attempts.count + 1} now, not ${row.attempt + 1}`
+    if (task.attempts.count !== row.attempt) {
+      // The attempt its next run is: the same one again when an answered question continues it (T291).
+      const next = task.attempts.count > 0 && await board.continuing(task.taskId).catch(() => false) ? task.attempts.count : task.attempts.count + 1
+      return `task ${row.task_id} is at attempt ${next} now, not ${row.attempt + 1}`
+    }
     const project = await board.project(task.projectId)
     if (project?.state !== 'active') return `project ${task.projectId} is ${project?.state ?? 'unknown'} now`
     return undefined
