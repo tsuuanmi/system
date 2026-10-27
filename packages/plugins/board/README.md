@@ -6,7 +6,7 @@
 charters, and their tasks.
 
 - **Records.** Projects are `project@1.0` and tasks `board-task@1.0` records (`@1.1` once a
-  task carries a funding ask or a raise), one row each in
+  task carries a funding ask or a raise, `@1.2` once it carries a `defect` link), one row each in
   `board_projects` and `board_tasks`, indexed by project and state. Every record is validated
   before it is written and after it is read: one that fails on read is never acted on. Every
   write is revision-checked.
@@ -143,7 +143,7 @@ charters, and their tasks.
   at client scope, the lead's; `board_pause`, `board_resume`, and `board_close` at operator scope
   ([the operator's project moves](../../../docs/design/board.md#the-operators-project-moves)).
   Each input and structured output is validated against
-  [`schemas/mcp-board.v1.json`](../../../schemas/mcp-board.v1.json) (1.2) `$defs/<tool>-input` and
+  [`schemas/mcp-board.v1.json`](../../../schemas/mcp-board.v1.json) (1.5) `$defs/<tool>-input` and
   `-output`; a refused input does nothing, a refusal is an MCP error naming the `BoardError`. A
   tool that changes the board checks the output it would give inside the move's transaction,
   before it commits (each such method takes an optional `check`), so an output its schema refuses
@@ -158,6 +158,11 @@ charters, and their tasks.
     has its result and its run's worktree is recorded (`agent_worktrees`) and on disk
     (`runWorktrees`); a review whose holder's lease lapsed is held for the operator by the sweep,
     never expired by it;
+  - `board_defect` and `board_propose`'s `fixes` (`mcp-board` 1.5, T277b, PROP-0016 I4): a task fixes a
+    defect of a **done** task of the same project, in the change that landed at `sha`; set when the task is
+    filed or later, once, by the lead (`as: reviewer` for the reviewer) or the operator, and counted by
+    `system metrics` as an escaped defect ([runbook](../../../docs/operations/runbooks.md#link-a-defect));
+    a lead token reaches its own project's tasks only (T285), as for every board tool;
   - `board_propose` takes the attempts the task gets (`maxAttempts`, 1 to 10, `mcp-board` 1.2);
     without it, the task gets the configuration's `templateAttempts` for its template, else
     `maxAttempts` (3) ([attempts](../../../docs/design/board.md#attempts));

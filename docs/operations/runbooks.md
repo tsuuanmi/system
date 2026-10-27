@@ -3712,3 +3712,87 @@ then it is refused, the operator's too.
 escapes found in the window over the results merged in it, with the count as `figures.escapes` (a
 lower bound: only defects recorded against auto-accepted results count). Read it over the
 breaker's window, `system metrics --days 7`, to see what the breaker counts.
+
+## Link a defect
+
+When a landed change held a defect and a task fixes it, tell the board, so `system metrics` counts the
+escape ([the defect link](../design/board.md#the-defect-link)). Nothing moves and nothing is decided: it
+is a fact about the fixed task's change.
+
+1. **Find the pair:** the fixing task, the **done** task of the same project whose landed change held the
+   defect (`fixes`), and that change's landing commit (`sha`, 7 to 64 hex characters, from the task's
+   landing or `git log` on the target branch).
+2. **At filing:** `board_propose` with `"fixes": {"taskId": "<done task>", "sha": "<landing sha>"}`
+   (the lead or the operator).
+3. **Later, once:** MCP `board_defect` `{"taskId": "<fixing task>", "fixes": "<done task>", "sha":
+   "<landing sha>"}`. The lead's token sets it as the lead; `"as": "reviewer"` records the reviewer;
+   the operator's token sets it as the operator. A second link on a task, a task that fixes itself, a
+   `fixes` task not done or of another project, and a malformed sha are refused. A lead's token reaches
+   its own project's tasks only ([T285](#give-a-projects-lead-its-own-token)).
+4. **Check it:** `board_task` on the fixing task shows `defect`; `system metrics` counts the fixed task
+   once in *Escaped defects per 100 landed* ([read `system metrics`](#read-system-metrics)). A defect
+   found in an auto-accepted result is also an escape for the breaker: record that with `board_escape`
+   ([circuit breaker](#auto-accept-circuit-breaker)); a link counts for the metric, not the breaker.
+
+## Turn on the scheduled review
+
+A periodic review of code already landed, one area a day, filing what two provider families confirm as
+**proposed** board tasks ([the scheduled review](../design/handbook.md#scheduled-review), D93 item 8). It is
+off until you turn it on, and nothing it files starts by itself: the lead or you decide each proposal.
+
+1. In the `workflow` row of your configuration (a profile patch replaces the row's whole config; carry
+   the rest), set `scheduledReview`:
+
+   ```yaml
+   workflow:
+     scheduledReview:
+       enabled: true
+       projectId: system                   # where findings are proposed (required)
+       repository: /home/me/workspaces/system   # absolute path of the git repository (required)
+       ref: dev                            # reviewed at its tip, never the working tree
+   ```
+
+   `hourUtc` (3), `maxTasksPerRun` (5, at most 20), `maxFiles`, `maxBytes`, `maxFileBytes`,
+   `timeoutMinutes`, `actionClass`, `taskTemplate`, and `template` have defaults
+   ([configuration](../reference/configuration.md#workflow)). `system check` names a value out of range.
+2. Restart the daemon. The review needs the `scheduled-review` template (the software-development
+   profile provides it), the repository's review guides committed at `ref` as
+   `docs/review/<area>.REVIEW.md`, one file per area (the only place the review reads them; with none
+   there it has no area and fails; their form: [review guides](../design/handbook.md#review-guides-reviewmd)), and two Workers
+   of **different provider families** free at the frontier tier: with only one family nothing is filed
+   and the review's row says why.
+3. One review starts a day from `hourUtc`, on the day's area (round robin by guide name). A host stop
+   across it loses nothing: the next start settles the review from its recorded run.
+4. **Read it:** every review is a row of the engine's store, and its `scheduledReviewReport()` sums
+   them per area (important, confirmed, rejected, unverified, filed, duplicates, capped) and lists the
+   latest reviews, unfinished ones with why (no operator command prints it yet). Filed findings are proposed tasks titled `Scheduled review (<area>): <finding>` on the
+   project's board: approve, cancel, or propose them as your own work.
+5. To turn it off, set `enabled: false` (or remove the setting) and restart.
+
+## Read `system metrics`
+
+`system metrics [--days n] [--project id] [--until time] [--json]` reads System's recorded data and gives
+each maturity metric of PROP-0016 §1 over a window (30 days by default,
+[the metrics](../design/maturity-metrics.md)). It reads only and changes nothing; MCP `metrics` and the
+weekly report's last section give the same reading.
+
+- **Each metric** shows its value, the sample it is over, and the records it read. **No value is never
+  0:** a metric the records cannot give says `not measurable` and why (traced landings, gate coverage,
+  and quota idle while work is ready, for now).
+- **A bound is said.** Lead touches per task and escaped defects are `lower` bounds, unattended
+  completion an `upper` one: a miss the records cannot see (a salvage the lead noted on its own board,
+  a defect nobody linked) is not in the number.
+- **Lead and operator are counted apart.** A lead's decisions on its own token are lead touches; the
+  operator's verdicts and acceptances are operator decisions per day. Decisions made on the operator's
+  token before the lead principal are the operator's, with a note of how many.
+- **Escaped defects per 100 landed** counts each task with a defect linked
+  ([link a defect](#link-a-defect)), a landing a revert undid, or an escape recorded against an
+  auto-accepted result, over the results merged in the window.
+- **Worker availability** is the share of observed hours a Worker could take work; a usage limit is left
+  out of both sides.
+- **The L3 reading:** each metric stands `meets`, `misses`, `unproven` (a bound that does not settle
+  it), or `not-read` against its starting line. `level.l3` is `holds` only when every line is met over
+  at least 30 days and 30 finished tasks; otherwise `not-shown`, with each reason. With three metrics
+  not measurable, `not-shown` is the honest reading now, not a fault.
+- To see what the breaker counts: `system metrics --days 7`. For one project: `--project <id>`.
+  `--json` prints the reading itself.
