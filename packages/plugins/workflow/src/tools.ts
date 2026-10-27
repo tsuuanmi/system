@@ -46,6 +46,12 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
     const of = await w.projectOfTask(taskId)
     if (of !== lead) throw refuseOther(lead, `board task ${taskId}`, of)
   }
+  // A continued session is reached like a run: a lead continues only its own project's conversation.
+  const ownSession = async (lead: string | undefined, sessionId: unknown): Promise<void> => {
+    if (lead === undefined || typeof sessionId !== 'string') return
+    const of = await w.projectOfSession(sessionId)
+    if (of !== lead) throw refuseOther(lead, `session ${sessionId}`, of)
+  }
   // The lead a call came from, if any: a caller in the same process may call a handler with no context (an operator's own call).
   const leadOf = (context: ToolContext | undefined): string | undefined => context?.lead
   const tagged = (lead: string | undefined): { projectId?: string } => (lead === undefined ? {} : { projectId: lead })
@@ -71,6 +77,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   }, async (args, context) => {
     const lead = leadOf(context)
     try {
+      await ownSession(lead, args.sessionId)
       const run = await ownStart(lead, w.start({
         ...tagged(lead), template: 'ask', input: String(args.prompt), sessionId: args.sessionId as string | undefined, persist: args.persist as boolean | undefined,
         tier: args.tier as Tier | undefined, classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined,
@@ -168,6 +175,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   }, async (args, context) => {
     const lead = leadOf(context)
     try {
+      await ownSession(lead, args.sessionId)
       const input = {
         ...tagged(lead), template: String(args.template), input: String(args.input), variant: args.variant as string | undefined, sessionId: args.sessionId as string | undefined, persist: args.persist as boolean | undefined,
         tier: args.tier as Tier | undefined, classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined,
