@@ -1054,6 +1054,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (path === 'activity') return activity(req, res)
     if (path === 'waiting') return waiting(req, res)
     if (path === 'runs/live') return req.method === 'GET' ? live(res) : json(res, 405, { error: 'method not allowed' })
+    // The last daily run of every browser spec (T305b), for Home.
+    if (path === 'daily-check') return req.method === 'GET' ? json(res, 200, ctx.workflow.dailyCheckReport(1)) : json(res, 405, { error: 'method not allowed' })
     // Dispatch (ADR-0064): the starts System proposes, for Home's "Starts awaiting approval"; their verdicts go
     // through the approval queue (approvals/decide), each on its request's exact subject.
     if (path === 'dispatch') return req.method === 'GET' ? json(res, 200, ctx.workflow.dispatchStatus()) : json(res, 405, { error: 'method not allowed' })

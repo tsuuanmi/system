@@ -71,7 +71,7 @@ import { CHECKS_MIGRATION, DEFAULT_MAX_CONCURRENT_CHECKS, RunChecks } from './ch
 import { type RunReport, type RunReported, runReport } from './run-report.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
 import { registerAccountTools, registerRunTools } from './tools.ts'
-import { CARRY_MIGRATION, FORK_MIGRATION, notKnownGone, RUN_ID, type RepositoryCheck, type RunWorktree, type RunWorktreeRelease, type SweepOutcome, type WorktreeRelease, Worktrees } from './worktrees.ts'
+import { CARRY_MIGRATION, FORK_MIGRATION, notKnownGone, RUN_ID, type RepositoryCheck, type RunWorktree, type RunWorktreeRelease, type SweepOutcome, USED_MIGRATION, type WorktreeRelease, Worktrees } from './worktrees.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -808,7 +808,7 @@ export class AgentWorkers extends Service {
       // Who the run's brief selected its handbook slice for (brief@1.6 handbook.selection): the lessons it is given follow it.
       version: 22,
       sql: 'ALTER TABLE agent_runs ADD COLUMN handbook TEXT;',
-    }])
+    }, USED_MIGRATION])
     this.cutover = new Cutover(ctx)
     // Once the operator applied the move, the hand-named rows are refused: one implementation, no second path.
     const applied = config.workers?.length ? this.cutover.state() : undefined
@@ -860,6 +860,8 @@ export class AgentWorkers extends Service {
       carry: (step) => this.worktrees.carry(step),
       // A workflow run's required checks, run on its result's exact tree (T151).
       check: (step, signal) => this.runChecks.check(step, signal),
+      // The tests check on a ref's tip, in a worktree of its own: the daily run of every browser spec (T305b).
+      checkTip: (step, signal) => this.runChecks.checkTip(step, signal),
     })
     // The operator's enrollment tools and the tool that frees a run's holds, when the MCP endpoint is mounted (operator scope).
     ctx.inject(['mcp'], (c) => {

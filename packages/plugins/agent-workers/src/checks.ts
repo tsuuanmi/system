@@ -37,9 +37,9 @@ import { realpathSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ArtifactRef } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-ledger-core'
-import { captureGitSubject, subjectId } from '@tsuuanmi/system-libs'
+import { captureGitSubject, CLEAN_VERSION, subjectId } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
-import type { Checked, CheckResult, CheckStep, RunCheck } from '@tsuuanmi/system-workers-core'
+import type { Checked, CheckResult, CheckStep, RunCheck, TipChecked, TipCheckStep } from '@tsuuanmi/system-workers-core'
 import { type CheckQueue, checkWorkers, hostChecks, type Place } from './check-queue.ts'
 import { failureLines, TimeoutReader } from './failures.ts'
 import { CHECKS } from './gate.ts'
@@ -353,10 +353,59 @@ export class RunChecks {
     return { outcome: 'checked', results, evidence }
   }
 
+  /**
+   * The `tests` check on the tip `step.commit` of a repository this source has a setup for (T305b): a
+   * worktree of the step's own is cut at that commit, set up as a run's is (the same policy judgment, no
+   * network), and checked at the `daily` scope, through the same confinement, queue, stored outcome, and
+   * `check-run@1.0` evidence as a run's check. Undefined when no setup names the repository. The
+   * worktree is held while the check uses it (`Worktrees.use`), then left to the retention, which counts
+   * from the check's end. The step's `runId` makes a second
+   * call for the same commit and day find the stored outcome, never run the suite again (INV-4).
+   */
+  async checkTip(step: TipCheckStep, signal?: AbortSignal): Promise<TipChecked | undefined> {
+    const repository = real(step.repository)
+    const setup = repository ? [...this.setups.values()].find((s) => real(s.repository) === repository) : undefined
+    if (!repository || !setup) return undefined
+    const refused = (reason: string): TipChecked => ({ outcome: 'refused', cause: 'failed', reason })
+    const found = await this.worktrees.check(repository)
+    if ('problem' in found) return refused(found.problem)
+    // No agent run keeps this worktree: the check holds it from before its cut to its end, through its
+    // setup, its wait in the queue, and its command, so no retention or removal takes it meanwhile.
+    const release = this.worktrees.use(found.repository, step.runId)
+    try {
+      return await this.checkTipIn(found.repository, step, setup, refused, signal)
+    } finally {
+      release()
+    }
+  }
+
+  /** {@link checkTip} once its worktree is held: cut, set up, and check it. */
+  private async checkTipIn(repository: string, step: TipCheckStep, setup: Setup, refused: (reason: string) => TipChecked, signal: AbortSignal | undefined): Promise<TipChecked> {
+    const found = { repository }
+    let path: string
+    try {
+      path = await this.worktrees.acquire(found.repository, step.runId, step.commit)
+    } catch (error) {
+      return refused(`a worktree at ${step.commit} could not be made: ${(error as Error).message}`)
+    }
+    const outcome = await this.worktreeSetups.ensure({
+      agentRun: step.runId, worker: 'daily-check', workflowRunId: step.runId, classification: step.classification, worktree: path, repository: found.repository,
+    }, setup, signal ?? new AbortController().signal)
+    if (outcome.failure) return refused(`its setup did not run: ${outcome.failure.message}`)
+    // INV-5: the tree checked is exactly the commit asked for, clean: HEAD at `step.commit` and nothing on top of it.
+    // A setup that moved HEAD, changed a tracked file, or left an untracked file git does not ignore is refused (`moved`), never checked.
+    const checked = await this.check({ runId: step.runId, workspace: path, subject: { ref: step.commit, version: CLEAN_VERSION }, checks: ['tests'], classification: step.classification, scope: 'daily' }, signal)
+    if (!checked) return { outcome: 'refused', cause: 'gone', reason: `the worktree ${path} is no longer this source's` }
+    if (checked.outcome === 'refused') return checked
+    const result = checked.results.find((r) => r.check === 'tests')
+    return result ? { outcome: 'checked', result, ...(checked.evidence ? { evidence: checked.evidence } : {}) } : refused('its check gave no result')
+  }
+
   /** The key a check's stored outcome is bound to: the run, its worktree, the subject, the check, its argv, and the setup. */
   private keyOf(step: CheckStep, workspace: string, setup: Setup, a: Allowed): [string, string, string, string, string, string] {
     // A landing's result is its own: the same tree at the acceptance's scope never stands for it (T299). The acceptance's key is as it was.
-    return [step.runId, workspace, subjectId({ type: 'git-head', ...step.subject }), a.check, step.scope === 'landing' ? `${JSON.stringify(a.argv)}#landing` : JSON.stringify(a.argv), setup.hash]
+    const scope = step.scope === 'landing' || step.scope === 'daily' ? `#${step.scope}` : ''
+    return [step.runId, workspace, subjectId({ type: 'git-head', ...step.subject }), a.check, `${JSON.stringify(a.argv)}${scope}`, setup.hash]
   }
 
   /** Whether a check ran (or started) on this key before: its stored outcome stands, and nothing of it runs again. */
@@ -468,7 +517,11 @@ export class RunChecks {
     // the run did not start on (T299). A worktree with none recorded gets none, and its command runs the whole suite (INV-2).
     const scope = step.scope ?? 'acceptance'
     // The landing's is told it too (T305): its whole suite leaves out the browser specs the run's change does not touch.
-    const env = { ...noInstallEnvironment(), [CHECK_SCOPE_ENV]: scope, ...(found.forkedAt ? { [CHECK_BASE_ENV]: found.forkedAt } : {}) }
+    // What this source says, never what its own parent said: a check run inside another check (this repository's own suite, run
+    // as a check alone after timeouts) inherits no starting commit and no alone mark from it, so its first run is never read as alone.
+    const inherited = noInstallEnvironment()
+    delete inherited[CHECK_BASE_ENV]
+    const env = { ...inherited, [CHECK_SCOPE_ENV]: scope, [CHECK_ALONE_ENV]: '0', ...(found.forkedAt ? { [CHECK_BASE_ENV]: found.forkedAt } : {}) }
     let moved: string | undefined
     for (const a of todo) {
       const base = { check: a.check, argv: a.argv, autonomy: a.autonomy }

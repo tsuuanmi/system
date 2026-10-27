@@ -14,7 +14,7 @@ import {
   quotaSettingsProblems, SchemaRegistry,
 } from '@tsuuanmi/system-libs'
 import {
-  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Candidates, type CapabilityDescriptor, type Carried, type CarryStep, type Checked, type CheckStep, type Landed, type LandStep, type WorkChange, LIVENESS_STATES, type LivenessQuery,
+  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Candidates, type CapabilityDescriptor, type Carried, type CarryStep, type Checked, type CheckStep, type TipCheckStep, type TipChecked, type Landed, type LandStep, type WorkChange, LIVENESS_STATES, type LivenessQuery,
   type LivenessState, MAX_LIVENESS_RUNS, offeredTiers, provesFor, type QuotaClass, type Rejection, type RouteOptions, type RunLiveness, servedTier, takesKind, TIERS, type Tier, tiersWithin, type WorkRequirement,
   type WorkerSource, type WorkerSourceRead, Workers,
 } from '@tsuuanmi/system-workers-core'
@@ -323,6 +323,22 @@ export class WorkerRouter extends Workers {
         if (signal?.aborted) throw error
         // A source that cannot answer is never read as not holding the worktree, nor as a check passed (INV-2).
         checked = { outcome: 'refused', cause: 'failed', reason: `source ${source.name} could not run the checks of run ${step.runId} in ${step.workspace}: ${(error as Error).message.slice(0, 300)}` }
+      }
+      if (checked) return { ...checked, source: source.name }
+    }
+    return undefined
+  }
+
+  async checkTip(step: TipCheckStep, signal?: AbortSignal): Promise<(TipChecked & { source: string }) | undefined> {
+    for (const source of this.registry.values()) {
+      if (!source.checkTip) continue
+      let checked: TipChecked | undefined
+      try {
+        checked = await source.checkTip(step, signal)
+      } catch (error) {
+        if (signal?.aborted) throw error
+        // A source that cannot answer is never read as not holding the repository, nor as a check passed (INV-2).
+        checked = { outcome: 'refused', cause: 'failed', reason: `source ${source.name} could not run the check of ${step.commit} of ${step.repository}: ${(error as Error).message.slice(0, 300)}` }
       }
       if (checked) return { ...checked, source: source.name }
     }

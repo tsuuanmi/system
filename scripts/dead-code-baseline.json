@@ -229,8 +229,6 @@
   "packages/plugins/workflow/src/scheduled-review.ts#SCHEDULED_REVIEW_DEFAULTS#local",
   "packages/plugins/workflow/src/scheduled-review.ts#areaOf#tests",
   "packages/plugins/workflow/src/scheduled-review.ts#citesShown#tests",
-  "packages/plugins/workflow/src/scheduled-review.ts#commitOf#local",
-  "packages/plugins/workflow/src/scheduled-review.ts#dayOf#tests",
   "packages/plugins/workflow/src/scheduled-review.ts#guidesAt#local",
   "packages/plugins/workflow/src/scheduled-review.ts#pickArea#tests",
   "packages/plugins/workflow/src/scheduled-review.ts#readArea#local",

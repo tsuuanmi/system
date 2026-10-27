@@ -686,6 +686,15 @@ No options.
 | `scheduledReview.actionClass` | string |  | The action class the proposed tasks carry (default workspace-write) |
 | `scheduledReview.taskTemplate` | string |  | The board task template the proposed tasks name, when the project uses one (default none) |
 | `scheduledReview.template` | string |  | The workflow template a review runs (default scheduled-review, which the software-development profile provides) |
+| `dailyCheck` | object | `{}` | The daily run of every browser spec on the tip of a ref, filing a failure as one board task (docs/engineering/testing.md) |
+| `dailyCheck.enabled` | boolean | `false` | Run the whole suite, every browser spec with it, on the tip of ref once a day, and propose a failure as one board task (T305b; docs/engineering/testing.md). Off by default: the operator turns it on, with projectId and repository, and a worktreeSetup of that repository (agent-workers) with a tests check |
+| `dailyCheck.projectId` | string |  | The board project a failure is proposed in (required when enabled) |
+| `dailyCheck.repository` | string |  | Absolute path of the git repository whose tip is checked, in a worktree of its own and never its working tree (required when enabled) |
+| `dailyCheck.ref` | string | `"dev"` | The branch or ref checked, at its tip (default dev) |
+| `dailyCheck.hourUtc` | number (0…23) | `4` | The UTC hour from which the day's run may start; one scheduled run a day at most (default 4) |
+| `dailyCheck.timeoutMinutes` | number (1…1440) |  | Minutes a run may take before it is recorded as an error (default 180) |
+| `dailyCheck.actionClass` | string |  | The action class the proposed task carries (default workspace-write) |
+| `dailyCheck.taskTemplate` | string |  | The board task template the proposed task names, when the project uses one (default none) |
 | `repositories` | object | `{}` | A review's repository reads: allowed hosts and bounds (INV-9) |
 | `repositories.hosts` | string[] | `["github.com"]` | Hosts a review may read a public repository from |
 | `repositories.maxFiles` | number (1…200) |  | Files a review reads from a repository (default 40) |

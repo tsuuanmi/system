@@ -12,7 +12,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { createdMode } from '../../../agent-runtime-core/tests/host.ts'
 import AgentWorkers from '../src/index.ts'
 import { registerRunTools } from '../src/tools.ts'
-import { openDirectory } from '../src/worktrees.ts'
+import { openDirectory, Worktrees } from '../src/worktrees.ts'
 import { ScriptedAgent, worker, boot, requirement, chatWorker } from './stack.ts'
 
 // Real git repositories, worktrees, and a workflow run end to end: slower than the 5 s default on CI runners.
@@ -60,6 +60,31 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     return source.wait(source.start({ key, worker: id, prompt: key, ...(runId ? { runId } : {}), requirement: requirement({ capabilities }), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never }).id, 30_000)
   }
   const LATER = (): number => Date.now() + 169 * 60 * 60_000
+
+  it('never retires the worktree of a check on a tip while the check holds it, and counts its retention from the check\'s end (T305b)', async () => {
+    const repo = repository()
+    const commit = git(repo, 'rev-parse', 'HEAD')
+    const root = temp('system-worktrees-')
+    const { ctx } = await boot(developer(), { workers: [writer(repo)], worktreeRoot: root })
+    const worktrees = new Worktrees(ctx, root)
+    const repository_ = realpathSync(repo)
+    const stopped = new AbortController().signal
+    const hours = (n: number): number => Date.now() + n * 60 * 60_000
+    // Held from before its cut, as a check on a tip holds it, through its setup, its queue, and its command.
+    const release = worktrees.use(repository_, 'daily-tip')
+    const path = await worktrees.acquire(repository_, 'daily-tip', commit)
+    expect(git(path, 'rev-parse', 'HEAD')).toBe(commit)
+    // Long past a one-hour retention while it is held: neither the retention nor the operator's removal takes it.
+    expect(await worktrees.sweep(1, hours(5), stopped)).toEqual({ removed: [], kept: [path] })
+    expect((await worktrees.planRemoval('daily-tip', true)).plans).toEqual([expect.objectContaining({ path, outcome: 'kept', why: expect.stringContaining('a check on a tip runs in it now') })])
+    expect((await worktrees.list(1, 10)).worktrees).toEqual([expect.objectContaining({ runId: 'daily-tip', state: 'in-use' })])
+    expect(existsSync(path)).toBe(true)
+    // Released at the check's end: its retention counts from then, so it stays within it, and goes after it.
+    release()
+    expect(await worktrees.sweep(1, hours(0.5), stopped)).toEqual({ removed: [], kept: [] })
+    expect(await worktrees.sweep(1, hours(2), stopped)).toEqual({ removed: [path], kept: [] })
+    expect(existsSync(path)).toBe(false)
+  })
 
   it('runs a writing run of a workflow run in that run\'s own worktree, on branch system/run/<runId>, and never touches the main working tree (INV-15, REQ-WF-5)', async () => {
     const repo = repository()

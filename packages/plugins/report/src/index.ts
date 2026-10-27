@@ -264,6 +264,9 @@ async function metrics(ctx: Context, input: MetricsInput, now: Date = new Date()
   for (const p of projects) tasks.push(...await board.tasks({ projectId: p.projectId }))
   const taskIds = new Set(tasks.map((t) => t.taskId))
   const notes: string[] = []
+  // The last daily run of every browser spec (T305b), said in the notes: the metrics' own records are the board's and the queue's.
+  const daily = (ctx.get('workflow' as never) as { dailyCheckReport?: (limit?: number) => { enabled: boolean; text: string; last?: unknown } } | undefined)?.dailyCheckReport?.(1)
+  if (daily && (daily.enabled || daily.last)) notes.push(...daily.text.split('\n'))
 
   // Whenever recorded: the runs started and reported, and the landings (a task finished in the
   // window may have started long before it); the window's liveness entries and unknown usage.

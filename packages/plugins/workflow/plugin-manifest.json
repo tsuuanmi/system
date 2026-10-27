@@ -181,6 +181,10 @@
       "sensitive": false
     },
     {
+      "key": "dailyCheck",
+      "sensitive": false
+    },
+    {
       "key": "repositories",
       "sensitive": false
     }

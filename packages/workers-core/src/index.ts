@@ -594,10 +594,32 @@ export interface CheckStep {
    * What the checks are for (T299): `acceptance` (the default), the result's own tree, where a
    * `tests` command runs the tests related to the files the result changed; `landing`, the tree
    * rebased onto its base, where it runs the whole suite, once per landing. A result of one scope is
-   * never taken for the other's.
+   * never taken for the other's. `daily` (T305b) is a tip's own, set by {@link TipCheckStep}'s run:
+   * the whole suite with every browser test.
    */
-  scope?: 'acceptance' | 'landing'
+  scope?: 'acceptance' | 'landing' | 'daily'
 }
+
+/**
+ * Run a check on the tip of a ref of a repository, with no workflow run's result behind it (T305b: the
+ * daily run of every browser spec): the source that holds the repository cuts a worktree of its own at
+ * `commit`, sets it up as it does a run's, and runs the `tests` check at the `daily` scope (the whole
+ * suite, every browser test with it), confined and read-only, in the host's one queue of checks.
+ * `runId` names the worktree and the check's record; it is no workflow run.
+ */
+export interface TipCheckStep {
+  runId: string
+  /** The repository's absolute path (the operator's configuration names it). */
+  repository: string
+  /** The commit the ref named when the day's run started: the tree that is checked. */
+  commit: string
+  classification: 'public' | 'operator-shared' | 'local-private'
+}
+
+/** What a {@link TipCheckStep} came to: the check's result, as a run's check gives it, or why nothing ran. */
+export type TipChecked =
+  | { outcome: 'checked'; result: CheckResult; evidence?: string }
+  | { outcome: 'refused'; cause: CheckRefusal; reason: string }
 
 /**
  * One check of a {@link CheckStep}: `passed` (its command exited 0 on the subject, and left it as it
@@ -735,6 +757,12 @@ export interface WorkerSource {
    * the step then throws.
    */
   check?(step: CheckStep, signal?: AbortSignal): Promise<Checked | undefined>
+  /**
+   * Run the `tests` check on the tip commit of a repository this source holds (T305b), in a worktree
+   * it cuts for the step, at the `daily` scope. Undefined when it holds no such repository. The
+   * check is confined and read-only like a run's, queued with them, and stored on the step's `runId`.
+   */
+  checkTip?(step: TipCheckStep, signal?: AbortSignal): Promise<TipChecked | undefined>
   /**
    * The caller is done with these sessions for good (their run was deleted or expired): what the
    * source created for them outside `system` (a website conversation) is deleted. How many of
@@ -976,6 +1004,13 @@ export abstract class Workers extends Service {
    * checks stay pending (T151).
    */
   abstract check?(step: CheckStep, signal?: AbortSignal): Promise<(Checked & { source: string }) | undefined>
+
+  /**
+   * Run the tests check on the tip of a repository, by the source that holds it (`WorkerSource.checkTip`),
+   * with that source's name; undefined when none does. A source that throws, unless `signal` stopped it,
+   * is a refusal (`failed`), never a check passed (INV-2). Optional (T305b).
+   */
+  abstract checkTip?(step: TipCheckStep, signal?: AbortSignal): Promise<(TipChecked & { source: string }) | undefined>
 
   /** Release sessions for good, at every source that owns some of them: how many records became due. */
   abstract release(sessionIds: readonly string[], reason: string): { due: number }

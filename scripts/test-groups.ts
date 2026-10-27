@@ -32,8 +32,9 @@
  * Otherwise the run sets `SYSTEM_SKIP_BROWSER_TESTS=1` and each such test is skipped, while the plain
  * tests beside it run; a spec whose every test is gated (`browserSpecs`) is not even selected. This
  * holds for `related` (the acceptance), for `affected` by hand (`--all-browser` runs them all), and
- * for the landing's whole suite, given the run's starting commit. A daily run of every browser
- * spec on dev's tip inside System is T305b.
+ * for the landing's whole suite, given the run's starting commit. The daily run of every browser
+ * spec on dev's tip inside System (T305b, `workflow`'s `dailyCheck`) is a check of scope `daily`:
+ * the whole suite and every browser test with it.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
@@ -310,7 +311,7 @@ export const CHECK_BASE_ENV = 'SYSTEM_CHECK_BASE'
  * What a check's `test:affected` runs, by its environment (T299): none set, the affected groups as by
  * hand (`{}`); `landing`, the whole suite (`full` says why); `acceptance`, the tests related to the
  * files changed since the run's own starting commit (`base`), never since a branch the run did not
- * start on. An acceptance with no starting commit, or a scope it does not know, runs the whole suite
+ * start on; `daily` (T305b), the whole suite with every browser test. An acceptance with no starting commit, or a scope it does not know, runs the whole suite
  * (INV-2).
  */
 export function checkScope(env: Readonly<Record<string, string | undefined>>): { full?: string; base?: string; browserBase?: string } {
@@ -321,6 +322,8 @@ export function checkScope(env: Readonly<Record<string, string | undefined>>): {
     const base = env[CHECK_BASE_ENV]
     return { full: `${CHECK_SCOPE_ENV}=landing (the landing's tree)`, ...(base && /^[0-9a-f]{7,64}$/.test(base) ? { browserBase: base } : {}) }
   }
+  // The daily run of a tip (T305b): the whole suite, every browser test with it; there is no change to read.
+  if (scope === 'daily') return { full: `${CHECK_SCOPE_ENV}=daily (the daily run of a ref's tip)` }
   if (scope !== 'acceptance') return { full: `${CHECK_SCOPE_ENV}=${scope} is no scope this script knows` }
   const base = env[CHECK_BASE_ENV]
   if (!base || !/^[0-9a-f]{7,64}$/.test(base)) return { full: `${CHECK_SCOPE_ENV}=acceptance with no commit the run's worktree was cut at (${CHECK_BASE_ENV})` }
@@ -456,7 +459,7 @@ function main(argv: string[]): number {
     // whole suite, once; the acceptance runs the tests related to the files the result itself changed.
     const scope = checkScope(process.env)
     if (scope.full) {
-      console.log(`${scope.full}: the full suite runs${scope.browserBase ? '' : ', every browser test with it (no starting commit to read the change from)'}`)
+      console.log(`${scope.full}: the full suite runs${scope.browserBase ? '' : ', every browser test with it'}`)
       if (rest.includes('--dry-run')) return 0
       if (!scope.browserBase) return vitest([], extra)
       const changed = changedSince(scope.browserBase)
