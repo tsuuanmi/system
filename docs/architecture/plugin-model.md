@@ -135,6 +135,35 @@ Rules for the two classes:
    health `plugins` is down, naming it. A guarantee seam has one provider; replacing it takes an
    ADR. `pnpm check:packages` and `pnpm check:manifests` hold both rules.
 
+## Required and optional rows
+
+The `system` bundle's rows, split by the `Class` column of the [seam catalog](#seam-catalog)
+(operator, 2026-10-27: "when a plugin is removed, System still works normally"). A **required**
+row provides a guarantee seam, or is the host the rows mount on; with one off, System is not the
+product it promises, and the plugin host and each consumer say so. An **optional** row provides a
+capability or a surface (or a driver, runtime, or profile that registers into one): turn it off, by
+disabling its row, and System still works. What the row did is then absent, and what needs it
+says so: a request that needs the removed row's seam fails with the reason that the seam is not
+mounted, never with a crash, a hang, or a health check that is down. The
+[removability matrix](../engineering/testing.md#removability-matrix) holds this, one row at a time,
+and reads the two lists below (one row id per backtick; a new bundle row is in exactly one, or the
+matrix fails).
+
+- **Required** rows (the host, and the guarantee seams): `timer`, `webserver` (the DSH host every
+  surface mounts on), `credentials`, `store`, `event-log`, `leases`, `artifacts`, `plugin-host`,
+  `resources`, `approvals`, `turn-receipts`, `egress`, `workers`, `worker-sessions`, `landing-local`,
+  `workflow`, `board`.
+- **Optional** rows (capability and surface): `display`, `browser`, `providers`,
+  `provider-chatgpt-web`, `provider-gemini-web`, `accounts`, `login`, `turns`, `agent-runtimes`,
+  `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp`, `runtime-antigravity-cli`,
+  `agent-workers`, `llm`, `llm-pi-ai`, `models`, `digest`, `digest-extractive`, `report`, `notify`,
+  `profile-software-development`, `profile-scientific-research`, `gateway-anthropic`,
+  `gateway-responses`, `web-ui`, `mcp-server`.
+
+`mcp-server` is optional as a surface: with it off there is no MCP endpoint, so the matrix reads
+health from the host and runs work through the engine directly. A required row that happens to
+tolerate its own absence (the board, the landing) makes no promise by it.
+
 ## What is not a plugin
 
 A plugin exists only when something can really be swapped or scoped. These stay **libraries**:

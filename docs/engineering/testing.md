@@ -558,6 +558,36 @@ in the tree, so the check answers the same everywhere, offline. Two changes that
 schema both rewrite its entry, and meet as a merge conflict in the snapshot. Its limit: a version
 note anywhere in a schema admits a change anywhere in it, so the note must say what changed.
 
+## Removability matrix
+
+Operator, 2026-10-27: "when a plugin is removed, System still works normally". The
+[plugin model](../architecture/plugin-model.md#required-and-optional-rows) lists which bundle rows
+are required (the host and the guarantee seams) and which are optional (capability and surface
+rows). The matrix ([`packages/system-bundle/tests/removability/`](../../packages/system-bundle/tests/removability/matrix.ts))
+holds the optional ones: for each optional row, those that ship off included (for a row that ships
+off, the case is the shipped bundle with the software-development profile on, which the matrix turns
+on beside every removal; removing the profile row is the case where the template is absent), it mounts
+the bundle's rows in this process on the packages' source (the plugin host reads the same composition
+through a loader stub), with that row off, and a scripted Worker as the one fake. The smoke scenario,
+step by step:
+
+- `start`: every mounted row started;
+- `health`: MCP `status` is not down, the plugin host's manifest check finds nothing and does not list
+  the row as mounted (with `mcp-server` off, there is no endpoint: `/healthz` answers 404 and runs go
+  through the engine);
+- `tools`: the tools every composition has are listed, none appears that the baseline lacked, and the
+  read tools still listed answer;
+- `ask` and `algorithm-development`: a run on the fake Worker completes. Only when the row is the
+  profile that contributes the template does the run fail, with the unknown template as its reason.
+
+A step either succeeds or fails with the documented absence of the removed row's seam
+(`ABSENT` in `matrix.ts`); a crash, a hang (each wait is bounded), or any other failure is reported as
+`row <id>, step <name>: <what>`. The matrix runs by `pnpm test:removability` (no build) and daily in
+[`removability.yml`](../../.github/workflows/removability.yml), not on a pull request or a push: it boots
+the bundle once per row. `removability.spec.ts` runs in every `pnpm test`: it checks that each bundle
+row is in exactly one of the two lists, and smokes the bundle as shipped and with `digest` and the
+profile row off.
+
 ## Running the suite inside a run's check
 
 A workflow run's `tests` check ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md))
