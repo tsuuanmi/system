@@ -136,6 +136,49 @@ Rules for the two classes:
    health `plugins` is down, naming it. A guarantee seam has one provider; replacing it takes an
    ADR. `pnpm check:packages` and `pnpm check:manifests` hold both rules.
 
+### Package classes
+
+`pnpm check:deps` (run by `pnpm check`) holds the dependency rules (operator, 2026-10-27: plugins are
+testable on their own and removable with System still working, so plugins depend only on the core, and
+added plugins depend on each other as little as possible). This table is its one source: the check reads
+it, and fails when a package is missing from it or named without existing. Each package is one class:
+
+- **kernel**: the libraries, the host (`cli`, `system-bundle`), and the `*-core` seam definitions.
+  Anyone may import a kernel package.
+- **guarantee**: a provider of a guarantee seam, the [required rows](#required-and-optional-rows).
+- **capability**, **surface**, **profile**: the optional rows.
+
+The **family** is the seam a group of plugins registers into, where one may build on another's seam
+(rule 1: "within one family providers may build on each other's seams"). Empty (`—`) means none.
+
+| Class | Family | Packages |
+|---|---|---|
+| kernel | — | `libs`, `system-bundle`, `cli`, `ui-ops`, `gateway-turns`, `ledger-core`, `plugin-host-core`, `provider-core`, `workers-core`, `approvals-core`, `resources-core`, `board-core`, `digest-core`, `decision-core`, `landing-core`, `feedback-core`, `models-core`, `gateway-core`, `agent-runtime-core` |
+| guarantee | — | `credentials-vault`, `store`, `event-log`, `leases`, `artifacts`, `plugin-host`, `resources`, `approvals`, `turn-receipts`, `egress`, `workers`, `worker-sessions`, `landing-local`, `workflow`, `board` |
+| capability | agent-runtimes | `agent-runtimes`, `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp`, `runtime-antigravity-cli` |
+| capability | web-providers | `providers`, `provider-chatgpt-web`, `provider-gemini-web` |
+| capability | digests | `digest`, `digest-extractive` |
+| capability | — | `display-virtual`, `browser-patchright`, `accounts`, `login`, `turns`, `agent-workers`, `models` |
+| surface | — | `lead-inbox`, `report`, `notify`, `gateway-anthropic`, `gateway-responses`, `web-ui`, `mcp-server` |
+| profile | — | `profile-software-development`, `profile-scientific-research` |
+
+The check reads each package's imports from its `src/` (tests excluded), type and value apart (`import
+type`, a list of only `type` specifiers, `export type … from`, and `import('x').T` are type), and refuses:
+
+1. `guarantee-provider`: any import of a guarantee provider's package by another package. A seam's
+   definition lives in a `*-core` package and the consumer imports that. Some definitions still live in
+   their provider (`leases`, `egress`, `turn-receipts`, `worker-sessions`, `workflow`); an import of one
+   is a violation, in the baseline, until the definition moves to a `*-core`.
+2. `plugin-to-plugin`: a plugin importing another plugin's package, type or value, unless both are in one
+   family of the table. Plugins cooperate through the core, by a seam, an artifact, or an event.
+
+`scripts/dependency-baseline.json` lists today's violations, one `from -> to [rule]` per package pair. It
+may only shrink: a violation it lacks fails the check, naming the import and the rule, and a line that is
+no longer a violation is stale and fails too (`pnpm check:deps --shrink` drops it). To fix a violation,
+move the definition to a `*-core` package or reach the seam through `ctx`; to allow one, change this
+table in a change the review reads. `pnpm gen:deps` writes the layers, the edges by kind and the counts to
+[dependency-graph](dependency-graph.md), and the check holds it up to date.
+
 ## Required and optional rows
 
 The `system` bundle's rows, split by the `Class` column of the [seam catalog](#seam-catalog)

@@ -1,0 +1,13 @@
+[
+  "gateway-turns -> workflow [guarantee-provider]",
+  "login -> accounts [plugin-to-plugin]",
+  "login -> display-virtual [plugin-to-plugin]",
+  "profile-scientific-research -> workers [guarantee-provider]",
+  "profile-scientific-research -> workflow [guarantee-provider]",
+  "profile-software-development -> workflow [guarantee-provider]",
+  "turns -> accounts [plugin-to-plugin]",
+  "turns -> login [plugin-to-plugin]",
+  "turns -> turn-receipts [guarantee-provider]",
+  "web-ui -> workflow [guarantee-provider]",
+  "workflow -> worker-sessions [guarantee-provider]"
+]
