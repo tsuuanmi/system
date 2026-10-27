@@ -46,12 +46,12 @@ describe('the algorithm-development template with the repository\'s checks confi
     expect(ran.subject).toMatchObject({ ref: pilot.head, version: tree.version })
     expect(ran.checks).toMatchObject([{ check: 'tests', outcome: 'passed', exitCode: 0, output: { tail: 'tests: 3 passed\n' } }, { check: 'lint', outcome: 'passed', exitCode: 0 }])
 
-    // The board takes the engine's acceptance: no check pending, so the task is done with no review held for the operator.
+    // The board takes the engine's acceptance: no check pending, so no review is held for the operator; the task
+    // waits for its landing, and is done only once it landed (T293).
     const accepted = await until(async () => {
       const t = await ctx.board.task(task.taskId)
-      return t?.state === 'done' ? t : undefined
-    }, 'the task done')
-    expect(accepted.waiting).toBeUndefined()
+      return t?.state === 'review' && t.waiting?.reason === 'landing' ? t : undefined
+    }, 'the task waiting for its landing')
     expect(accepted.result!.subject).toEqual({ type: 'git-head', ref: pilot.head, version: tree.version })
     // explain shows them under the run.
     expect(JSON.stringify(ctx.workflow.explain(run.runId))).toContain('tests passed, lint passed')

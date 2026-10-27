@@ -264,7 +264,7 @@ describe('a board task\'s dossier (ADR-0070)', () => {
     expect(response!.text).not.toContain('added test_calc.py')
     expect(acceptance!.text).toMatch(/^Acceptance of attempt 1 \(run .*\): accept/)
     expect(acceptance!.refs).toContain(done.task!.outcome!.decision)
-    expect(report!.text).toMatch(/^Reported to the board: run .* accepted, task done/)
+    expect(report!.text).toMatch(/^Reported to the board: run .* accepted, task review: accepted: it waits for its landing/)
 
     // Append only: each entry names the one before it, by its content id, and none changed since it was read.
     const entries = page.entries.map((e) => ctx.artifacts.get(e.id)!)

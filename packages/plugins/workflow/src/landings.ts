@@ -1,10 +1,12 @@
 /**
  * Landing an accepted result (docs/design/workflow-engine.md#landing-an-accepted-result, ADR-0060,
  * PROP-0013 W5): a board task whose run's result is on a working tree a Worker source holds as the
- * run's own worktree is not done with by its acceptance. Once the board has the task `done` on that
- * run's result, the engine has the source commit the tree on the worktree's branch, then asks the
- * operator, as a `merge` request on the approval queue, to merge that branch into the repository's
- * checked-out branch; on the approval, the source merges it.
+ * run's own worktree is not done with by its acceptance. Once the board accepts that run's result
+ * (the task waits for its landing, T293), the engine has the source commit the tree on the
+ * worktree's branch, then asks the operator, as a `merge` request on the approval queue, to merge
+ * that branch into the repository's checked-out branch; on the approval, the source merges it, and
+ * the board is told (`Board.landed`): only then is the task `done`. A result held for the operator
+ * with required checks pending has them run here, on its exact tree, once per subject.
  *
  * - **Exact** (INV-5): the commit is made only while the worktree is still the accepted tree, and the
  *   request binds the merge to the base branch's head and the branch's head
@@ -21,7 +23,7 @@
  *   finds its own work done instead of doing it twice. Never a force, a reset, or a push.
  *
  * The workers seam's `land` is optional: with no source that holds the tree, nothing lands, and the
- * task is done as before.
+ * task keeps waiting for its landing until that wait ends (`review-expired`); never done unlanded.
  *
  * **One landing seam** (PROP-0017 L0): what happens after the commit and a rebase, the subject the
  * merge request binds and what an approval does (`prepare`), and the landing itself on that approval
@@ -56,7 +58,7 @@ import { type Landed as LandedOn, type LandingProvider, type LandingTarget, same
 import { BRIEF_LIMITS, clampText, subjectId } from '@tsuuanmi/system-libs'
 import { AdmissionFailure, type CheckStep, type Landed, type LandStep, type RebasePhase, RUN_CHECKS, type RunCheck, type WorkerSource, type WorkRequirement } from '@tsuuanmi/system-workers-core'
 import { type Draft, recordBrief, renderedChars } from './briefs.ts'
-import { MAX_FAILURE_LINE_CHARS, MAX_FAILURE_LINES } from './checks.ts'
+import { MAX_FAILURE_LINE_CHARS, MAX_FAILURE_LINES, runChecksOn } from './checks.ts'
 import type { Engine } from './engine.ts'
 import { entries, fresh, nextSeq, OPEN, queueKey } from './landing-queue.ts'
 import { queueOf } from './queue.ts'
@@ -111,6 +113,10 @@ export function revertsOf(workspace: string | undefined, base: string | undefine
     return []
   }
 }
+
+/** Whether a task's result is on exactly the tree a landing landed (T293). */
+const sameResult = (subject: Subject | undefined, tree: TaskLanding['subject']): boolean =>
+  subject?.type === 'git-head' && !!tree && subject.ref === tree.ref && subject.version === tree.version
 
 /** The landing as it is, without the reason it last waited for. */
 const withoutReason = (landing: TaskLanding): TaskLanding => {
@@ -180,13 +186,19 @@ export class TaskLandings {
   private async sweepOnce(): Promise<void> {
     const board = this.e.board
     if (!board || this.e.stopped.signal.aborted) return
+    // Open landings, and ended ones the board was not told of yet (T293: its landing wait ends on them).
     const rows = this.e.ctx.store.db.prepare(`SELECT * FROM workflow_tasks WHERE json_extract(landing, '$.state') IN (${OPEN.map(() => '?').join(', ')})
+      OR (json_extract(landing, '$.tell') IS NOT NULL AND json_extract(landing, '$.told') IS NULL)
       ORDER BY json_extract(landing, '$.at') LIMIT ${PAGE}`).all(...OPEN) as unknown as TaskRow[]
     for (const listed of rows) {
       if (this.e.stopped.signal.aborted) return
       try {
         // Read again: an earlier landing of this sweep may have moved this one (promoted it, stacked it, sent it back to the queue).
         const current = fresh(this.e, listed.run_id)
+        if (current?.landing.tell && !current.landing.told) {
+          await this.tell(current.row, board, current.landing)
+          continue
+        }
         if (!current || !(OPEN as readonly string[]).includes(current.landing.state)) continue
         await this.step(current.row, board)
       } catch (error) {
@@ -202,9 +214,35 @@ export class TaskLandings {
       const next = await this.move(row, board, landing)
       if (!next) return
       this.save(row, next)
+      if (next.tell && !next.told) return this.tell(row, board, next)
       if (!(OPEN as readonly string[]).includes(next.state) || next.state === landing.state) return
       landing = next
     }
+  }
+
+  /**
+   * Tell the board how the landing ended (T293): merged, or nothing to land. The task's landing wait
+   * on this run's accepted result ends done (`Board.landed`); a task still on that result but not
+   * waiting (its wait expired, re-opened later) is told once it waits again; a task done or cancelled,
+   * on another run, or a board with no `landed`, takes nothing. Saved as told once the board took it
+   * or refused it; a board that does not answer is told again on the next sweep (INV-4).
+   */
+  private async tell(row: TaskRow, board: Board, landing: TaskLanding): Promise<void> {
+    const task = await board.task(row.task_id)
+    const sameRun = task?.run?.runId === row.run_id && sameResult(task.result?.subject, landing.subject)
+    // Its landing wait on this run's result, whichever acceptance put it there (one re-opened and accepted again included).
+    const waits = sameRun && task!.state === 'review' && task!.waiting?.reason === 'landing' && !!task!.result?.acceptance
+    // Not waiting yet, but still on this run's result (a wait that expired, re-opened later): told once it waits again.
+    if (!waits && sameRun && task!.state !== 'done' && task!.state !== 'cancelled') return
+    if (waits && typeof board.landed === 'function') {
+      try {
+        await board.landed(row.task_id, { runId: row.run_id, acceptance: task!.result!.acceptance!, outcome: landing.tell!, decision: landing.decisions!.at(-1)! })
+      } catch (error) {
+        if (!(error instanceof BoardError)) throw error
+        this.e.ctx.logger.warn(`workflow: board task ${row.task_id} did not take the end of run ${row.run_id}'s landing (${landing.tell}): ${error.message}`)
+      }
+    }
+    this.save(row, { ...landing, told: true })
   }
 
   /** The landing's next state, or undefined when it waits as it is. */
@@ -235,9 +273,35 @@ export class TaskLandings {
       return { ...landing, state: 'none', reason, at: now() }
     }
     if (task.run?.runId !== row.run_id) return unaccepted(`task ${task.taskId} moved on to another attempt`)
+    // Accepted, the task waits for its landing (T293): it is done only once this landing ends merged, or finds nothing to land.
+    const waits = task.state === 'review' && task.waiting?.reason === 'landing'
+    if (waits && task.result?.acceptance) return { ...landing, state: 'commit', acceptance: task.result.acceptance, at: now() }
+    // Held for the operator with required checks pending: they run here, on the result's exact tree, once per subject (T293).
+    if (task.state === 'review' && task.waiting?.reason === 'operator-review') return this.checkHeld(row, board, task, landing)
     if (task.state === 'review' || task.state === 'running' || task.state === 'waiting-for-approval') return this.touch(row, landing)
     if (task.state !== 'done' || !task.result?.acceptance) return unaccepted(`task ${task.taskId} is ${task.state}: its result was not accepted`)
     return { ...landing, state: 'commit', acceptance: task.result.acceptance, at: now() }
+  }
+
+  /**
+   * The required command checks a result held for the operator left pending (T293, ADR-0063), run on
+   * its exact tree, by the source that holds the run's worktree, once per subject: the run owner's
+   * acceptance is decided again with them ({@link TaskRuns.recheckHeld}) and applied, so the result
+   * is held with its checks bound (a later acceptance applies), accepted, or rejected on a failure.
+   * Checks that cannot run on this tree (no source, no command, a refusal) are kept as not run for
+   * it, never asked again; a check its host's stop cut is asked again on the next sweep (INV-4).
+   */
+  private async checkHeld(row: TaskRow, board: Board, task: BoardTask, landing: TaskLanding): Promise<TaskLanding | undefined> {
+    const pending = (task.waiting?.pendingChecks ?? []).filter((c): c is RunCheck => (RUN_CHECKS as readonly string[]).includes(c))
+    const tree = landing.subject
+    if (!pending.length || !tree || !landing.workspace || landing.held?.version === tree.version) return this.touch(row, landing)
+    const result = task.result
+    if (!result || result.subject.type !== 'git-head' || result.subject.ref !== tree.ref || result.subject.version !== tree.version) return this.touch(row, landing)
+    const classification = this.e.runRow(row.run_id)?.classification ?? this.e.ctx.egress.defaultClassification
+    const ran = await runChecksOn(this.e, row.run_id, { subject: { type: 'git-head', ...tree }, workspace: landing.workspace }, pending, classification, this.e.stopped.signal)
+    if (!Object.keys(ran.checks).length) return { ...landing, held: { version: tree.version, outcome: 'not-run', reason: ran.notes.join('; ').slice(0, 500) }, at: now() }
+    const acceptance = await this.e.tasks.recheckHeld(row, board, ran)
+    return { ...landing, held: { version: tree.version, outcome: 'checked', ...(acceptance ? { acceptance } : {}) }, at: now() }
   }
 
   /** Have the source that holds the worktree commit the accepted tree on its branch. */
@@ -255,7 +319,15 @@ export class TaskLandings {
     }
     if (landed.outcome !== 'committed') return this.refuse(row, landing, 'commit', 'failed', `source ${landed.source} answered ${landed.outcome} to a commit`, [landing.acceptance!])
     // The run changed nothing (a review, say): the base already is the accepted tree.
-    if (!landed.committed && landed.contained && landed.head === landing.subject!.ref) return { ...landing, state: 'none', reason: `the accepted tree holds no change on ${landed.base.branch}: nothing to land`, at: now() }
+    if (!landed.committed && landed.contained && landed.head === landing.subject!.ref) {
+      // Nothing to land: the task's landing wait ends not needed (T293), on a decision that says so.
+      const reason = `the accepted tree holds no change on ${landed.base.branch}: nothing to land`
+      const decision = this.decide(row, 'none', `Does board task ${row.task_id}'s accepted result need landing on ${landed.base.branch}?`, [landing.acceptance!], [
+        { option: 'none', selected: true, reasons: [reason] },
+        { option: 'commit', selected: false, reasons: [`not commit: ${landed.base.branch} at ${landed.base.sha} already holds ${landed.head}, the accepted tree`] },
+      ], { step: 'commit', source: landed.source, head: landed.head, base: landed.base })
+      return { ...landing, state: 'none', reason, tell: 'not-needed', decisions: [...(landing.decisions ?? []), decision], at: now() }
+    }
     const decision = this.decide(row, 'commit', `Is board task ${row.task_id}'s accepted result committed on ${landed.branch}, to be landed in ${landed.base.branch}?`, [landing.acceptance!, ...this.resultOf(row).artifacts], [
       { option: 'commit', selected: true, reasons: [`the worktree ${landing.workspace} is still the accepted tree ${subjectId({ type: 'git-head', ...landing.subject! })}: ${landed.committed ? `its changes are committed on ${landed.branch} as ${landed.head}` : `${landed.branch} already holds them at ${landed.head}`}, by the system`] },
       { option: 'refuse', selected: false, reasons: ['not refuse: the tree did not move after the acceptance, and no run of it is left to write it'] },
@@ -778,7 +850,9 @@ export class TaskLandings {
       return { ...landing, state: 'returned', reason: `${reason}${note}`, at: now() }
     }
     const task = await board.task(row.task_id)
-    if (!task || task.state !== 'done' || task.run?.runId !== row.run_id || task.result?.acceptance !== landing.acceptance) return returned(`; task ${row.task_id} is ${task?.state ?? 'unknown'} now`)
+    // Accepted, the task waits for this landing (T293), or is done on it (accepted before that wait).
+    const accepted = task?.state === 'done' || (task?.state === 'review' && task.waiting?.reason === 'landing')
+    if (!task || !accepted || task.run?.runId !== row.run_id || task.result?.acceptance !== landing.acceptance) return returned(`; task ${row.task_id} is ${task?.state ?? 'unknown'} now`)
     if (typeof board.reopen !== 'function') return this.refuse(row, landing, 'return', 'failed', `${reason}; the board cannot send a done task back (no reopen, board contract before 1.4): it stays done, and nothing is merged`, [decision])
     try {
       await board.reopen(row.task_id, { runId: row.run_id, acceptance: landing.acceptance!, decision, reason: reason.slice(0, REOPEN_REASON_MAX) })
@@ -1031,7 +1105,7 @@ export class TaskLandings {
       { option: 'refuse', selected: false, reasons: [regenerated ? 'not refuse: the branch and the base were where the approval saw them, and the merge met conflicts only in generated files, which were regenerated' : 'not refuse: the branch and the base were where the approval saw them, and the merge met no conflict'] },
     ], { step: 'merge', source: landed.source, branch: landing.branch, head: landing.head, base: landing.base, commit: landed.commit, already: landed.already, ...(regenerated ? { regenerated: { files: regenerated.files, commands: regenerated.commands } } : {}), ...(landing.requestId ? { requestId: landing.requestId } : {}) })
     const reverts = revertsOf(landing.workspace, landing.base?.sha, landing.head)
-    const done: TaskLanding = { ...landing, state: 'merged', commit: landed.commit, ...(reverts.length ? { reverts } : {}), decisions: [...(landing.decisions ?? []), decision], at: now() }
+    const done: TaskLanding = { ...landing, state: 'merged', commit: landed.commit, ...(reverts.length ? { reverts } : {}), tell: 'merged', decisions: [...(landing.decisions ?? []), decision], at: now() }
     delete done.reason
     this.e.ctx.logger.info(`workflow: board task ${row.task_id}'s accepted result (run ${row.run_id}) is in ${landing.base!.branch} of ${landing.repository} at ${landed.commit}; nothing is pushed`)
     return done

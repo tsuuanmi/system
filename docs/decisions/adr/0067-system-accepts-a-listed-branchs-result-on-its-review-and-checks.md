@@ -154,6 +154,13 @@ runs System's own reviewer, as the board's `review:1` runs, on past escapes and 
 set until the eval has run on it and is recorded no worse than before
 ([runbook](../../operations/runbooks.md#run-the-reviewer-eval)).
 
+From T283 and T311 (T293, 2026-10-27): an accepted writing result, by this rule, by the lead, or by
+the operator, is no longer `done` by its acceptance. It waits in review for its landing, and is
+`done` only once its merge request is merged or its landing finds no change to land (a `board`
+decision of rule `board.landed`, whose `detail.accepted` names this rule's decision, so the breaker
+still counts the escapes of what it accepted). Done means landed: no task is done while its change
+sits in a worktree ([board](../../design/board.md#required-checks-bind-at-acceptance)).
+
 ## Rejected alternatives
 
 The options above; also: deciding the rule in the engine (the board is what holds a review, and a

@@ -6,7 +6,7 @@
   "type": "object",
   "required": ["schema", "taskId", "projectId", "title", "goal", "acceptance", "dependsOn", "actionClass", "state", "attempts", "createdAt", "revision"],
   "properties": {
-    "schema": { "enum": ["board-task@1.0", "board-task@1.1", "board-task@1.2"] },
+    "schema": { "enum": ["board-task@1.0", "board-task@1.1", "board-task@1.2", "board-task@1.3"] },
     "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "milestone": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
@@ -127,8 +127,8 @@
       "required": ["reason", "since", "expiresAt"],
       "properties": {
         "reason": {
-          "description": "approval-needed: the policy asks before starting; budget-spent: an attempt spent its budget; reconciliation-failed: a started run could not be reconciled, so running it again needs approval; retries-spent: review rejected the last attempt allowed; question: the lead or operator must answer; rejected: an approval was refused or expired, or none could be asked (a spent budget or a lost run under a policy verdict other than ask); review-expired: no acceptance decision came before the reviewer's lease lapsed, or before a review held for the operator expired; operator-review: in review, only the operator's acceptance accepts the result now (a required check not passed, or the class forbidden), so the board holds the review for the operator, bounded by the policy's wait for the class.",
-          "enum": ["approval-needed", "budget-spent", "reconciliation-failed", "retries-spent", "question", "rejected", "review-expired", "operator-review"]
+          "description": "approval-needed: the policy asks before starting; budget-spent: an attempt spent its budget; reconciliation-failed: a started run could not be reconciled, so running it again needs approval; retries-spent: review rejected the last attempt allowed; question: the lead or operator must answer; rejected: an approval was refused or expired, or none could be asked (a spent budget or a lost run under a policy verdict other than ask); review-expired: no acceptance decision came before the reviewer's lease lapsed, or before a review held for the operator expired; operator-review: in review, only the operator's acceptance accepts the result now (a required check not passed, or the class forbidden), so the board holds the review for the operator, bounded by the policy's wait for the class; landing (1.3, T293): in review, an accepted writing result waits for its landing, done only once its merge request is merged or its landing finds no change to land, bounded at 14 days.",
+          "enum": ["approval-needed", "budget-spent", "reconciliation-failed", "retries-spent", "question", "rejected", "review-expired", "operator-review", "landing"]
         },
         "approvalRequest": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
         "questions": {
@@ -223,7 +223,7 @@
         "then": {
           "oneOf": [
             { "required": ["holder"], "properties": { "holder": true, "waiting": false } },
-            { "required": ["waiting"], "properties": { "holder": false, "waiting": { "type": "object", "properties": { "reason": { "const": "operator-review" } } } } }
+            { "required": ["waiting"], "properties": { "holder": false, "waiting": { "type": "object", "properties": { "reason": { "enum": ["operator-review", "landing"] } } } } }
           ]
         },
         "else": { "properties": { "holder": false } }
@@ -283,16 +283,21 @@
           { "required": ["waiting"], "properties": { "waiting": { "type": "object", "required": ["funding"], "properties": { "funding": true } } } }
         ]
       },
-      "then": { "properties": { "schema": { "enum": ["board-task@1.1", "board-task@1.2"] } } }
+      "then": { "properties": { "schema": { "enum": ["board-task@1.1", "board-task@1.2", "board-task@1.3"] } } }
     },
     {
       "if": { "required": ["waiting"], "properties": { "waiting": { "type": "object", "required": ["funding"], "properties": { "funding": true } } } },
       "then": { "properties": { "waiting": { "type": "object", "properties": { "reason": { "const": "budget-spent" } } } } }
     },
     {
-      "description": "1.2: a record that carries a defect link is board-task@1.2.",
+      "description": "1.2: a record that carries a defect link is board-task@1.2 (or later).",
       "if": { "required": ["defect"], "properties": { "defect": true } },
-      "then": { "properties": { "schema": { "const": "board-task@1.2" } } }
+      "then": { "properties": { "schema": { "enum": ["board-task@1.2", "board-task@1.3"] } } }
+    },
+    {
+      "description": "1.3 (T293): a task that waits for its landing is board-task@1.3, its result accepted (result.acceptance).",
+      "if": { "required": ["waiting"], "properties": { "waiting": { "type": "object", "properties": { "reason": { "const": "landing" } } } } },
+      "then": { "required": ["result"], "properties": { "schema": { "const": "board-task@1.3" }, "state": { "const": "review" }, "result": { "type": "object", "required": ["acceptance"], "properties": { "acceptance": true } } } }
     }
   ],
   "additionalProperties": false

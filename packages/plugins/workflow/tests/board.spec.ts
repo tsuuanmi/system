@@ -447,8 +447,10 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     const run = await ctx.workflow.start({ template: 'solo', input: 'change it', classification: 'public', task: { taskId: task.taskId } })
     const done = await settled(ctx, run.runId)
     expect(done.status).toBe('completed')
-    expect((await reported(ctx, run.runId)).task?.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+    // Accepted on its working tree, it waits for its landing (T293).
+    expect((await reported(ctx, run.runId)).task?.outcome).toMatchObject({ status: 'accepted', state: 'review' })
     const board = (await ctx.board.task(task.taskId))!
+    expect(board).toMatchObject({ state: 'review', waiting: { reason: 'landing' } })
     expect(board.result).toMatchObject({ artifacts: [done.result], subject: { type: 'git-head', ref: subject.ref, version: subject.version } })
     expect(decisionOf(ctx, board.result!.acceptance).outcome.detail?.['subject']).toEqual(subject)
   })

@@ -42,8 +42,11 @@ export interface RanChecks {
 
 type Tree = { subject: Subject & { version: string }; workspace: string }
 
-/** Where a run's worktree would land (ADR-0060): the repository's checked-out branch it was cut from, as its source tells it. */
-export interface LandingTarget { workspace: string; repository: string; branch: string }
+/**
+ * Where a run's worktree would land (ADR-0060): the repository's checked-out branch it was cut from, as its source tells it;
+ * `fork`, the commit the worktree forked from; `changed`, whether it holds a change against that commit, committed or not (T293).
+ */
+export interface LandingTarget { workspace: string; repository: string; branch: string; fork: string; changed: boolean }
 
 /**
  * The landing targets of a run's worktrees, read from the sources that hold them (`ctx.workers.changes`),
@@ -54,7 +57,7 @@ export async function landingTargets(e: Engine, runId: string): Promise<LandingT
   if (typeof e.ctx.workers.changes !== 'function') return []
   try {
     const { changes } = await e.ctx.workers.changes(runId)
-    return changes.map((c) => ({ workspace: c.workspace, repository: c.repository, branch: c.base.branch }))
+    return changes.map((c) => ({ workspace: c.workspace, repository: c.repository, branch: c.base.branch, fork: c.base.sha, changed: c.files.length + c.more > 0 || c.head !== c.base.sha }))
   } catch (error) {
     e.ctx.logger.warn(`workflow: the landing target of run ${runId}'s worktree could not be read; its acceptance names none: ${(error as Error).message}`)
     return []
@@ -69,14 +72,17 @@ export function ranOn(ran: RanChecks | undefined, subject: Subject): Partial<Rec
 /**
  * The tree a completed run's result is on, as its acceptance binds it: for a board task's run whose
  * task writes a subject, the latest result on that subject (`tasks.complete`), else (a plain run, or
- * a board task with no write subject) the latest agent result on a git working tree. Undefined when
- * that is not a git working tree with its workspace.
+ * a board task with no write subject) the latest agent result on a git working tree that names its
+ * workspace, the tree `tasks.complete` binds such a run's result to when a writing step changed it
+ * (T293). Undefined when that is not a git working tree with its workspace.
  */
 function treeOf(e: Engine, done: NodeRow[], writes: Subject | undefined): Tree | undefined {
   for (const node of [...done].reverse()) {
     const result = (JSON.parse(node.record) as NodeRecord).outputReceipt?.result
     const body = result ? e.ctx.artifacts.get(result)?.body as { schema?: string; subject?: Subject; workspace?: string } | undefined : undefined
     if (writes ? body?.subject?.type !== writes.type || body.subject.ref !== writes.ref : !body?.schema?.startsWith('agent-result@') || body.subject?.type !== 'git-head') continue
+    // With no write subject, a step that names no working tree (a review member's answer) says nothing of the tree the run wrote (T293).
+    if (!writes && !body!.workspace) continue
     if (body!.subject!.type !== 'git-head' || body!.subject!.version === undefined || !body!.workspace) return undefined
     return { subject: { type: 'git-head', ref: body!.subject!.ref, version: body!.subject!.version }, workspace: body!.workspace }
   }
@@ -143,20 +149,31 @@ async function runRequiredChecks(
     return undefined
   }
   if (!required.length) return undefined
+  return runChecksOn(e, run.run_id, tree, required, run.classification ?? e.ctx.egress.defaultClassification, signal)
+}
+
+/**
+ * Have the source that holds run `runId`'s worktree run the `required` command checks on exactly
+ * `tree`, and read what they came to: each that ran to an exit code, passed or failed; one that did
+ * not, or all when none could run, a note, pending. Also the checks a result held for the operator
+ * left pending, run by its landing's watch (T293). Throws only when `signal` stopped it.
+ */
+export async function runChecksOn(
+  e: Engine, runId: string, tree: Tree, required: RunCheck[], classification: NonNullable<RunRow['classification']>, signal: AbortSignal,
+): Promise<RanChecks> {
   const pending = (why: string): RanChecks => ({ subject: tree.subject, checks: {}, notes: [`its ${required.join(', ')} check(s) did not run: ${why}; they stay pending`], detail: { asked: required, outcome: 'not-run', reason: why.slice(0, 300) } })
   if (typeof e.ctx.workers.check !== 'function') return pending('the workers seam runs no check (ctx.workers.check)')
   let checked: Awaited<ReturnType<NonNullable<typeof e.ctx.workers.check>>>
   try {
     checked = await e.ctx.workers.check({
-      runId: run.run_id, workspace: tree.workspace, subject: { ref: tree.subject.ref, version: tree.subject.version }, checks: required,
-      classification: run.classification ?? e.ctx.egress.defaultClassification,
+      runId, workspace: tree.workspace, subject: { ref: tree.subject.ref, version: tree.subject.version }, checks: required, classification,
     }, signal)
   } catch (error) {
     // A stop or a lost lease ends the run's turn; anything else is a check not run, never a run failed for it.
     if (signal.aborted) throw error
     return pending(`the workers seam could not run them (${(error as Error).message.slice(0, 200)})`)
   }
-  if (!checked) return pending(`no Worker source holds the worktree ${tree.workspace} of the run`)
+  if (!checked) return pending(`no Worker source holds the worktree ${tree.workspace} of run ${runId}`)
   if (checked.outcome === 'refused') return { ...pending(`source ${checked.source} refused (${checked.cause}): ${checked.reason}`), detail: { asked: required, source: checked.source, outcome: 'refused', cause: checked.cause } }
   const checks: Partial<Record<RunCheck, boolean>> = {}
   const notes: string[] = []

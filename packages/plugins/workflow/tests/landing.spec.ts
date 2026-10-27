@@ -239,10 +239,13 @@ const optionsOf = (ctx: Context, landing: TaskLanding): string[] => (landing.dec
 const merges = async (ctx: Context) => (await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).filter((r) => r.action.class === 'merge')
 
 describe('ctx.workflow lands an accepted result through the source that holds its tree (ADR-0060)', () => {
-  it('asks to merge once the task is done, adopts the request it asked before a restart instead of asking twice, and merges on the approval (REQ-WF-13, INV-4, INV-5)', async () => {
+  it('asks to merge once the task is accepted, adopts the request it asked before a restart instead of asking twice, and merges on the approval: the task is done only then (REQ-WF-13, INV-4, INV-5, T293)', async () => {
     const lander = new Lander()
     const { ctx, workspace, subject, taskId, runId, restart } = await boot('ask', lander)
     const asked = await until(ctx, runId, 'asked')
+    // Accepted, not done: it waits for its landing while the merge is asked (T293).
+    const waiting = (await ctx.board.task(taskId))!
+    expect(waiting).toMatchObject({ state: 'review', waiting: { reason: 'landing' } })
     expect(lander.steps[0]).toMatchObject({ step: 'commit', runId, workspace, subject: { ref: subject.ref, version: subject.version } })
     expect((lander.steps[0] as { message: string }).message).toMatch(new RegExp(`^system: land task ${taskId}: tree\\n\\nThe result of run ${runId} on git:${subject.ref}:${subject.version}, accepted by rule workflow\\.task-acceptance`))
     const [request] = await merges(ctx)
@@ -253,11 +256,30 @@ describe('ctx.workflow lands an accepted result through the source that holds it
     const again = await until(ctx, runId, 'asked')
     expect(again.requestId).toBe(asked.requestId)
     expect(await merges(ctx)).toHaveLength(1)
+    expect((await ctx.board.task(taskId))?.state).toBe('review')
     await ctx.approvals.decide([{ requestId: asked.requestId!, subject: request!.subject, verdict: 'approved' }])
     const merged = await until(ctx, runId, 'merged')
     expect(merged.commit).toBe('d'.repeat(40))
     expect(lander.steps.at(-1)).toMatchObject({ step: 'merge', runId, head: HEAD, base: BASE, message: expect.stringContaining(`on the operator's approval of request ${asked.requestId}`) })
     expect(optionsOf(ctx, merged)).toEqual(['commit', 'merge'])
+    // Merged, the board's landing wait ends: done on a board.landed decision naming the merge.
+    const done = await vi.waitFor(async () => {
+      const t = (await ctx.board.task(taskId))!
+      if (t.state !== 'done') throw new Error(`task ${taskId} is ${t.state}`)
+      return t
+    }, { timeout: 30_000, interval: 25 })
+    expect(ctx.artifacts.get(done.lastDecision!)?.body).toMatchObject({ decider: { id: 'board.landed' }, outcome: { option: 'done', detail: { outcome: 'merged', landing: merged.decisions!.at(-1), acceptance: waiting.result!.acceptance } } })
+    expect(landingOf(ctx, runId)).toMatchObject({ tell: 'merged', told: true })
+  })
+
+  it('keeps an accepted result waiting for its landing, never done, while its merge request is denied (T293)', async () => {
+    const lander = new Lander()
+    const { ctx, taskId, runId } = await boot('ask', lander)
+    const asked = await until(ctx, runId, 'asked')
+    const [request] = await merges(ctx)
+    await ctx.approvals.decide([{ requestId: asked.requestId!, subject: request!.subject, verdict: 'rejected' }])
+    await until(ctx, runId, 'rejected')
+    expect(await ctx.board.task(taskId)).toMatchObject({ state: 'review', waiting: { reason: 'landing' } })
   })
 
   it('names the files a merge regenerated, and the commands that made them, in its merge decision (T166, INV-13)', async () => {
@@ -396,8 +418,8 @@ describe('ctx.workflow rebases an accepted result onto its landing target when t
     const [request] = await merges(ctx)
     expect(request!.subject.version).toBe(`landing:merge:${BASE.sha}:${REBASED}`)
     expect(request!.action.consequences).toContain(`main moved since the result's work started (from ${FORK}): the result was rebased onto it from ${HEAD}, and its required checks (tests) passed again on the rebased tree.`)
-    // A target that only moved spends no attempt: the task is done on its first.
-    expect(await ctx.board.task(taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+    // A target that only moved spends no attempt: the task waits for its landing on its first.
+    expect(await ctx.board.task(taskId)).toMatchObject({ state: 'review', waiting: { reason: 'landing' }, attempts: { count: 1 } })
 
     // A crash after the rebase began, before the landing stored it: the restart asks again, adopts the request on the same tree.
     ctx.store.db.prepare('UPDATE workflow_tasks SET landing = ? WHERE run_id = ?').run(JSON.stringify({ ...asked, state: 'rebase', head: HEAD, requestId: undefined, decisions: asked.decisions!.slice(0, 1), rebase: { from: HEAD, base: BASE, fork: FORK, count: 0 } }), runId)
@@ -435,7 +457,7 @@ describe('ctx.workflow rebases an accepted result onto its landing target when t
     const [request] = await merges(ctx)
     // No command check ran on the result at its acceptance (none is required), so none runs again, and the request says so.
     expect(request!.action.consequences).toContain(`the result was rebased onto it from ${HEAD}, its conflicts resolved by ${author}; no check ran on the rebased tree, as no command check ran on the result at its acceptance.`)
-    expect(await ctx.board.task(taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+    expect(await ctx.board.task(taskId)).toMatchObject({ state: 'review', waiting: { reason: 'landing' }, attempts: { count: 1 } })
 
     // Markers left: not resolved, the branch put back, and the result goes back to the board with why.
     const stuck = new Lander()
@@ -480,7 +502,7 @@ describe('ctx.workflow rebases an accepted result onto its landing target when t
     expect(brief.body).toMatchObject({ schema: 'brief@1.2', taskId, projectId: task.projectId, attempt: 1, goal: `Resolve the conflicts of board task ${taskId}'s rebase onto main (ADR-0068)` })
     expect(brief.body).not.toHaveProperty('ask')
     expect(resolving[0]!.prompt).toContain('These files have conflicts, marked with <<<<<<< and >>>>>>> lines: a.c.')
-    expect(await ctx.board.task(taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+    expect(await ctx.board.task(taskId)).toMatchObject({ state: 'review', waiting: { reason: 'landing' }, attempts: { count: 1 } })
   })
 
   it('sends back a result whose unresolved rebase was put back before a crash, the task not yet reopened: the return is kept before the branch is put back, so a restart finishes it instead of refusing the landing (INV-4)', async () => {
@@ -498,7 +520,7 @@ describe('ctx.workflow rebases an accepted result onto its landing target when t
     expect(kept).toMatchObject({ state: 'returning', rebase: { returning: { why: expect.stringContaining('did not resolve the rebase onto main') } } })
     expect(stuck.steps.map(stepOf)).toEqual(['commit', 'rebase:start', 'rebase:resolved', 'rebase:abandon'])
     expect(kept.rebase!.returning!.decision).toBe(kept.decisions!.at(-1))
-    expect((await ctx.board.task(taskId))?.state).toBe('done')
+    expect(await ctx.board.task(taskId)).toMatchObject({ state: 'review', waiting: { reason: 'landing' } })
     // As if it died before the return decision was saved, too: only the return itself is kept.
     const returning = { why: kept.rebase!.returning!.why, inputs: kept.rebase!.returning!.inputs }
     ctx.store.db.prepare('UPDATE workflow_tasks SET landing = ? WHERE run_id = ?').run(JSON.stringify({ ...kept, rebase: { ...kept.rebase, returning }, decisions: kept.decisions!.slice(0, -1) }), runId)
@@ -594,13 +616,16 @@ describe('ctx.workflow rebases an accepted result onto its landing target when t
 
     // The operator accepts on /ui: an acceptance decision with no checks of its own.
     const held = (await ctx.board.task(taskId))!
-    const decision = ctx.artifacts.recordDecision({
+    const operator = (detail: Record<string, unknown>): ArtifactRef => ctx.artifacts.recordDecision({
       decisionType: 'acceptance', question: `Does the operator accept the result of board task ${taskId}?`,
       inputs: [...held.result!.artifacts, ...(held.result!.digest ? [held.result!.digest] : [])],
       candidates: [{ option: 'accept', selected: true, reasons: ['the operator accepts it'] }, { option: 'reject', selected: false, reasons: ['not reject: the operator chose accept'] }],
-      decider: { type: 'operator', id: 'operator.review', version: '1' }, outcome: { option: 'accept', detail: { taskId, subject: held.result!.subject } }, deterministic: false,
+      decider: { type: 'operator', id: 'operator.review', version: '1' }, outcome: { option: 'accept', detail: { taskId, subject: held.result!.subject, ...detail } }, deterministic: false,
     }, { producer: { type: 'operator', ref: 'operator' } }).id as ArtifactRef
-    expect((await ctx.board.accept(taskId, decision)).state).toBe('done')
+    // With lint pending, a plain acceptance is refused (T293): only one that names it not run, with why, applies.
+    await expect(ctx.board.accept(taskId, operator({}))).rejects.toThrow(/required check\(s\) lint have not passed on it/)
+    const decision = operator({ checksNotRun: { lint: 'its command did not run to an exit code on this host' } })
+    expect(await ctx.board.accept(taskId, decision)).toMatchObject({ state: 'review', waiting: { reason: 'landing' } })
 
     const returned = await until(ctx, runId, 'returned')
     expect(returned.acceptance).toBe(decision)

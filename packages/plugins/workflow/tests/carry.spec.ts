@@ -147,6 +147,20 @@ const settledRun = async (ctx: Context, runId: string): Promise<RunView> => vi.w
 }, { timeout: 30_000, interval: 25 })
 const attempt = async (ctx: Context, task: BoardTask): Promise<RunView> => settledRun(ctx, (await ctx.workflow.start({ template: 'relay', input: 'change a.c', classification: 'public', task: { taskId: task.taskId } })).runId)
 const carryOf = (ctx: Context, runId: string): TaskCarry | undefined => ctx.workflow.get(runId)?.task?.carry
+/**
+ * An accepted result waits for its landing (T293); this spec mounts no landing, so it ends that wait
+ * as a merge would, on a landing decision, before a next task writes the same commit.
+ */
+const landed = async (ctx: Context, taskId: string): Promise<BoardTask> => {
+  const t = (await ctx.board.task(taskId))!
+  expect(t).toMatchObject({ state: 'review', waiting: { reason: 'landing' } })
+  const decision = ctx.artifacts.recordDecision({
+    decisionType: 'gate', question: `Is board task ${taskId}'s accepted result merged?`, inputs: [t.result!.acceptance!],
+    candidates: [{ option: 'merge', selected: true, reasons: ['merged, as this spec stands in for its landing'] }, { option: 'refuse', selected: false, reasons: ['not refused'] }],
+    decider: { type: 'rule', id: 'workflow.landing', version: '1' }, outcome: { option: 'merge', detail: { taskId } }, deterministic: true,
+  }, { producer: { type: 'system', ref: 'workflow' } }).id as ArtifactRef
+  return ctx.board.landed!(taskId, { runId: t.run!.runId, acceptance: t.result!.acceptance!, outcome: 'merged', decision })
+}
 type Decision = { decisionType: string; decider: { id: string }; outcome: { option: string; detail: Record<string, unknown> } }
 const decisionOf = (ctx: Context, ref: ArtifactRef): Decision => {
   const body = ctx.artifacts.get(ref)!.body as Decision & { schema: string }
@@ -228,8 +242,8 @@ describe('ctx.workflow starts a board task\'s next attempt from its previous att
       expect(carry.decisions.map((d) => decisionOf(b.ctx, d).outcome.option)).toEqual(['carry', 'fresh'])
       // No brief says the worktree holds anything.
       for (const started of b.workers.started.slice(before)) expect(started.prompt).not.toContain('already holds the change')
-      // The task is done: the next one may write the same commit.
-      expect((await b.ctx.board.task(task.taskId))!.state).toBe('done')
+      // The task is done once it landed: the next one may write the same commit.
+      expect((await landed(b.ctx, task.taskId)).state).toBe('done')
     }
     expect(b.ctx.eventLog.query({ type: 'workflow.task.carry' }).map((e) => e.data?.['state'])).toEqual(['fresh', 'fresh', 'fresh'])
   })
@@ -311,8 +325,8 @@ describe('ctx.workflow starts a board task\'s next attempt from its previous att
     expect((b.ctx.artifacts.get(develop.result!)!.body as { workspace: string }).workspace).toBe(tree)
     // The required check ran on this run's own worktree, so the result is accepted on attempt 1.
     expect(b.carrier.checked).toEqual([{ runId: second.runId, workspace: tree }])
-    expect(second).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
-    expect(await b.ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+    expect(second).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'review' } } })
+    expect(await landed(b.ctx, task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
   })
 
   it('carries the tree of a writing step that asked after changing it, and continues that step on it, on the same attempt (T291)', async () => {
@@ -346,8 +360,8 @@ describe('ctx.workflow starts a board task\'s next attempt from its previous att
     expect(sent.map((s) => s.requirement.capabilities.includes('develop') ? 'develop:1' : 'check:1')).toEqual(['develop:1', 'check:1'])
     expect(sent[0]!.prompt).toContain('already holds the change step develop:1 of attempt 1 made')
     expect(sent[0]!.prompt).toContain('yes')
-    expect(second).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
-    expect(await b.ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+    expect(second).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'review' } } })
+    expect(await landed(b.ctx, task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
   })
 
   it('continues a writing step that asked before changing anything: its empty tree is nothing lost, and it runs again with the answers on the same attempt (T291)', async () => {
@@ -381,8 +395,8 @@ describe('ctx.workflow starts a board task\'s next attempt from its previous att
     expect(sent.map((s) => s.requirement.capabilities.includes('develop') ? 'develop:1' : 'check:1')).toEqual(['develop:1', 'check:1'])
     expect(sent[0]!.prompt).toContain('yes')
     for (const started of sent) expect(started.prompt).not.toContain('does not hold the edits')
-    expect(second).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
-    expect(await b.ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+    expect(second).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'review' } } })
+    expect(await landed(b.ctx, task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
   })
 
   it('does not resume a writing step that asked when its tree is not carried: the run starts again in a new session, every brief saying the edits are gone (T291)', async () => {
@@ -415,7 +429,7 @@ describe('ctx.workflow starts a board task\'s next attempt from its previous att
       expect(started.prompt).not.toContain('already holds the change')
     }
     expect(second).toMatchObject({ status: 'completed' })
-    expect(await b.ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+    expect(await landed(b.ctx, task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
   })
 
   it('keeps an ended attempt\'s change as its result when it ends, the sha in its dossier and its outcome; one that cannot be kept is said, never skipped (T271)', async () => {
@@ -436,7 +450,7 @@ describe('ctx.workflow starts a board task\'s next attempt from its previous att
     // The task is done on its next attempt, so another may write the same commit (INV-15). No source holds trees from here.
     b.carrier.keeps = false
     expect((await attempt(b.ctx, one.task)).status).toBe('completed')
-    expect((await b.ctx.board.task(one.task.taskId))!.state).toBe('done')
+    expect((await landed(b.ctx, one.task.taskId)).state).toBe('done')
 
     // No source holds the tree: said, not skipped.
     const two = await failedOnce(b, 'not kept', BROKEN)
@@ -466,9 +480,10 @@ describe('ctx.workflow starts a board task\'s next attempt from its previous att
     expect(await settledKept(one.first.runId)).toMatchObject({ state: 'kept', commit: 'e'.repeat(40), branch: `system/run/${one.first.runId}` })
     expect(said(one.task.taskId)).toEqual(['e'.repeat(40)])
 
-    // Kept, and a stop came before the dossier said it: said at the restart, once. (The first task is done first: one writer per subject, INV-15.)
+    // Kept, and a stop came before the dossier said it: said at the restart, once. (The first task is done first, once landed: one writer per subject, INV-15.)
     b.carrier.keeps = false
     expect((await attempt(b.ctx, one.task)).status).toBe('completed')
+    await landed(b.ctx, one.task.taskId)
     const two = await failedOnce(b, 'unsaid', BROKEN)
     await settledKept(two.first.runId)
     leave(two.first.runId, { state: 'kept', commit: 'f'.repeat(40), branch: `system/run/${two.first.runId}`, at: '2026-10-26T12:00:00.000Z' })
@@ -531,6 +546,8 @@ describe('ctx.workflow starts a board task\'s next attempt from its previous att
       const entry = b.ctx.workflow.dossier({ taskId: task.taskId, limit: 50 }).entries.find((e) => e.text.includes('starts from the tree of attempt'))!
       expect(entry.text).toContain(`the repository moved from ${b.head} to ${moved}`)
       expect(entry.text).toContain(c.dossier)
+      // Landed, the task is done, so the next case may write the same commit (INV-15, T293).
+      await landed(b.ctx, task.taskId)
     }
   })
 

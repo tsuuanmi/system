@@ -25,7 +25,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { type ArtifactRef, BoardError, type BoardTask, type Board, type Classification, type InfrastructureFailure, type Lease, type Project, renderTasks, type RunOutcome, type Subject, UNRELEASED_MAX, type UnreleasedHold, unreleasedText } from '@tsuuanmi/system-board-core'
 import { takesKind, type WorkerExecution } from '@tsuuanmi/system-workers-core'
-import { BRIEF_LIMITS, type BriefBudgetLine, type BriefFile, type BriefPointer, captureGitSubject, clampText, QUESTION_LIMITS, questionsOf } from '@tsuuanmi/system-libs'
+import { BRIEF_LIMITS, type BriefBudgetLine, type BriefFile, type BriefPointer, captureGitSubject, clampText, CLEAN_VERSION, QUESTION_LIMITS, questionsOf } from '@tsuuanmi/system-libs'
 import { type BudgetLine, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type { Check } from '@tsuuanmi/system-approvals-core'
 import { recordOutcome } from './advisor.ts'
@@ -40,6 +40,7 @@ import { TaskLandings } from './landings.ts'
 import type { Engine, Prepared } from './engine.ts'
 import { routedDecisions } from './recovery.ts'
 import { type AcceptanceRisk, finalTreeReview, heavyReasons } from './risk.ts'
+import { writes as writesChange } from './review.ts'
 import { heldWhy } from './sessions.ts'
 import { blocks, type Finding, type ResolvedNode } from './spec.ts'
 import { admittedRestriction } from './teams.ts'
@@ -1463,9 +1464,10 @@ export class TaskRuns {
    * A task's run completed: bind its result to the exact subject the task leaves, and decide on it
    * (the `acceptance` decision the board applies). The subject is the task's written subject at
    * the version the run left it (the latest result on that type and ref, still current when it
-   * names a working tree); with no write subject, the git working tree the run's required checks
-   * ran on when one ran there to an exit code and the tree is still that version (T165), else the
-   * result artifact itself. Undefined when the run is not a task's,
+   * names a working tree); with no write subject, the git working tree a writing step of the run
+   * changed, whatever the last step is (T293), else the tree the run's required checks ran on when one
+   * ran there to an exit code and the tree is still that version (T165), else the result artifact
+   * itself. Undefined when the run is not a task's,
    * or the result binds; else why it does not, and the run fails (INV-5).
    */
   complete(run: RunRow, nodes: NodeRow[], final: ArtifactRef, ran?: RanChecks, targets: readonly LandingTarget[] = [], risk?: AcceptanceRisk): WorkflowError | undefined {
@@ -1492,7 +1494,15 @@ export class TaskRuns {
       artifacts = [...new Set([source!, final])]
     }
     const notes = [...(ran?.notes ?? [])]
-    if (!writes && ran && Object.keys(ran.checks).length) {
+    // No write subject, and a writing step changed the run's worktree (T293): the result is that git
+    // tree, whatever the last step's own answer is (a review's, a validation's), so its checks bind to
+    // it and it lands; never a report artifact that leaves the change behind in the worktree (INV-5).
+    const written = writes ? undefined : this.writtenTree(done, targets)
+    if (written && 'problem' in written) return this.unbound(run, row, written.problem, written.source)
+    if (written) {
+      subject = written.subject
+      artifacts = [...new Set([written.source, final])]
+    } else if (!writes && ran && Object.keys(ran.checks).length) {
       // No write subject (T165): the result binds to the tree its checks ran on, through the agent
       // result that names it, while the working tree is still that version; else to the result
       // artifact, and the checks, bound to another subject, stay pending (INV-5).
@@ -1551,6 +1561,54 @@ export class TaskRuns {
         [acceptance, ...(ran?.evidence ? [ran.evidence] : [])], subject))
     }
     return undefined
+  }
+
+  /**
+   * A result held for the operator whose pending required checks ran on its exact tree (T293, from
+   * the landing's watch): the run owner's acceptance decided again, the same decision as the run's
+   * own (`workflow_tasks.acceptance`) with those checks added, rejecting on a failure, then applied on
+   * the board. The board holds it again with its checks bound, accepts it (its landing wait), or
+   * sends it back as another attempt. The failures are told in the task's dossier, as at completion.
+   * Returns the new acceptance; undefined when the run's own acceptance cannot be read.
+   */
+  async recheckHeld(row: TaskRow, board: Board, ran: RanChecks): Promise<ArtifactRef | undefined> {
+    type Body = { question: string; inputs: string[]; outcome: { option: string; detail: Record<string, unknown> } }
+    const own = row.acceptance ? this.e.ctx.artifacts.get(row.acceptance as ArtifactRef)?.body as Body | undefined : undefined
+    if (!own) return undefined
+    const subject = own.outcome.detail['subject'] as Subject
+    const checks: Partial<Record<Check, boolean>> = { ...(own.outcome.detail['checks'] as Partial<Record<Check, boolean>> | undefined), ...ranOn(ran, subject) }
+    const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([check]) => check)
+    const option = failed.length ? 'reject' : own.outcome.option
+    const said = `the checks it ran: ${Object.entries(checks).map(([c, p]) => `${c} ${p ? 'passed' : 'failed'}`).join(', ')}`
+    const acceptance = this.e.ctx.artifacts.recordDecision({
+      decisionType: 'acceptance', question: own.question,
+      inputs: [...new Set([...own.inputs as ArtifactRef[], ...(ran.evidence ? [ran.evidence] : []), row.acceptance as ArtifactRef])],
+      candidates: [
+        { option: 'accept', selected: option === 'accept', reasons: option === 'accept' ? [`the required checks the result was held with ran on ${describe(subject)}, after its run, and passed`, said, ...ran.notes] : [`not accept: the run's own ${failed.join(', ')} check failed on ${describe(subject)}`] },
+        { option: 'reject', selected: option === 'reject', reasons: option === 'reject' ? [`the run's own ${failed.join(', ')} check failed on ${describe(subject)}: the work goes back as another attempt`, ...ran.notes] : ['not reject: no check the run ran failed'] },
+      ],
+      decider: { type: 'rule', id: 'workflow.task-acceptance', version: '4' },
+      outcome: { option, detail: { ...own.outcome.detail, checks, checkRun: ran.detail, held: row.acceptance } },
+      deterministic: true,
+    }, { ...PRODUCER, runId: row.run_id }).id as ArtifactRef
+    this.e.ctx.store.transaction((db) => void db.prepare('UPDATE workflow_tasks SET acceptance = ? WHERE run_id = ?').run(acceptance, row.run_id))
+    row.acceptance = acceptance
+    this.dossiers.safely('the held result\'s checks', () => this.dossiers.evidence(row.run_id,
+      `The required checks the result was held with ran on ${describe(subject)}: ${said}; ${option === 'accept' ? 'the acceptance applies again with them' : 'it goes back as another attempt'}.`,
+      [acceptance, ...(ran.evidence ? [ran.evidence] : [])], subject))
+    for (const [check, lines] of Object.entries(ran.failures ?? {}) as Array<[Check, string[]]>) {
+      if (checks[check] !== false || !lines.length) continue
+      this.dossiers.safely(`the failures of the ${check} check`, () => this.dossiers.evidence(row.run_id,
+        `The ${check} check failed on ${describe(subject)}: ${lines.length} line${lines.length === 1 ? '' : 's'} of its output (at most ${MAX_FAILURE_LINES}), the failing tests' names and assertions, then its summary:\n${lines.join('\n')}`,
+        [acceptance, ...(ran.evidence ? [ran.evidence] : [])], subject))
+    }
+    try {
+      await board.accept(row.task_id, acceptance)
+    } catch (error) {
+      if (!(error instanceof BoardError)) throw error
+      this.warn(`the acceptance of run ${row.run_id}'s held result, its checks run, was not applied on board task ${row.task_id}`, error)
+    }
+    return acceptance
   }
 
   /**
@@ -1615,6 +1673,42 @@ export class TaskRuns {
       return current && current.subject.ref === tree.ref && current.subject.version === tree.version ? ref : undefined
     }
     return undefined
+  }
+
+  /**
+   * The git tree a run with no write subject wrote (T293): when a writing step of it (one that needs
+   * `develop`) left its worktree changed, the latest agent result of the run's completed steps on a git
+   * working tree, while that tree is still the version it names. Changed is against the commit the
+   * worktree forked from, committed or not: a change left uncommitted on HEAD (its version is not the
+   * clean one), a HEAD past that fork, or a change its source reads there (`targets`). Undefined when
+   * no writing step changed it; a problem when the tree moved since, or cannot be read (INV-5).
+   */
+  private writtenTree(done: NodeRow[], targets: readonly LandingTarget[]): { subject: Subject & { version: string }; source: ArtifactRef } | { problem: string; source: ArtifactRef } | undefined {
+    type Body = { schema?: string; subject?: Subject; workspace?: string }
+    const agentResult = (node: NodeRow): { ref: ArtifactRef; body: Body } | undefined => {
+      const ref = (JSON.parse(node.record) as NodeRecord).outputReceipt?.result
+      const body = ref ? this.e.ctx.artifacts.get(ref)?.body as Body | undefined : undefined
+      return ref && body?.schema?.startsWith('agent-result@') && body.workspace && body.subject?.type === 'git-head' && body.subject.version ? { ref, body } : undefined
+    }
+    const wrote = done.some((n) => {
+      const written = writesChange(JSON.parse(n.spec) as ResolvedNode) ? agentResult(n)?.body : undefined
+      if (!written) return false
+      const target = targets.find((t) => t.workspace === written.workspace)
+      return written.subject!.version !== CLEAN_VERSION || (target !== undefined && (target.changed || written.subject!.ref !== target.fork))
+    })
+    if (!wrote) return undefined
+    const last = [...done].reverse().map(agentResult).find((r) => r !== undefined)!
+    const tree = { type: 'git-head' as const, ref: last.body.subject!.ref, version: last.body.subject!.version! }
+    let current: ReturnType<typeof captureGitSubject>
+    try {
+      current = captureGitSubject(last.body.workspace!)
+    } catch (error) {
+      return { problem: `the working tree ${last.body.workspace} its writing step changed cannot be read (${(error as Error).message.slice(0, 200)})`, source: last.ref }
+    }
+    if (!current || current.subject.ref !== tree.ref || current.subject.version !== tree.version) {
+      return { problem: `the working tree ${last.body.workspace} its writing step changed is no longer ${describe(tree)}${current ? ` (now ${describe(current.subject)})` : ''}`, source: last.ref }
+    }
+    return { subject: tree, source: last.ref }
   }
 
   /** The run's result does not bind to the subject its task writes: a `gate` decision, and the run fails as `stale_subject`. */
@@ -1714,8 +1808,9 @@ export class TaskRuns {
     // Stopped before the board's record was seen: the record decides whether anything is reported.
     if (row.phase === 'starting' && task?.run?.runId !== runId) return this.settled(row, { status: 'not-started', ...(task ? { state: task.state } : {}) })
     // Applied before a crash: as it is, or, done on the board's auto-accept rule (D80), as the result's acceptance.
-    const applied = task?.lastDecision === row.acceptance || (task?.state === 'done' && task.run?.runId === runId && task.result?.acceptance === row.acceptance)
-    if (task && row.acceptance && applied) return this.settled(row, { status: task.state === 'done' ? 'accepted' : 'rejected', state: task.state, decision: row.acceptance as ArtifactRef })
+    const landing = task?.state === 'review' && task.waiting?.reason === 'landing'
+    const applied = task?.lastDecision === row.acceptance || ((task?.state === 'done' || landing) && task.run?.runId === runId && task.result?.acceptance === row.acceptance)
+    if (task && row.acceptance && applied) return this.settled(row, { status: task.state === 'done' || landing ? 'accepted' : 'rejected', state: task.state, decision: row.acceptance as ArtifactRef })
     if (!task || task.run?.runId !== runId) {
       return this.settled(row, { status: 'moved-on', ...(task ? { state: task.state } : {}), reason: task ? `task ${task.taskId} is ${task.state} and no longer waits on run ${runId}` : `task ${row.task_id} is unknown to the board` })
     }
@@ -1790,6 +1885,8 @@ export class TaskRuns {
   private async accept(row: TaskRow, board: Board, acceptance: ArtifactRef): Promise<void> {
     try {
       const task = await board.accept(row.task_id, acceptance)
+      // Accepted, a writing result waits for its landing (T293): done once it landed.
+      if (task.state === 'review' && task.waiting?.reason === 'landing') return this.settled(row, { status: 'accepted', state: task.state, decision: acceptance, reason: 'accepted: it waits for its landing, done once its merge request is merged' })
       if (task.state === 'review') {
         return this.settled(row, { status: 'review', state: task.state, decision: acceptance, reason: `held for the operator until ${task.waiting?.expiresAt ?? '(no expiry)'}${task.waiting?.pendingChecks?.length ? `: ${task.waiting.pendingChecks.join(', ')} pending` : ''}` })
       }

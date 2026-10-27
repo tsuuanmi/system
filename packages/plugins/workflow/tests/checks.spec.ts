@@ -66,10 +66,14 @@ class Checker {
   /** The failing lines a failed check's answer carries, by check (T270). */
   failures: Record<string, string[]> = {}
   refuse: Checked | undefined
+  /** How many asks `refuse` answers, when set; every one when unset. */
+  refuseTimes: number | undefined
   /** The next check runs until its caller's signal stops it (the host's stop cutting it), then throws as a cut check does. */
   cutNext = false
   /** The repository's checked-out branch the run's worktree was cut from, as the source tells it (`changes`); none when unset. */
   base: string | undefined
+  /** The commit the run's worktree forked from, and its HEAD now, as the source tells them; the same commit when unset. */
+  fork: { sha: string; head: string } | undefined
   /** The run's worktree. */
   workspace = ''
   private artifacts!: Context['artifacts']
@@ -79,7 +83,7 @@ class Checker {
     ctx.workers.register({
       name: 'checker', describe: async () => [],
       changes: async (runId) => this.base === undefined ? undefined : [{
-        repository: '/repo', workspace: this.workspace, branch: `system/run/${runId}`, base: { branch: this.base, sha: 'b'.repeat(40) }, head: 'b'.repeat(40), files: [], more: 0, truncated: false,
+        repository: '/repo', workspace: this.workspace, branch: `system/run/${runId}`, base: { branch: this.base, sha: this.fork?.sha ?? 'b'.repeat(40) }, head: this.fork?.head ?? 'b'.repeat(40), files: [], more: 0, truncated: false,
       }],
       start: () => {
         throw new Error('the checker runs no Worker')
@@ -92,7 +96,7 @@ class Checker {
           await new Promise<void>((resolve) => (signal?.aborted ? resolve() : signal?.addEventListener('abort', () => resolve(), { once: true })))
           throw signal?.reason ?? new Error('stopped')
         }
-        if (this.refuse) return this.refuse
+        if (this.refuse && (this.refuseTimes === undefined || this.refuseTimes-- > 0)) return this.refuse
         const results = step.checks.map((check) => {
           const outcome = this.outcomes[check] ?? 'error'
           return { check, outcome, ...(outcome === 'error' ? {} : { exitCode: outcome === 'passed' ? 0 : 1 }), reason: outcome === 'error' ? `no command for the ${check} check is configured` : `exited ${outcome === 'passed' ? 0 : 1}` }
@@ -185,7 +189,10 @@ async function boot(checker: Checker | undefined, { onTree = true, review, board
   return { ctx, workspace, subject, task, restart }
 }
 
-/** The task once its run's result reached the board: done, held for the operator, or sent back. */
+/** An accepted writing result: it waits for its landing, never done before that lands it (T293). */
+const LANDING = { state: 'review', waiting: { reason: 'landing' } } as const
+
+/** The task once its run's result reached the board: done, held for the operator, accepted and waiting for its landing, or sent back. */
 const settled = (ctx: Context, taskId: string): Promise<BoardTask> => vi.waitFor(async () => {
   const task = (await ctx.board.task(taskId))!
   if (task.state === 'running' || task.state === 'claimed' || (task.state === 'review' && !task.waiting)) throw new Error(`task ${taskId} is ${task.state}`)
@@ -205,7 +212,8 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
     const { ctx, workspace, subject, task } = await boot(checker)
     const { taskId, runId } = await task()
     const done = await settled(ctx, taskId)
-    expect(done).toMatchObject({ state: 'done' })
+    // Accepted, a writing result waits for its landing; it is done only once that lands it (T293).
+    expect(done).toMatchObject(LANDING)
     expect(checker.steps).toEqual([{ runId, workspace, subject: { ref: subject.ref, version: subject.version }, checks: ['tests', 'lint'], classification: 'public' }])
     const acceptance = acceptanceOf(ctx, runId)
     expect(acceptance).toMatchObject({ decider: { version: '4' }, outcome: { option: 'accept', detail: { checks: { tests: true, lint: true }, checkRun: { source: 'checker', outcome: 'checked', asked: ['tests', 'lint'] } } } })
@@ -291,6 +299,44 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
     expect(acceptanceOf(none.ctx, three.runId).outcome.detail).toMatchObject({ checkRun: { outcome: 'not-run', reason: expect.stringContaining('no Worker source holds the worktree') } })
   })
 
+  it('runs by itself, once, on the held tree, the checks a result was held with: passed, the run owner\'s acceptance applies again and the result waits for its landing; failed, it goes back (T293)', async () => {
+    const until = (ctx: Context, taskId: string, ok: (t: BoardTask) => boolean, what: string): Promise<BoardTask> => vi.waitFor(async () => {
+      const t = (await ctx.board.task(taskId))!
+      if (!ok(t)) throw new Error(`task ${taskId} is ${t.state}${t.waiting ? ` (${t.waiting.reason})` : ''}, not ${what}`)
+      return t
+    }, { timeout: 30_000, interval: 25 })
+    const acceptances = (ctx: Context, runId: string): Array<Acceptance & { id: string }> => ctx.artifacts.list({ kind: 'decision', decisionType: 'acceptance', runId })
+      .map((a) => ({ ...a.body as Acceptance, id: a.id })).filter((b) => b.decider.id === 'workflow.task-acceptance')
+
+    // The run's own ask is refused (the source busy then): held with tests and lint pending; the landing's watch asks again on the same tree.
+    const checker = new Checker()
+    checker.refuse = { outcome: 'refused', cause: 'busy', reason: 'a run of the worktree may still write it' }
+    checker.refuseTimes = 1
+    const { ctx, workspace, subject, task } = await boot(checker)
+    const { taskId, runId } = await task()
+    const landed = await until(ctx, taskId, (t) => t.waiting?.reason === 'landing', 'waiting for its landing')
+    const asked = { runId, workspace, subject: { ref: subject.ref, version: subject.version }, checks: ['tests', 'lint'], classification: 'public' }
+    expect(checker.steps).toEqual([asked, asked])
+    const all = acceptances(ctx, runId)
+    expect(all).toHaveLength(2)
+    const [own, again] = all
+    expect(own).toMatchObject({ outcome: { option: 'accept', detail: { checks: {}, checkRun: { outcome: 'refused' } } } })
+    expect(again).toMatchObject({ decider: { id: 'workflow.task-acceptance' }, outcome: { option: 'accept', detail: { checks: { tests: true, lint: true }, checkRun: { outcome: 'checked' } } } })
+    expect(landed.result?.acceptance).toBe(again!.id)
+
+    // Failed there, the run owner's acceptance rejects it: another attempt, its failure in the dossier.
+    const failing = new Checker()
+    failing.refuse = checker.refuse
+    failing.refuseTimes = 1
+    failing.outcomes = { tests: 'passed', lint: 'failed' }
+    const second = await boot(failing)
+    const two = await second.task()
+    const back = await until(second.ctx, two.taskId, (t) => t.state === 'ready', 'ready again')
+    expect(back.attempts.count).toBe(1)
+    expect(acceptances(second.ctx, two.runId).at(-1)).toMatchObject({ outcome: { option: 'reject', detail: { checks: { tests: true, lint: false } } } })
+    expect(failing.steps).toHaveLength(2)
+  })
+
   it('holds for the operator a result whose checks could not start, an infrastructure error, and never sends it back as a failed attempt (INV-2)', async () => {
     const checker = new Checker()
     checker.outcomes = { tests: 'error', lint: 'error' }
@@ -337,8 +383,7 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
     await vi.waitFor(() => expect(checker.steps).toHaveLength(1), { timeout: 30_000, interval: 25 })
     await restart()
     const done = await settled(ctx, taskId)
-    expect(done).toMatchObject({ state: 'done' })
-    expect(done.waiting).toBeUndefined()
+    expect(done).toMatchObject(LANDING)
     // Asked again on the exact tree the result is on, the cut check's source runs it there again.
     const asked = { runId, workspace, subject: { ref: subject.ref, version: subject.version }, checks: ['tests', 'lint'], classification: 'public' }
     expect(checker.steps).toEqual([asked, asked])
@@ -349,7 +394,7 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
     const checker = new Checker()
     const { ctx, task } = await boot(checker)
     const { taskId, runId } = await task('read')
-    expect(await settled(ctx, taskId)).toMatchObject({ state: 'done' })
+    expect(await settled(ctx, taskId)).toMatchObject(LANDING)
     expect(checker.steps).toEqual([])
     expect(acceptanceOf(ctx, runId).outcome.detail).not.toHaveProperty('checkRun')
   })
@@ -360,7 +405,7 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
       const { ctx, workspace, subject, task } = await boot(checker)
       const { taskId, runId } = await task('workspace-write', { writes: false })
       const done = await settled(ctx, taskId)
-      expect(done).toMatchObject({ state: 'done', result: { subject: { type: 'git-head', ref: subject.ref, version: subject.version } } })
+      expect(done).toMatchObject({ ...LANDING, result: { subject: { type: 'git-head', ref: subject.ref, version: subject.version } } })
       expect(checker.steps).toEqual([{ runId, workspace, subject: { ref: subject.ref, version: subject.version }, checks: ['tests', 'lint'], classification: 'public' }])
       const acceptance = acceptanceOf(ctx, runId)
       expect(acceptance.outcome).toMatchObject({ option: 'accept', detail: { subject: { type: 'git-head', ref: subject.ref, version: subject.version }, checks: { tests: true, lint: true }, checkRun: { outcome: 'checked' } } })
@@ -381,6 +426,35 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
       const acceptance = acceptanceOf(ctx, runId)
       expect(acceptance.outcome).toMatchObject({ option: 'reject', detail: { subject: { type: 'git-head' }, checks: { tests: true, lint: false } } })
       expect(acceptance.candidates.find((c) => c.selected)!.reasons[0]).toMatch(/the run's own lint check failed on git-head/)
+    })
+
+    it('binds a run whose last step is a review, and whose checks did not run, to the tree its writing step changed, never to the review\'s report (T293, INV-5)', async () => {
+      // No source runs checks: they stay pending, as on T283, and the result is still the written tree.
+      const { ctx, workspace, subject, task } = await boot(undefined, { review: 'approve' })
+      const { taskId, runId } = await task('workspace-write', { writes: false, template: 'reviewed' })
+      const held = await settled(ctx, taskId)
+      expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: ['tests', 'lint'] }, result: { subject: { type: 'git-head', ref: subject.ref, version: subject.version } } })
+      const acceptance = acceptanceOf(ctx, runId)
+      expect(acceptance.outcome.detail).toMatchObject({ subject: { type: 'git-head', ref: subject.ref, version: subject.version }, checkRun: { outcome: 'not-run' } })
+      // The agent result that names the worktree is among the result's artifacts, so its landing finds the tree.
+      expect(held.result!.artifacts.some((a) => (ctx.artifacts.get(a)?.body as { workspace?: string } | undefined)?.workspace === workspace)).toBe(true)
+    })
+
+    it('binds to the written tree a run whose writing step left its change in a commit, its worktree clean: changed is against the commit it forked from (T293)', async () => {
+      const checker = new Checker()
+      checker.base = 'dev'
+      // The source cannot run the checks here: they stay pending, so no check binds the result to the tree.
+      checker.refuse = { outcome: 'refused', cause: 'moved', reason: 'not checked in this test' }
+      const { ctx, workspace, task } = await boot(checker, { review: 'approve' })
+      const git = (...args: string[]): string => execFileSync('git', ['-C', workspace, '-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { encoding: 'utf8' }).trim()
+      const fork = git('rev-parse', 'HEAD')
+      git('commit', '-q', '-am', 'the change, committed')
+      checker.fork = { sha: fork, head: git('rev-parse', 'HEAD') }
+      const committed = captureGitSubject(workspace)!.subject
+      const { taskId, runId } = await task('workspace-write', { writes: false, template: 'reviewed' })
+      const held = await settled(ctx, taskId)
+      expect(held).toMatchObject({ state: 'review', result: { subject: { type: 'git-head', ref: committed.ref, version: committed.version } } })
+      expect(acceptanceOf(ctx, runId).outcome.detail).toMatchObject({ subject: { type: 'git-head', ref: committed.ref } })
     })
 
     it('keeps the checks pending, for the operator, when its result is not on a git working tree (INV-2)', async () => {
@@ -404,7 +478,7 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
       const { ctx, subject, task } = await boot(checker, { review: 'approve', board: AUTO })
       const { taskId, runId } = await task('workspace-write', { template: 'reviewed' })
       const done = await settled(ctx, taskId)
-      expect(done).toMatchObject({ state: 'done' })
+      expect(done).toMatchObject(LANDING)
       const acceptance = acceptanceOf(ctx, runId)
       const review = acceptance.outcome.detail['review'] as { assessment: string }
       expect(acceptance.outcome).toMatchObject({
@@ -413,11 +487,11 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
       })
       expect(acceptance.inputs).toContain(review.assessment)
       const evidence = (acceptance.outcome.detail['checkRun'] as { evidence: string }).evidence
-      expect(ctx.artifacts.get(done.lastDecision!)?.body).toMatchObject({ decider: { id: 'board.auto-accept' }, inputs: expect.arrayContaining([review.assessment, evidence]), outcome: { option: 'done', detail: { branch: 'dev' } } })
+      expect(ctx.artifacts.get(done.lastDecision!)?.body).toMatchObject({ decider: { id: 'board.auto-accept' }, inputs: expect.arrayContaining([review.assessment, evidence]), outcome: { option: 'landing', detail: { branch: 'dev' } } })
       expect(done.result?.acceptance).toBeDefined()
       expect(ctx.artifacts.get(done.result!.acceptance!)?.body).toMatchObject({ decider: { id: 'workflow.task-acceptance' } })
-      // Reported as accepted, and watched for its landing, whose merge asks the operator as before.
-      await vi.waitFor(() => expect(ctx.workflow.get(runId)?.task).toMatchObject({ phase: 'reported', outcome: { status: 'accepted', state: 'done' } }), { timeout: 30_000, interval: 25 })
+      // Reported as accepted, and watched for its landing, whose merge asks the operator as before; done once it lands (T293).
+      await vi.waitFor(() => expect(ctx.workflow.get(runId)?.task).toMatchObject({ phase: 'reported', outcome: { status: 'accepted', state: 'review' } }), { timeout: 30_000, interval: 25 })
     })
 
     it('holds for the operator a result that lands on another branch, or whose checks are pending', async () => {

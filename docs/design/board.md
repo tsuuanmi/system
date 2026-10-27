@@ -392,8 +392,9 @@ when the result is accepted:
 - A review waits for a person on the policy's wait, never on a process (T286). When the holder's
   lease lapses in review with no decision (its process gone, or a host stop across it, as on
   2026-10-26 when two approved results expired twenty minutes after a restart), the sweep holds
-  the result for the operator on `operator-review`, with the class's required checks pending (none
-  reported) and the policy's wait for the class from that sweep, as if the run had reported it
+  the result for the operator on `operator-review`, with the class's required checks pending but
+  those its run's own acceptance recorded passed (T311), and the policy's wait for the class from
+  that sweep, as if the run had reported it
   after the restart. Only that wait ends it.
 - An expired review keeps a way back: `board_reopen_review` (the operator's token, else the
   lead's for its own project, with a reason) brings a `review-expired` task back to review on
@@ -409,6 +410,41 @@ when the result is accepted:
   lead run several on one repository at once) gets them too: when they ran on its run's git
   working tree, its result is on that tree (`git-head` at its version, a commit's subject in
   `submit`), so the acceptance that reports them binds to it; nothing about the board changes.
+  When a writing step of its run changed the worktree, the result is that tree whatever the run's
+  last step is (a review, a validation), even when no check ran on it (T293): never the last step's
+  report, which would leave the change behind in the worktree with its checks pending (T283).
+- A **writing result** (on a git tree that an agent result among its artifacts names as its run's
+  worktree, at that exact version) binds the checks of a lead's or the operator's acceptance to
+  what its run recorded (T293, T311). The board reads the run's own acceptance from the record (the
+  latest `acceptance` decision of the task's run that is the run owner's and names the task and the
+  exact subject), whatever the board's last decision on the task is. The accepting decision's own
+  command checks never count: a lead's claim that lint passed is not a pass. Such an acceptance is
+  refused (`invalid`) when the run recorded a command check failed on the result, and while one the
+  policy requires has not passed, naming the checks and since when. The run's owner runs a held
+  result's pending checks itself: the workflow's landing watch has the source that holds the run's
+  worktree run them on the exact tree, once per subject (a check its host's stop cut is asked again
+  on the next sweep), and applies the run owner's acceptance again with them: passed, the result is
+  accepted, or held again for what still holds it (a heavy result) with its checks bound; failed, it
+  goes back as another attempt. A check that cannot run there (no command, no source) stays pending.
+  The lead never accepts past a pending check. Only the
+  operator does (on `/ui`, the review card's field under each check not run: `checksNotRun` of
+  `POST reviews/<taskId>/decide`), by naming each check not run with a note (`outcome.detail.checksNotRun`, check →
+  note, at most 500 characters); the acceptance then applies on a `board` decision of its own whose
+  reason says "accepted with check `<name>` not run: `<note>`" (`detail.reason: checks-not-run`).
+- **Done means landed** (T293, `board-task@1.3`). An accepted writing result is never `done` by its
+  acceptance: the task stays in `review`, its lease released, `result.acceptance` set, waiting for
+  its landing (`waiting.reason` `landing`, 14 days). No acceptance ends that wait. Only its landing
+  does (`Board.landed`): `merged`, once its merge request is merged, or `not-needed`, when the
+  accepted tree holds no change its target lacks; the task is then `done` on a `board` decision of
+  rule `board.landed` naming the landing's decision, `detail.accepted` the decision that accepted it
+  (the auto-accept rule's breaker reads it there). A landing that sends the result back reopens the
+  task from the wait; one that does not land (a denied merge, a refusal) leaves it waiting, and at
+  the wait's end it waits for input (`review-expired`). Its dependents start only once it is done.
+  A result that is not a writing one (a report, or a tree no run's worktree holds) is accepted as
+  above.
+- A review held again with no acceptance (a lapsed lease, a re-opening) counts the checks the run
+  recorded on its exact result, so a check it passed is never shown pending again (T311), and the
+  hold's decision names the run's acceptance among its inputs, so a surface reads them there.
 - A class the policy asks about needs no check here: the operator approved the attempt before it
   started.
 
@@ -428,7 +464,8 @@ holds, each read from the record the decision names, never from its own account:
 | every test ran | `outcome.detail.checkRun.results[].notRun` | no check it reports passed says it did not run some of its tests (its browser tests, T247): "checks passed, browser tests not run" waits for the lead or the operator (T255) |
 | it lands on a listed branch | `outcome.detail.landing.branch` | a branch `autoAccept.branches` names |
 
-- Met, the task is `done` on a `board` decision of rule `board.auto-accept`, which names the
+- Met, the task is accepted (it waits for its landing, done once that lands it: done means landed
+  above) on a `board` decision of rule `board.auto-accept`, which names the
   acceptance, the review, the check-run record, and the autonomy decision (INV-13);
   `result.acceptance` is the acceptance it applied. Its landing then asks for the merge as any other
   ([landing an accepted result](workflow-engine.md#landing-an-accepted-result)).

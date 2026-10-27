@@ -137,6 +137,128 @@ const acceptance = (ctx: Context, option: 'accept' | 'reject', taskId: string, o
 }, { producer: { type: 'policy', ref: 'test' } }).id as ArtifactRef
 const open = (ctx: Context, projectId: string): Promise<ApprovalRequest[]> => ctx.approvals.list({ projectId, states: ['open', 'batched'] })
 
+describe('ctx.board (store-backed): a writing result\'s checks bind before any acceptance (T293, T311)', () => {
+  /** A writing result: an agent result naming its worktree at HEAD, submitted by run `runId` of a workspace-write task, the run's own acceptance recording `checks`. */
+  const heldWriting = async (ctx: Context, title: string, minute: number, checks: Action['checks']): Promise<{ taskId: string; r: ArtifactRef; run: ArtifactRef }> => {
+    const t = await ready(ctx, task('p2', title, { actionClass: 'workspace-write' }), at(minute))
+    const runId = `run-${title.replaceAll(' ', '-')}`
+    const { generation } = await ctx.board.claim(t.taskId, 'lead', 600_000, at(minute))
+    await ctx.board.start(t.taskId, generation, { runId }, at(minute))
+    const r = ctx.artifacts.put({
+      kind: 'report', bodySchema: 'agent-result@1.1', classification: 'operator-shared', producer: { type: 'worker', ref: 'test' },
+      body: { schema: 'agent-result@1.1', worker: 'w', runtime: 'fake', runId: 'r', promptHash: `sha256:${'0'.repeat(64)}`, sandbox: 'workspace-write', text: title, workspace: '/work/tree', subject: HEAD },
+    }).id as ArtifactRef
+    await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: HEAD }, at(minute))
+    // The run owner's acceptance: a rule's decision the system produced, under the run.
+    const run = ctx.artifacts.recordDecision({
+      decisionType: 'acceptance', question: `Does ${runId}'s result complete ${t.taskId}?`, inputs: [r],
+      candidates: [{ option: 'accept', selected: true, reasons: ['its steps were accepted'] }, { option: 'reject', selected: false, reasons: ['not reject'] }],
+      decider: { type: 'rule', id: 'workflow.task-acceptance', version: '4' }, outcome: { option: 'accept', detail: { taskId: t.taskId, subject: HEAD, checks } }, deterministic: true,
+    }, { producer: { type: 'system', ref: 'workflow' }, runId }).id as ArtifactRef
+    // Held for the operator while a required check has not passed; accepted, it waits for its landing.
+    expect(await ctx.board.accept(t.taskId, run, at(minute))).toMatchObject({ state: 'review', waiting: { reason: checks?.tests && checks.lint ? 'landing' : 'operator-review' } })
+    return { taskId: t.taskId, r, run }
+  }
+  const byLead = (ctx: Context, taskId: string, r: ArtifactRef, checks: Action['checks']): ArtifactRef => ctx.artifacts.recordDecision({
+    schema: 'decision@1.10', decisionType: 'acceptance', question: `Does lead:p2 accept ${taskId}?`, inputs: [r],
+    candidates: [{ option: 'accept', selected: true, reasons: ['the lead accepts'] }, { option: 'reject', selected: false, reasons: ['not reject'] }],
+    decider: { type: 'client', id: 'lead:p2', version: '1' }, outcome: { option: 'accept', detail: { taskId, subject: HEAD, checks } }, deterministic: false,
+  }, { producer: { type: 'system', ref: 'lead:p2' } }).id as ArtifactRef
+  const byOperator = (ctx: Context, taskId: string, r: ArtifactRef, checksNotRun?: Record<string, string>): ArtifactRef => ctx.artifacts.recordDecision({
+    decisionType: 'acceptance', question: `Does the operator accept ${taskId}?`, inputs: [r],
+    candidates: [{ option: 'accept', selected: true, reasons: ['the operator accepts'] }, { option: 'reject', selected: false, reasons: ['not reject'] }],
+    decider: { type: 'operator', id: 'operator.review', version: '2' }, outcome: { option: 'accept', detail: { taskId, subject: HEAD, ...(checksNotRun ? { checksNotRun } : {}) } }, deterministic: false,
+  }, { producer: { type: 'operator', ref: 'operator' } }).id as ArtifactRef
+
+  it('refuses the lead\'s acceptance over a check the run recorded failed on the result, whatever the lead claims, and the operator\'s too', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const { taskId, r } = await heldWriting(ctx, 'lint failed', 3, { tests: true, lint: false })
+    const refused = ctx.board.accept(taskId, byLead(ctx, taskId, r, { tests: true, lint: true }), at(4))
+    await expect(refused).rejects.toThrow(/run recorded its lint check\(s\) failed on git-head HEAD at abc123/)
+    expect(await failureOf(ctx.board.accept(taskId, byOperator(ctx, taskId, r), at(4)))).toBe('invalid')
+    expect(await ctx.board.task(taskId)).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: ['lint'] } })
+  })
+
+  it('refuses any acceptance while a required check is pending, naming it and since when; only the operator accepts past it, naming the check with a note, on a decision of its own', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const { taskId, r, run } = await heldWriting(ctx, 'lint pending', 3, { tests: true })
+    const held = (await ctx.board.task(taskId))!
+    // The lead's own claim that lint passed does not count: the run recorded none.
+    const lead = ctx.board.accept(taskId, byLead(ctx, taskId, r, { tests: true, lint: true }), at(4))
+    await expect(lead).rejects.toThrow(new RegExp(`required check\\(s\\) lint have not passed on it \\(pending since ${held.waiting!.since}; the run's acceptance ${run}\\)`))
+    expect(await failureOf(ctx.board.accept(taskId, byOperator(ctx, taskId, r), at(4)))).toBe('invalid')
+    expect(await failureOf(ctx.board.accept(taskId, byOperator(ctx, taskId, r, { lint: '  ' }), at(4)))).toBe('invalid')
+    const accepted = byOperator(ctx, taskId, r, { lint: 'no lint command is configured on this host' })
+    const landing = await ctx.board.accept(taskId, accepted, at(5))
+    // A writing result is never done by its acceptance: it waits for its landing.
+    expect(landing).toMatchObject({ state: 'review', waiting: { reason: 'landing' }, result: { acceptance: accepted } })
+    expect(ctx.artifacts.get(landing.lastDecision!)?.body).toMatchObject({
+      inputs: [accepted],
+      candidates: [{ option: 'landing', reasons: [`the operator's acceptance ${accepted} accepted with check lint not run: no lint command is configured on this host`] }, expect.anything()],
+      outcome: { option: 'landing', detail: { reason: 'checks-not-run', checksNotRun: [{ check: 'lint', note: 'no lint command is configured on this host' }] } },
+    })
+  })
+
+  it('makes an accepted writing result done only when its landing ends merged or not needed: no acceptance ends the wait, and unlanded it expires (T293, INV-9)', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const board = ctx.board as StoreBoard
+    const { taskId, r } = await heldWriting(ctx, 'lands', 3, { tests: true, lint: true })
+    const waiting = (await ctx.board.task(taskId))!
+    // Its checks passed, so the run owner's acceptance applied at once: it waits for its landing, not done.
+    expect(waiting).toMatchObject({ schema: 'board-task@1.3', state: 'review', waiting: { reason: 'landing' } })
+    expect(waiting.holder).toBeUndefined()
+    expect(await failureOf(ctx.board.accept(taskId, byOperator(ctx, taskId, r), at(4)))).toBe('invalid-transition')
+    const merge = ctx.artifacts.recordDecision({
+      decisionType: 'gate', question: 'Is it merged?', inputs: [waiting.result!.acceptance!],
+      candidates: [{ option: 'merge', selected: true, reasons: ['merged'] }, { option: 'refuse', selected: false, reasons: ['not refused'] }],
+      decider: { type: 'rule', id: 'workflow.landing', version: '1' }, outcome: { option: 'merge', detail: { taskId } }, deterministic: true,
+    }, { producer: { type: 'system', ref: 'workflow' } }).id as ArtifactRef
+    const end = { runId: waiting.run!.runId, acceptance: waiting.result!.acceptance!, outcome: 'merged' as const, decision: merge }
+    expect(await failureOf(board.landed(taskId, { ...end, runId: 'run-other' }, at(5)))).toBe('invalid-transition')
+    expect(await failureOf(board.landed(taskId, { ...end, decision: `sha256:${'e'.repeat(64)}` }, at(5)))).toBe('invalid')
+    const done = await board.landed(taskId, end, at(5))
+    expect(done).toMatchObject({ state: 'done', result: { acceptance: end.acceptance } })
+    expect(done.waiting).toBeUndefined()
+    expect(ctx.artifacts.get(done.lastDecision!)?.body).toMatchObject({ decider: { id: 'board.landed' }, inputs: expect.arrayContaining([merge, end.acceptance]), outcome: { option: 'done', detail: { outcome: 'merged', accepted: end.acceptance, landing: merge } } })
+    expect(await failureOf(board.landed(taskId, end, at(6)))).toBe('invalid-transition')
+
+    // One whose landing never ends waits 14 days, then waits for input (review-expired).
+    const late = await heldWriting(ctx, 'never lands', 7, { tests: true, lint: true })
+    const since = Date.parse((await ctx.board.task(late.taskId))!.waiting!.expiresAt)
+    await ctx.board.sweep(new Date(since - 1))
+    expect(await ctx.board.task(late.taskId)).toMatchObject({ state: 'review', waiting: { reason: 'landing' } })
+    await ctx.board.sweep(new Date(since))
+    expect(await ctx.board.task(late.taskId)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'review-expired' } })
+  })
+
+  it('takes a report result done on an accepting decision: only a writing result waits for its landing', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const t = await ready(ctx, task('p2', 'report'))
+    const { generation } = await ctx.board.claim(t.taskId, 'lead', 600_000, at(3))
+    await ctx.board.start(t.taskId, generation, { runId: 'run-report' }, at(3))
+    const r = result(ctx, 'a report')
+    await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: HEAD }, at(3))
+    expect(await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r), at(4))).toMatchObject({ state: 'done' })
+  })
+
+  it('keeps the checks the run recorded on a review it holds again after a re-opening, never showing them pending (T311)', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    // The run recorded tests passed (and lint failed): on the hold it is given again, only lint is pending.
+    const { taskId, run } = await heldWriting(ctx, 'tests passed', 3, { tests: true, lint: false })
+    await ctx.board.sweep(at(3 + 61))
+    const expired = (await ctx.board.task(taskId))!
+    expect(expired).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'review-expired' } })
+    const reopened = await ctx.board.reopenReview!(taskId, 'operator', 'look at it again', at(3 + 62))
+    expect(reopened).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: ['lint'] } })
+    expect((ctx.artifacts.get(reopened.lastDecision!)!.body as { inputs: string[] }).inputs).toContain(run)
+  })
+})
+
 describe('ctx.board (store-backed): restart', () => {
   it('a new provider over the same store sees the same projects, tasks, holders, and waits, and continues sweeping (INV-4)', async () => {
     const b = await boot()

@@ -4,7 +4,7 @@ import type { ArtifactRef } from '@tsuuanmi/system-board-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import type { TaskCarry, TaskLanding, TaskOutcome } from '@tsuuanmi/system-workflow'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { attempt, bootPilot, charter, decide, FIXED, operatorAccepts, ORIGINAL, type Pilot, propose, queued, reported, type Script, until } from './pilot.ts'
+import { attempt, bootPilot, charter, decide, FIXED, ORIGINAL, type Pilot, propose, queued, reported, type Script, until } from './pilot.ts'
 
 // A board task's next attempt starting from the work its previous attempt left (ADR-0061, T112, T271):
 // the pilot in miniature, over a scratch repository, with the real engine, board, approval queue,
@@ -69,8 +69,9 @@ describe('a board task\'s next attempt starts from the previous attempt\'s work 
     const left = (ctx.artifacts.get(ctx.workflow.get(first.runId)!.nodes.find((n) => n.nodeId === 'develop:1')!.result!)!.body as { subject: { ref: string; version: string } }).subject
     expect(left.ref).toBe(pilot.head)
 
+    // Its checks ran on its tree and passed: accepted, it waits for its landing (T293).
     const runId = await nextAttempt(pilot, first.taskId)
-    expect(ctx.workflow.get(runId)!.task?.outcome).toMatchObject({ status: 'review' })
+    expect(ctx.workflow.get(runId)!.task?.outcome).toMatchObject({ status: 'accepted' })
     const commit = pilot.git(pilot.repo, 'rev-parse', branch)
     expect(commit).toBe(kept.commit)
     const carry = carryOf(pilot, runId)!
@@ -114,7 +115,6 @@ describe('a board task\'s next attempt starts from the previous attempt\'s work 
     expect((await ctx.board.task(first.taskId))!.result!.subject).toMatchObject({ type: 'git-head', ref: pilot.head })
 
     // Accepted, it lands as one commit on the base, holding the change.
-    await operatorAccepts(ctx, first.taskId)
     const landing = await until(() => {
       const l: TaskLanding | undefined = ctx.workflow.get(runId)?.task?.landing
       return l?.state === 'asked' ? l : undefined
@@ -123,7 +123,7 @@ describe('a board task\'s next attempt starts from the previous attempt\'s work 
     expect(pilot.git(pilot.repo, 'show', `${landing.head}:calc.py`)).toBe(FIXED.trim())
   })
 
-  it('carries an attempt whose review asked for changes and whose fix the operator rejected, and one whose result the operator rejected: each kept as its attempt\'s result, and each next attempt builds on it (T271, REQ-WF-14)', async () => {
+  it('carries an attempt whose review asked for changes and whose fix the operator rejected, and one whose result was rejected on a failed check: each kept as its attempt\'s result, and each next attempt builds on it (T271, REQ-WF-14)', async () => {
     const pilot = await boot({ changes: 1 })
     const { ctx } = pilot
     await charter(ctx, 'p1')
@@ -134,13 +134,15 @@ describe('a board task\'s next attempt starts from the previous attempt\'s work 
     expect(await reported(ctx, first.runId)).toMatchObject({ status: 'failed', error: { kind: 'plan_rejected' } })
     expect(await keptOf(pilot, first.runId)).toMatchObject({ state: 'kept', commit: pilot.git(pilot.repo, 'rev-parse', `system/run/${first.runId}`) })
 
+    // Attempt 2's lint check fails on its tree: its result is rejected, kept then, and attempt 3 builds on it.
+    pilot.checker!.outcomes = { lint: 'failed' }
     const second = await nextAttempt(pilot, task.taskId)
+    expect(ctx.workflow.get(second)!.task?.outcome).toMatchObject({ status: 'rejected' })
+    pilot.checker!.outcomes = {}
     const carried = carryOf(pilot, second)!
     expect(carried).toMatchObject({ state: 'carried', from: { runId: first.runId, nodeId: 'develop:1' }, branch: `system/run/${first.runId}`, commit: pilot.git(pilot.repo, 'rev-parse', `system/run/${first.runId}`) })
     expect(carried.decisions.map((d) => decisionOf(pilot, d).outcome.option)).toEqual(['carry', 'carry'])
 
-    // Attempt 2's result was held for the operator, who rejects it: it is kept then, and attempt 3 builds on it.
-    await operatorAccepts(ctx, task.taskId, 'reject')
     const third = await nextAttempt(pilot, task.taskId)
     expect(await keptOf(pilot, second)).toMatchObject({ state: 'kept', commit: pilot.git(pilot.repo, 'rev-parse', `system/run/${second}`) })
     expect(carryOf(pilot, third)).toMatchObject({ state: 'carried', from: { runId: second, attempt: 2 }, branch: `system/run/${second}` })

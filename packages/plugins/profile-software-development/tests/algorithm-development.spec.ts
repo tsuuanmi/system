@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import { captureGitSubject, subjectId } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { attempt, bootPilot, charter, decide, EVIDENCE, FIXED, MEASURED, ORIGINAL, operatorAccepts, type Pilot, propose, queued, reported, TESTS, until } from './pilot.ts'
+import { attempt, bootPilot, charter, decide, EVIDENCE, FIXED, MEASURED, ORIGINAL, type Pilot, propose, queued, reported, TESTS, until } from './pilot.ts'
 
 // The algorithm-development template end to end (PROP-0010 B8, T267): one attempt of a board task,
 // over the real board, approval queue, ledger, digests, and agents source with a worktree per run;
@@ -36,7 +36,7 @@ const guide = (title: string, paths: string[]): string => [
 ].join('\n')
 
 describe('the algorithm-development template (PROP-0010 B8, T267)', () => {
-  it('runs one attempt of a board task: develop in the run\'s worktree and show the checks\' output in the dossier, the author\'s own review in a new session, an exact-subject review whose fix waits on the approval queue last, then the result held for the operator with its digest (REQ-WF-5, REQ-WF-9, REQ-WRK-6, INV-15)', async () => {
+  it('runs one attempt of a board task: develop in the run\'s worktree and show the checks\' output in the dossier, the author\'s own review in a new session, an exact-subject review whose fix waits on the approval queue last, then the result accepted on the checks it ran on its tree, with its digest, waiting for its landing (T293, REQ-WF-5, REQ-WF-9, REQ-WRK-6, INV-15)', async () => {
     const pilot = await boot({ changes: 1 })
     const { ctx, agent } = pilot
     await charter(ctx, 'p1')
@@ -128,26 +128,29 @@ describe('the algorithm-development template (PROP-0010 B8, T267)', () => {
     const brief = ctx.artifacts.get(done.nodes.find((n) => n.nodeId === 'develop:1')!.brief!)!.body as { schema: string; acceptance: unknown[] }
     // A criterion's check (brief@1.3), in a brief@1.6 that records the writer's own handbook slice.
     expect(brief).toMatchObject({ schema: 'brief@1.6', acceptance: [{ id: 'a1', statement: `${TESTS} passes`, check: 'tests' }], handbook: { selection: { role: 'develop', class: 'code' } } })
-    expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).map((r) => r.action.class).sort()).toEqual(['charter', 'remediation'])
+    // The run's own requests: the charter's and the fix's (its landing asks the merge, apart from the run).
+    expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).map((r) => r.action.class).filter((c) => c !== 'merge').sort()).toEqual(['charter', 'remediation'])
 
-    // The result is the review's report on the exact subject the task writes; the review check passed on it.
+    // The result is the exact tree the task writes; the review check passed on it, and its required checks ran
+    // there (the pilot's check source) and passed, so the run's own acceptance applied: it waits for its landing (T293).
     const held = await until(async () => {
       const t = await ctx.board.task(task.taskId)
       return t?.result?.digest ? t : undefined
     }, 'the digest on the task\'s result')
-    expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: ['tests', 'lint'] } })
+    expect(held).toMatchObject({ state: 'review', waiting: { reason: 'landing' } })
     expect(held.result!.subject).toEqual({ type: 'git-head', ref: pilot.head, version: final.version })
     const acceptance = ctx.artifacts.get(done.task!.outcome!.decision!)!.body as { decider: { id: string }; outcome: { option: string; detail: { checks: Record<string, boolean> } } }
-    expect(acceptance).toMatchObject({ decider: { id: 'workflow.task-acceptance' }, outcome: { option: 'accept', detail: { checks: { review: true } } } })
+    expect(acceptance).toMatchObject({ decider: { id: 'workflow.task-acceptance' }, outcome: { option: 'accept', detail: { checks: { review: true, tests: true, lint: true } } } })
+    expect(held.result!.acceptance).toBe(done.task!.outcome!.decision)
+    expect(pilot.checker!.steps.map((s) => s.checks)).toContainEqual(['tests', 'lint'])
 
     // The digest cites the result, quoted verbatim.
     const digest = ctx.artifacts.get(held.result!.digest!)!.body as { sources: ArtifactRef[]; claims: Array<{ citation: { quote: string } }> }
     expect(digest.sources).toEqual(held.result!.artifacts)
     expect(digest.claims[0]!.citation.quote).toBe('```json')
 
-    // Every run was metered on the pool, and the operator's acceptance on /ui makes the task done.
+    // Every run was metered on the pool.
     expect((await ctx.resources.usage({ pool: 'plan.agents' })).records).toHaveLength(agent.runs.length)
-    expect((await operatorAccepts(ctx, task.taskId)).state).toBe('done')
   })
 
   it('has no validate step: the template\'s steps are develop, the author\'s self-review, and the review (T267)', async () => {
@@ -383,9 +386,12 @@ describe('the algorithm-development template (PROP-0010 B8, T267)', () => {
     // The reviewer given no kinds took both reviews; the writer, which is given kinds, took neither (it proves no review either).
     expect(routed(ctx, run.runId, 'selfreview:1').find((c) => c.selected)!.option).toBe('agent:reviewer')
     // The tests variant of the same template: its develop step is tests work, still on the writer (once the
-    // first task is done, as one subject has one writer, INV-15).
-    expect((await operatorAccepts(ctx, task.taskId)).state).toBe('done')
-    const tests = await propose(pilot, 'p1', 'test add()')
+    // first task is done, as one subject has one writer, INV-15): accepted on its recorded checks, it is done once its merge lands (T293), and the next writes the head it left.
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'review', waiting: { reason: 'landing' } })
+    const asked = await until(() => { const l = ctx.workflow.get(run.runId)?.task?.landing; return l?.state === 'asked' ? l : undefined }, 'the merge of the accepted result to be asked')
+    await decide(ctx, asked.requestId!)
+    await until(async () => (await ctx.board.task(task.taskId))?.state === 'done', `task ${task.taskId} to be done once merged`)
+    const tests = await propose(pilot, 'p1', 'test add()', { writes: { type: 'git-head', ref: pilot.git(pilot.repo, 'rev-parse', 'HEAD') } })
     const written = await ctx.workflow.start({ template: 'algorithm-development', variant: 'tests', input: 'Test what add() returns', classification: 'operator-shared', task: { taskId: tests.taskId } })
     const finished = await reported(ctx, written.runId)
     expect(finished.nodes.find((n) => n.nodeId === 'develop:1')!.worker).toBe('agent:developer')
@@ -413,19 +419,19 @@ describe('the algorithm-development template (PROP-0010 B8, T267)', () => {
       const t = await ctx.board.task(taskId)
       return t?.result?.digest ? t : undefined
     }, 'the digest on the task\'s result')
-    // Attempt 1, rejected by the operator: the task is ready for attempt 2.
+    // Attempt 1, rejected on its lint check, which failed on its tree: the task is ready for attempt 2.
+    pilot.checker!.outcomes = { lint: 'failed' }
     const first = await attempt(ctx, task.taskId)
     expect((await reported(ctx, first.runId)).status).toBe('completed')
-    await digested(task.taskId)
-    expect(await operatorAccepts(ctx, task.taskId, 'reject')).toMatchObject({ state: 'ready' })
-    // Attempt 2, accepted: done.
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready' })
+    // Attempt 2, accepted on its checks, which passed: it waits for its landing (T293).
+    pilot.checker!.outcomes = {}
     const second = await attempt(ctx, task.taskId)
     expect((await reported(ctx, second.runId)).status).toBe('completed')
-    await digested(task.taskId)
-    expect((await operatorAccepts(ctx, task.taskId)).state).toBe('done')
+    expect(await digested(task.taskId)).toMatchObject({ state: 'review', waiting: { reason: 'landing' } })
     const worktreeOf = (runId: string): string => agent.runs.find((r) => r.role === 'develop' && basename(r.workspace) === runId)!.workspace
-    // Both are finished, and both committed on their branches: the rejected attempt's work kept as its result once the operator
-    // rejected it (T271), the accepted one's once the engine lands it (ADR-0060: its merge then waits for the operator, from the branch).
+    // Both are finished, and both committed on their branches: the rejected attempt's work kept as its result once it was
+    // rejected (T271), the accepted one's once the engine lands it (ADR-0060: its merge then waits for the operator, from the branch).
     await until(() => (ctx.workflow.get(second.runId)?.task?.landing?.state === 'asked' ? true : undefined), 'the accepted result committed and its merge asked')
     const kept = await until(() => {
       const k = ctx.workflow.get(first.runId)?.task?.outcome?.kept

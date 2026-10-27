@@ -282,7 +282,7 @@ Served when `ctx.board` and `ctx.artifacts` are present; without either, both ro
 | Route | Body | Answer |
 |---|---|---|
 | `GET reviews` | — | `{reviews, accepted}`: `accepted`, the latest 20 done tasks whose accepted result is still on its way into the repository (landing `watch`, `commit`, `committed`, `asked`, `merging`), each with `taskId`, `title`, `project`, `run`, and `landing` as the Board's cards give it; `reviews`, every task in review, those held for the operator first, by expiry: `taskId`, `title`, `goal`, `actionClass`, `acceptance`, `attempts`, `project {projectId, title}`, the result's exact `subject`, `artifacts` (and `digest`, `files`), `pendingChecks`, `checks` (below), `run`, `heldFor` (`operator`, or `reviewer` while a run's lease holds it), `since`, `expiresAt`, `lastDecision` |
-| `POST reviews/<taskId>/decide` | `{verdict: accept \| reject, subject, note?}` | `{task, decision}`: the task after `ctx.board.accept`, and the `acceptance` decision recorded |
+| `POST reviews/<taskId>/decide` | `{verdict: accept \| reject, subject, note?, checksNotRun?}` | `{task, decision}`: the task after `ctx.board.accept`, and the `acceptance` decision recorded. `checksNotRun` (operator only, with `accept`; T293): each required command check (`tests`, `typecheck`, `lint`) the operator accepts past, with why it did not run (1 to 500 characters), carried as the decision's `outcome.detail.checksNotRun`; the review card asks for it under the checks not run. A lead's, or a malformed one, is refused (400) |
 
 - `subject` is the exact subject of the result the page showed (INV-5): a result on another
   subject is refused (`409`), and so is a task no longer in review. Nothing is decided then.

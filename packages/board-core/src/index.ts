@@ -38,6 +38,22 @@ export const BOARD_CONTRACT = '1.5'
 /** The longest reason a {@link Board.reopen} carries (INV-9). */
 export const REOPEN_REASON_MAX = 2000
 
+/** How long an accepted writing result waits for its landing before it ends review-expired (T293, INV-9): 14 days. */
+export const LANDING_WAIT_SECONDS = 14 * 24 * 3600
+
+/**
+ * How the landing of a task's accepted writing result ended ({@link Board.landed}, T293): the run whose
+ * result it is, the acceptance it was accepted by, `merged` (its merge request was merged) or
+ * `not-needed` (the accepted tree holds no change the target lacks), and the landing's decision that
+ * says so.
+ */
+export interface LandingEnd {
+  runId: string
+  acceptance: ArtifactRef
+  outcome: 'merged' | 'not-needed'
+  decision: ArtifactRef
+}
+
 /** What sends a done task's result back ({@link Board.reopen}, 1.4): the run whose result it is, its acceptance, the decision that sends it back, and why. */
 export interface Reopening {
   runId: string
@@ -118,7 +134,7 @@ export interface Project {
 export type TaskState = 'proposed' | 'ready' | 'claimed' | 'running' | 'review' | 'waiting-for-input' | 'waiting-for-approval' | 'done' | 'cancelled'
 export const TERMINAL: readonly TaskState[] = ['done', 'cancelled']
 /** `operator-review`: a task in review whose acceptance only the operator can give now (a required check not passed); the board holds it, not a lease. */
-export type WaitReason = 'approval-needed' | 'budget-spent' | 'reconciliation-failed' | 'retries-spent' | 'question' | 'rejected' | 'review-expired' | 'operator-review'
+export type WaitReason = 'approval-needed' | 'budget-spent' | 'reconciliation-failed' | 'retries-spent' | 'question' | 'rejected' | 'review-expired' | 'operator-review' | 'landing'
 export type CancelReason = 'operator' | 'lead' | 'project-closed' | 'input-expired' | 'superseded' | 'forbidden' | 'dependency-cancelled'
 
 /**
@@ -178,9 +194,9 @@ export const DEFECT_SHA = { min: 7, max: 64 } as const
  */
 export interface Defect { fixes: string; sha: string; at: string; by: DefectBy }
 
-/** `board-task@1.0`; `board-task@1.1` once it carries a funding ask (`waiting.funding`) or a raise (`funding`); `board-task@1.2` once it carries a `defect` link. */
+/** `board-task@1.0`; `board-task@1.1` once it carries a funding ask (`waiting.funding`) or a raise (`funding`); `board-task@1.2` once it carries a `defect` link; `board-task@1.3` once it waits for its landing (`waiting.reason` `landing`, T293). */
 export interface BoardTask {
-  schema: 'board-task@1.0' | 'board-task@1.1' | 'board-task@1.2'
+  schema: 'board-task@1.0' | 'board-task@1.1' | 'board-task@1.2' | 'board-task@1.3'
   taskId: string
   projectId: string
   milestone?: string
@@ -436,7 +452,7 @@ export abstract class Board extends Service {
   /**
    * Send a done task's accepted result back as another attempt (contract 1.4, ADR-0068; optional: a
    * provider at 1.3 has none, and a result that cannot land then stays done for the operator). Only
-   * while the task is `done` on exactly `back.runId`'s result, accepted by `back.acceptance`
+   * while the task is `done`, or waits for its landing (T293), on exactly `back.runId`'s result, accepted by `back.acceptance`
    * (`invalid-transition` otherwise), and only on a stored `back.decision` with a `reason` of 1 to
    * {@link REOPEN_REASON_MAX} characters (`invalid` otherwise); nothing changes when refused. The move
    * is the one a rejected attempt makes: through the gate again for the next attempt when one is
@@ -445,6 +461,17 @@ export abstract class Board extends Service {
    * says why. The attempt the result was made in is already counted; the reopening counts none.
    */
   abstract reopen?(taskId: string, back: Reopening, at?: Date): Promise<BoardTask>
+
+  /**
+   * End the landing wait of a task whose accepted writing result waits for its landing (optional;
+   * T293): a writing result (on a git tree its run's worktree holds) is never done by its acceptance,
+   * but waits in `review` (`waiting.reason` `landing`, {@link LANDING_WAIT_SECONDS}) until its landing
+   * says how it ended. Only while the task waits so on exactly `end.runId`'s result accepted by
+   * `end.acceptance` (`invalid-transition` otherwise), on a stored `end.decision` (`invalid`
+   * otherwise). The task is then `done` on a `board` decision of rule `board.landed` naming the
+   * landing's decision and the acceptance, `detail.accepted` the decision that accepted it.
+   */
+  landed?(taskId: string, end: LandingEnd, at?: Date): Promise<BoardTask>
 
   /**
    * Bring a `review-expired` task back to review, held for the operator for the policy's wait for its

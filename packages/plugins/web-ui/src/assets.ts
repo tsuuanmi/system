@@ -1148,8 +1148,23 @@ export const APP_JS = `'use strict'
     return el('p', { class: 'pending-checks', role: 'note' },
       failed.length ? el('strong', {}, 'Checks that failed: ' + failed.join(', ') + '. ') : null,
       notRun.length ? el('strong', {}, 'Checks not run: ' + notRun.join(', ') + '. ') : null,
-      'Accepting counts them as passed — ' + (failed.length ? (notRun.length ? 'fix the failed ones and run the others first.' : 'fix them first.') : 'run them first.'), whatIs('checks'))
+      'Accepting counts them as passed — ' + (failed.length ? (notRun.length ? 'fix the failed ones and run the others first.' : 'fix them first.') : 'run them first.'),
+      // A change in a run's worktree: the board refuses an acceptance past them (T293); only the operator accepts past a check not run, naming why below.
+      ' For a change in a run\\'s worktree the board refuses that: the system runs them on its tree, and to accept without one, say below why it did not run.', whatIs('checks'))
   }
+  // The checks the board holds pending that no run recorded as failed: the operator may accept past each, naming why (T293).
+  const notRunChecks = (r) => r.pendingChecks.filter((c) => ['tests', 'typecheck', 'lint'].includes(c) && !(r.checks ? r.checks.value : []).some((s) => s.check === c && s.state === 'failed'))
+  const notRunKey = (r, c) => 'notrun-' + r.taskId + '-' + c
+  const notRunInputs = (r) => {
+    const checks = notRunChecks(r)
+    if (!checks.length || r.heldFor !== 'operator') return null
+    return el('div', { class: 'not-run' }, checks.map((c) => {
+      const id = notRunKey(r, c)
+      const input = el('input', { id, maxlength: '500', value: notes.get(id) || '', oninput: () => notes.set(id, input.value) })
+      return el('p', {}, el('label', { for: id }, 'Accept with ' + c + ' not run, because: '), input)
+    }))
+  }
+  const checksNotRunOf = (r) => Object.fromEntries(notRunChecks(r).map((c) => [c, (notes.get(notRunKey(r, c)) || '').trim()]).filter(([, note]) => note))
   // A review card's first row (T186): the change in numbers, each required check as a chip, each reviewer's verdict as a chip.
   const changeSummary = (change) => {
     if (!('value' in change)) return chip('Change unknown', 'bad')
@@ -1193,7 +1208,8 @@ export const APP_JS = `'use strict'
       clicked.textContent = 'Recording…'
       const key = 'review-' + r.taskId
       try {
-        const { task, decision } = await api('reviews/' + encodeURIComponent(r.taskId) + '/decide', { verdict, subject: r.subject, note: (notes.get(key) || '').trim() })
+        const notRun = verdict === 'accept' ? checksNotRunOf(r) : {}
+        const { task, decision } = await api('reviews/' + encodeURIComponent(r.taskId) + '/decide', { verdict, subject: r.subject, note: (notes.get(key) || '').trim(), ...(Object.keys(notRun).length ? { checksNotRun: notRun } : {}) })
         notes.delete(key)
         report(true, (verdict === 'accept' ? 'Accepted: ' : 'Sent back: ') + r.title, ['Recorded as your acceptance decision ' + decision + '. The task is now ' + task.state + (verdict === 'accept' ? '; tasks that depend on it become ready on the board\\'s next sweep. When its result is a run\\'s worktree, the system commits it on the run\\'s branch and asks you here to merge it: see it under Accepted, on their way in.' : '; it goes back for another attempt if it has one left.')])
       } catch (error) {
@@ -1221,6 +1237,7 @@ export const APP_JS = `'use strict'
         evidence && evidence.error ? evidenceView(evidence) : null,
         evidenceRead ? changeWarning(evidence.change, r.run && r.run.runId) : null,
         pendingWarning(r),
+        notRunInputs(r),
         unrunWarning(r),
         el('div', { class: 'actions' }, yes, yesDoes, no, noDoes),
         cardFold(key,

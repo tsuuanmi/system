@@ -110,6 +110,23 @@ function verdictOf(value: unknown, note: string | undefined): Verdict | string {
   return { requestId, subject, verdict, ...(own ? { note: own } : {}) }
 }
 
+/**
+ * The command checks an acceptance names as not run, each with why (T293: only the operator's may), as
+ * the page sent them: check (tests, typecheck, lint) → a note of 1 to 500 characters. Undefined when
+ * none is named; a string saying why when it is malformed (the call is refused, nothing decided).
+ */
+function checksNotRunOf(value: unknown): Record<string, string> | undefined | string {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) return 'checksNotRun must name each check not run (tests, typecheck, lint) with why'
+  const named: Record<string, string> = {}
+  for (const [check, note] of Object.entries(value)) {
+    if (!['tests', 'typecheck', 'lint'].includes(check)) return `checksNotRun names ${check}, not a command check (tests, typecheck, lint)`
+    if (typeof note !== 'string' || !note.trim() || note.trim().length > 500) return `checksNotRun.${check} must say why it did not run, in 1 to 500 characters`
+    named[check] = note.trim()
+  }
+  return Object.keys(named).length ? named : undefined
+}
+
 /** A subject as the page sent it back, or undefined when it is not one. */
 function subjectOf(subject: unknown): Subject | undefined {
   if (!isRecord(subject) || !SUBJECT_TYPES.includes(subject.type as Subject['type']) || typeof subject.ref !== 'string' || !subject.ref || subject.ref.length > 512
@@ -536,6 +553,10 @@ export function apply(ctx: Context, config: Config = {}): void {
       const subject = subjectOf(body.subject)
       if (!subject) return json(res, 400, { error: 'subject must be the exact subject of the result the page showed' })
       const note = noteOf(body.note)
+      // Only the operator accepts past a required check that did not run, naming each with why (T293); a lead never does.
+      const checksNotRun = checksNotRunOf(body.checksNotRun)
+      if (typeof checksNotRun === 'string') return json(res, 400, { error: checksNotRun })
+      if (checksNotRun && (lead !== undefined || body.verdict !== 'accept')) return json(res, 400, { error: 'only the operator\'s acceptance names checks not run; nothing was decided' })
       const task = await board.task(taskId)
       if (!task) return json(res, 404, { error: `unknown task ${taskId}` })
       if (task.state !== 'review' || !task.result) return json(res, 409, { error: `task ${taskId} is ${task.state}, not in review; nothing was decided` })
@@ -567,7 +588,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         // The operator's decider is version 2 from the lead principal on: a record at version 1 is from before it, when the lead used the operator's token.
         decider: lead !== undefined ? { type: 'client', id: leadId(lead), version: '1' } : { type: 'operator', id: 'operator.review', version: '2' },
         // The facts System recorded of the result, carried over whole, so the board judges a lead's acceptance on its checks and risk tier (ADR-0076).
-        outcome: { option, detail: { taskId, subject: task.result.subject, ...(recorded ? { ...recorded.facts, acceptance: recorded.ref } : {}) } },
+        outcome: { option, detail: { taskId, subject: task.result.subject, ...(recorded ? { ...recorded.facts, acceptance: recorded.ref } : {}), ...(checksNotRun ? { checksNotRun } : {}) } },
         ...(note ? { rationale: note } : {}),
         deterministic: false,
       }, { producer: lead !== undefined ? { type: 'system', ref: leadId(lead) } : { type: 'operator', ref: 'operator' } }).id as ArtifactRef

@@ -321,7 +321,7 @@ describe('a light change (ADR-0071): its validation step is skipped once its req
     const { ctx, holder, workers, task } = await boot()
     holder.files = ['docs/a.md', 'docs/b.md']
     const { taskId, runId } = await task()
-    expect(await settled(ctx, taskId)).toMatchObject({ state: 'done' })
+    expect(await settled(ctx, taskId)).toMatchObject({ state: 'review', waiting: { reason: 'landing' } })
     expect(workers.started.some((s) => s.prompt.includes('Validate it'))).toBe(false)
     const view = ctx.workflow.get(runId)!
     expect(view.nodes.find((n) => n.nodeId === 'validate')?.state).toBe('RETIRED')
@@ -348,7 +348,7 @@ describe('a light change (ADR-0071): its validation step is skipped once its req
     const { ctx, holder, workers, task } = await boot()
     holder.files = ['src/a.c']
     const { taskId, runId } = await task()
-    expect(await settled(ctx, taskId)).toMatchObject({ state: 'done' })
+    expect(await settled(ctx, taskId)).toMatchObject({ state: 'review', waiting: { reason: 'landing' } })
     expect(workers.started.some((s) => s.prompt.includes('Validate it'))).toBe(true)
     expect(decisionsOf(ctx, runId, 'workflow.risk-skip')).toEqual([])
     expect(acceptanceOf(ctx, runId).outcome.detail['risk']).toMatchObject({ tier: 'normal' })
@@ -485,7 +485,7 @@ it('is off with no path map in the policy: no tier is decided, and the process i
   const { ctx, holder, workers, task } = await boot({ map: null })
   holder.files = ['src/gate/policy.ts']
   const { taskId, runId } = await task()
-  expect(await settled(ctx, taskId)).toMatchObject({ state: 'done' })
+  expect(await settled(ctx, taskId)).toMatchObject({ state: 'review', waiting: { reason: 'landing' } })
   expect(workers.started.some((s) => s.prompt.includes('Validate it'))).toBe(true)
   expect(decisionsOf(ctx, runId, 'workflow.risk-tier')).toEqual([])
   expect(acceptanceOf(ctx, runId).outcome.detail).not.toHaveProperty('risk')

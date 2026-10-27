@@ -27,6 +27,7 @@ import StoreResources from '@tsuuanmi/system-resources'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
+import type { CheckStep } from '@tsuuanmi/system-workers-core'
 import Workflow, { type RunView } from '@tsuuanmi/system-workflow'
 import { vi } from 'vitest'
 import * as SoftwareDevelopment from '../src/index.ts'
@@ -103,6 +104,61 @@ export interface Script {
   guides?: Record<string, string>
   /** Seconds a check may print nothing before it is reported as stalled (the setup's `checkStallSeconds`, T235). */
   checkStallSeconds?: number
+  /**
+   * With no `checks`, what the pilot's scripted check source answers for each check (default passed,
+   * every check): it holds no Worker, answers the checks of every run's worktree first, and records a
+   * `check-run@1.0`, as the agents source does, so acceptances bind recorded checks without bubblewrap.
+   */
+  checked?: Partial<Record<CheckName, CheckOutcome>>
+}
+
+type CheckName = 'tests' | 'typecheck' | 'lint'
+type CheckOutcome = 'passed' | 'failed' | 'error'
+
+/**
+ * The pilot's scripted check source (with no `checks` configured): every check step it was asked, what
+ * it answers, and `hold()`, which keeps every check waiting until the function it returns releases them,
+ * so a test can change the base before the run's acceptance.
+ */
+export class PilotChecks {
+  readonly steps: CheckStep[] = []
+  outcomes: Partial<Record<CheckName, CheckOutcome>>
+  private held: Promise<void> | undefined
+  constructor(outcomes: Partial<Record<CheckName, CheckOutcome>> = {}) {
+    this.outcomes = outcomes
+  }
+
+  hold(): () => void {
+    let release!: () => void
+    this.held = new Promise<void>((resolve) => { release = resolve })
+    return () => {
+      this.held = undefined
+      release()
+    }
+  }
+
+  plugin(): Plugin {
+    return { name: 'pilot-checks', inject: ['workers', 'artifacts'], apply: (c: Context) => c.workers.register({
+      name: 'pilot-checks', describe: async () => [],
+      start: () => { throw new Error('the pilot\'s check source runs no Worker') },
+      get: () => undefined, wait: () => Promise.reject(new Error('the pilot\'s check source runs no Worker')),
+      check: async (step) => {
+        this.steps.push(step)
+        await this.held
+        const results = step.checks.map((check) => {
+          const outcome = this.outcomes[check as CheckName] ?? 'passed'
+          return outcome === 'error'
+            ? { check, outcome, reason: `no command for the ${check} check is configured` }
+            : { check, outcome, argv: ['node', `${check}.mjs`], exitCode: outcome === 'passed' ? 0 : 1, reason: `exited ${outcome === 'passed' ? 0 : 1}` }
+        })
+        const evidence = c.artifacts.put({
+          kind: 'evidence', bodySchema: 'check-run@1.0', classification: step.classification, producer: { type: 'system', ref: 'pilot-checks' }, runId: step.runId,
+          body: { schema: 'check-run@1.0', runId: step.runId, repository: step.workspace, workspace: step.workspace, subject: { type: 'git-head', ...step.subject }, setup: `sha256:${'5'.repeat(64)}`, checks: results },
+        }).id
+        return { outcome: 'checked' as const, results: results.map(({ argv: _argv, ...r }) => r), evidence }
+      },
+    }) } as Plugin
+  }
 }
 
 /**
@@ -249,6 +305,8 @@ export interface Pilot {
   repo: string
   head: string
   git: (dir: string, ...args: string[]) => string
+  /** The scripted check source, when the pilot configures no `checks`. */
+  checker?: PilotChecks
   dispose: () => Promise<void>
 }
 
@@ -279,12 +337,15 @@ export async function bootPilot(script: Script = {}, extra: Plugin[] = []): Prom
     ? Object.entries(script.writers).map(([id, kinds]) => worker(id, 'workspace-write', 'standard', kinds))
     : [worker('developer', 'workspace-write', 'standard')]
   const ctx = new Context()
+  const checker = script.checks ? undefined : new PilotChecks(script.checked)
   const fibers: Fiber[] = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
     // With checks, the operator lists the setup's command and each check's in the studio policy, so each runs unasked.
     ctx.plugin(StoreApprovals, { policies: [script.checks ? { ...POLICY, commands: [...POLICY.commands!, SETUP_COMMAND, ...Object.values(script.checks)] } : POLICY], sweepSeconds: 3600 }),
     ctx.plugin(StoreResources, { pools: [{ pool: POOL, account: 'plan', kind: 'programmatic', unknown: 'available', windows: [{ id: 'five-hour', kind: 'rolling', seconds: 18_000 }] }] }),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}), ctx.plugin(AgentRuntimeRegistry),
+    // With no checks configured, the scripted check source answers every run's checks, registered first so it is asked first.
+    ...(checker ? [ctx.plugin(checker.plugin())] : []),
     ctx.plugin(AgentWorkers, {
       workers: [...writers, worker('reviewer', 'read-only', 'standard'), worker('digester', 'read-only', 'economy')], worktreeRoot: join(dir, 'worktrees'),
       ...(script.checks ? { worktreeSetup: [{ repository: repo, commands: [SETUP_COMMAND], checks: script.checks, ...(script.checkStallSeconds ? { checkStallSeconds: script.checkStallSeconds } : {}) }] } : {}),
@@ -303,7 +364,7 @@ export async function bootPilot(script: Script = {}, extra: Plugin[] = []): Prom
     await fibers.at(-1)
   }
   return {
-    ctx, agent, repo, head: git(repo, 'rev-parse', 'HEAD'), git,
+    ctx, agent, repo, head: git(repo, 'rev-parse', 'HEAD'), git, ...(checker ? { checker } : {}),
     dispose: async () => {
       for (const fiber of [...fibers].reverse()) await fiber.dispose()
       rmSync(dir, { recursive: true, force: true })
@@ -364,16 +425,20 @@ export const reported = (ctx: Context, runId: string): Promise<RunView> => until
   return view?.task?.phase === 'reported' ? view : undefined
 }, `run ${runId}'s report to its task`, 60_000)
 
-/** The operator's acceptance of a task's result on `/ui`: an `acceptance` decision by the operator, applied by the board. */
-export async function operatorAccepts(ctx: Context, taskId: string, option: 'accept' | 'reject' = 'accept'): Promise<BoardTask> {
+/**
+ * The operator's acceptance of a task's result on `/ui`: an `acceptance` decision by the operator, applied by the board.
+ * `checksNotRun` names, with why, the required checks it accepts past (T293: only the operator may, check by check).
+ */
+export async function operatorAccepts(ctx: Context, taskId: string, option: 'accept' | 'reject' = 'accept', notRun?: Record<string, string>): Promise<BoardTask> {
   const task = (await ctx.board.task(taskId))!
   const result = task.result!
   const other = option === 'accept' ? 'reject' : 'accept'
+  const checksNotRun = notRun ? { checksNotRun: notRun } : {}
   const decision = ctx.artifacts.recordDecision({
     decisionType: 'acceptance', question: `Does the operator accept the result of board task ${taskId}?`,
     inputs: [...result.artifacts, ...(result.digest ? [result.digest] : [])],
     candidates: [{ option, selected: true, reasons: [`the operator ${option}s it`] }, { option: other, selected: false, reasons: [`not ${other}: the operator chose ${option}`] }],
-    decider: { type: 'operator', id: 'operator.review', version: '1' }, outcome: { option, detail: { taskId, subject: result.subject } }, deterministic: false,
+    decider: { type: 'operator', id: 'operator.review', version: '1' }, outcome: { option, detail: { taskId, subject: result.subject, ...checksNotRun } }, deterministic: false,
   }, { producer: { type: 'operator', ref: 'operator' } }).id as ArtifactRef
   return ctx.board.accept(taskId, decision)
 }

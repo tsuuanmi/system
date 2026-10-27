@@ -166,6 +166,18 @@ What constrains a fix:
   and a flaky check's failure stands for that subject. A check interrupted by a crash or killed by
   a stop stays an `error` for that subject; the operator decides, or the next attempt's new subject
   runs it.
+- From T283 and T311 (T293, 2026-10-27): a board task with no write subject whose writing step
+  changed the run's worktree has its result on that tree whatever its last step is, and its checks
+  run there; a step whose answer names no worktree (a review member's) no longer hides the tree
+  from them. The checks bind before every acceptance of such a writing result, the lead's and the
+  operator's too: the board takes the command checks the run recorded on the exact tree, never the
+  accepting decision's own, and refuses an acceptance over a recorded failure or while a required
+  check is pending. The run's owner runs a held result's pending checks on its exact tree itself,
+  once per subject, from the landing's watch, and applies its acceptance again with them (a failure
+  sends the work back). Only the operator accepts past a check that did not run, naming it with a
+  note, on a decision of its own ([board](../../design/board.md#required-checks-bind-at-acceptance)).
+  A hold after a lapse or a re-opening counts the checks the run recorded. "Changed" is against the
+  commit the worktree forked from, so a writing step that committed its change binds the tree too.
 
 ## Rejected alternatives
 

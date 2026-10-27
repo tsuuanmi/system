@@ -1162,8 +1162,10 @@ export const workflowSuite = defineSuite<Boot>({
         const worktree = workers.worktrees.get(run.runId)!
         expect(git(worktree, 'status', '--porcelain')).toBe(' M kernel.c\n')
         expect(git(worktree, 'ls-files', '.system')).toBe('')
-        expect((await reported(ctx, run.runId)).task!.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+        // Accepted on its worktree's tree, it waits for its landing: done once that lands it (T293).
+        expect((await reported(ctx, run.runId)).task!.outcome).toMatchObject({ status: 'accepted', state: 'review' })
         const board = (await ctx.board.task(task.taskId))!
+        expect(board.waiting?.reason).toBe('landing')
         const { subject, diff } = captureGitSubject(worktree)!
         expect(board.result!.subject).toEqual(subject)
         expect(diff).not.toContain('.system')

@@ -307,6 +307,18 @@ export interface TaskLanding {
   reason?: string
   /** The landing's own `gate` decisions (rule `workflow.landing`), in order. */
   decisions?: ArtifactRef[]
+  /**
+   * How the landing ended for the board (T293): `merged`, or `not-needed` when the accepted tree holds no
+   * change; the board's landing wait takes it (`Board.landed`), and only then is the task done. `told`
+   * once the board took it, or no longer waits on this landing.
+   */
+  tell?: 'merged' | 'not-needed'
+  told?: boolean
+  /**
+   * The required checks a result held for the operator left pending, run on its exact tree by the
+   * landing's watch (T293), once per subject: the version they ran on, and what they came to.
+   */
+  held?: { version: string; outcome: 'checked' | 'not-run'; reason?: string; acceptance?: ArtifactRef }
   /** When it last changed or was looked at. */
   at: string
 }
