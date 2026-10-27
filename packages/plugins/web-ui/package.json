@@ -17,7 +17,7 @@
     "plugin-manifest.json"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json && tsc -p client/tsconfig.json && node -e \"for (const f of ['index.html', 'app.css']) require('node:fs').copyFileSync('client/' + f, 'lib/client/' + f)\""
   },
   "dependencies": {
     "@tsuuanmi/system-approvals-core": "workspace:*",

@@ -25,6 +25,7 @@ import { expect, onTestFinished } from 'vitest'
 import { parse } from 'yaml'
 import { CONFIG, readyTask, ScriptedWorkers, TEMPLATES } from '../../workflow/conformance/workflow.ts'
 import * as WebUi from '../src/index.ts'
+import { builtClient } from './client-build.ts'
 
 /** The `approvals` row's policies, as the bundle ships them (`cordis.patch.yml`). */
 export function bundlePolicies(): AutonomyPolicy[] {
@@ -76,7 +77,7 @@ export async function boot(options: { dir?: string; approvals?: Partial<Approval
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}),
     ctx.plugin({ name: 'scripted-workers', inject: ['workers', 'artifacts'], apply: (c: Context) => void c.workers.register(workers.source(c)) }),
     ctx.plugin(Workflow, { ...CONFIG, templates: TEMPLATES }),
-    ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir }),
+    ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir, clientDir: builtClient() }),
     // A resource ledger with these pools, when asked: dispatch chooses only Workers whose account's windows it reads.
     ...(options.pools ? [ctx.plugin(StoreResources, { pools: options.pools })] : []),
   ]

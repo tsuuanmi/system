@@ -25,6 +25,7 @@ import Llm from '@deepseek-ai/dsh-llm'
 import { vi } from 'vitest'
 import { ScriptedWorkers, verifierReply } from '../../../plugins/workflow/conformance/workflow.ts'
 import { worker } from '../../../workers-core/conformance/workers.ts'
+import { builtClient } from '../../../plugins/web-ui/tests/client-build.ts'
 
 const BUNDLE = fileURLToPath(new URL('../..', import.meta.url))
 const ROOT = fileURLToPath(new URL('../../../..', import.meta.url))
@@ -172,6 +173,8 @@ export async function bootBundle(off: string | undefined, on: string[] = []): Pr
     'mcp-server': { tokenDir: dir, discoveryFile: join(dir, 'mcp.json'), minFreeBytes: 0, availabilitySeconds: 0 },
     approvals: { sweepSeconds: 3600 },
     board: { sweepSeconds: 0 },
+    // The web UI reads its compiled client from a directory; the package's `lib/` is not built here, so the test builds one of its own.
+    'web-ui': { clientDir: builtClient() },
   }
   const fibers: Fiber[] = [ctx.plugin(Loader)]
   for (const [i, row] of rows.entries()) if (!row.disabled) await mount(entries[i]!, row)

@@ -14,8 +14,11 @@
  * - the API accepts a loopback host only, no foreign Origin, and the operator token in constant time.
  * @module @tsuuanmi/system-web-ui
  */
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
@@ -26,22 +29,44 @@ import { type ArtifactRef, BoardError, type BoardTask, type Project, type TaskSt
 import { dshHome, isRecord, registerSecretPath } from '@tsuuanmi/system-libs'
 import type { TaskLanding, TemplateStep } from '@tsuuanmi/system-workflow'
 import type { CapabilityDescriptor } from '@tsuuanmi/system-workers-core'
-import { APP_CSS, APP_JS, PAGE } from './assets.ts'
 
 export interface Config {
   /** Directory of the scope token files (default `<DSH_HOME>/system`); the UI takes `operator.token` (ADR-0023). */
   tokenDir?: string
   allowedHosts?: string[]
+  /** Directory of the compiled client: `index.html`, `app.css`, and `app.js` (default `lib/client/` of this package, which `pnpm build` writes). */
+  clientDir?: string
 }
 
 export const name = 'web-ui'
 export const inject = ['webServer', 'workflow']
 export const Config: z<Config> = z.object({
   tokenDir: z.string().description('Directory of the scope token files (default <DSH_HOME>/system); the UI takes operator.token'),
+  clientDir: z.string().description('Directory of the compiled client: index.html, app.css, app.js (default lib/client/ of the package)'),
   allowedHosts: z.array(z.string()).default([...LOOPBACK_HOSTS]).description('Host names the UI answers'),
 }) as unknown as z<Config>
 
-const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+/** `lib/client/` of this package, from `src/` or from `lib/` alike. */
+const DEFAULT_CLIENT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'client')
+/** The files the page is made of, by the path under `/ui/` that serves each, with its content type. */
+const CLIENT_FILES: ReadonlyArray<readonly [path: string, file: string, type: string]> = [
+  ['', 'index.html', 'text/html; charset=utf-8'],
+  ['app.js', 'app.js', 'text/javascript; charset=utf-8'],
+  ['app.css', 'app.css', 'text/css; charset=utf-8'],
+]
+
+/** The client's files as bytes with their sha256 content hash; a missing file is refused at start (INV-2), never served empty. */
+function clientAssets(dir: string): ReadonlyMap<string, { body: Buffer; type: string; etag: string }> {
+  const assets = new Map<string, { body: Buffer; type: string; etag: string }>()
+  for (const [path, file, type] of CLIENT_FILES) {
+    let body: Buffer
+    try { body = readFileSync(join(dir, file)) } catch (error) { throw new Error(`the web UI's client file ${file} is not in ${dir} (run the package's build): ${(error as Error).message}`) }
+    assets.set(path, { body, type, etag: `"sha256-${createHash('sha256').update(body).digest('hex')}"` })
+  }
+  return assets
+}
+
+const CSP ="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 const MAX_BODY = 16_384
 /** A proposed policy record is larger than a verdict: up to 64 rules and 200 commands of 200 characters. */
 const MAX_POLICY_BODY = 131_072
@@ -377,12 +402,14 @@ export function apply(ctx: Context, config: Config = {}): void {
   /** Who decides what the caller of a request decides: a decision as a decision artifact's body names it (ADR-0076). */
   const decider = (ref: string): Decided | undefined => decidedBy(ctx.get('artifacts')?.get(ref as ArtifactRef)?.body)
 
-  const send = (res: ServerResponse, status: number, body: string, type: string): void => {
+  const send = (res: ServerResponse, status: number, body: string | Buffer, type: string, etag?: string): void => {
     res.writeHead(status, {
       'content-type': type, 'cache-control': 'no-store', 'content-security-policy': CSP,
-      'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',
+      'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', ...(etag ? { etag } : {}),
     }).end(body)
   }
+  // The page's own files, read once from the compiled client (`pnpm build`), each served with its content hash as its ETag.
+  const assets = clientAssets(config.clientDir ?? DEFAULT_CLIENT_DIR)
   const json = (res: ServerResponse, status: number, value: unknown): void => send(res, status, JSON.stringify(value), 'application/json; charset=utf-8')
 
   /**
@@ -1123,9 +1150,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     const path = url.pathname.replace(/^\/ui\/?/, '')
     if (path.startsWith('api/')) return api(req, res, path.slice(4))
     if (req.method !== 'GET') return send(res, 405, 'method not allowed', 'text/plain')
-    if (path === '' ) return send(res, 200, PAGE, 'text/html; charset=utf-8')
-    if (path === 'app.js') return send(res, 200, APP_JS, 'text/javascript; charset=utf-8')
-    if (path === 'app.css') return send(res, 200, APP_CSS, 'text/css; charset=utf-8')
+    const asset = assets.get(path)
+    if (asset) return send(res, 200, asset.body, asset.type, asset.etag)
     return send(res, 404, 'not found', 'text/plain')
   }
 

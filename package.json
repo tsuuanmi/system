@@ -19,7 +19,7 @@
     "gen:deps": "node --import tsx scripts/check-deps.ts --gen",
     "audit:deps": "\"$npm_execpath\" audit --prod --audit-level high",
     "lint": "oxlint scripts packages",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p packages/plugins/web-ui/client/tsconfig.json",
     "test": "vitest run",
     "test:group": "node --import tsx scripts/test-groups.ts group",
     "test:affected": "node --import tsx scripts/test-groups.ts affected",

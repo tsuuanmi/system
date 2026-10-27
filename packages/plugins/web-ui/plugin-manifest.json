@@ -69,6 +69,10 @@
       "sensitive": false
     },
     {
+      "key": "clientDir",
+      "sensitive": false
+    },
+    {
       "key": "allowedHosts",
       "sensitive": false
     }

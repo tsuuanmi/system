@@ -1,12 +1,19 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { type Browser, chromium, type Page } from 'patchright-core'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
-import { APP_CSS, APP_JS, PAGE } from '../src/assets.ts'
 import { headlessIt, headlessLaunchOptions } from '../../browser-patchright/tests/support.ts'
 import { activeProject, readyTask } from '../../workflow/conformance/workflow.ts'
 import { BEFORE_WORDS, noteWords, opened, overflow, sectionsWithoutHeading, shoot, wordsInSight } from './glance.ts'
+import { builtClient } from './client-build.ts'
 import { boot, OPERATOR, reviewed } from './store-backed.ts'
 import { descriptionOf } from './wording.ts'
+
+// The page's three files as the server serves them: the shell and the styles as written, the script as the build compiles it.
+const PAGE = readFileSync(join(builtClient(), 'index.html'), 'utf8')
+const APP_CSS = readFileSync(join(builtClient(), 'app.css'), 'utf8')
+const APP_JS = readFileSync(join(builtClient(), 'app.js'), 'utf8')
 
 // The page at a glance (T239, docs/design/web-ui.md), over the store-backed board, queue, and engine: the Board's first
 // screen holds at most half the words it held before; every section has a heading; nothing scrolls sideways on a 360 px
