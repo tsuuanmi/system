@@ -1868,7 +1868,9 @@ export class Worktrees {
     if (pending) return refuse('moved', `${row.path} holds uncommitted changes (${pending.split('\n').slice(0, 5).map((l) => l.slice(3)).join(', ')}), so its branch is not rebased`)
     const base = await this.baseOf(repository)
     if ('problem' in base) return refuse('base-moved', base.problem)
-    if (base.branch !== step.base.branch || base.sha !== step.base.sha) return refuse('base-moved', `${repository} has ${base.branch} at ${base.sha} now, not ${step.base.branch} at ${step.base.sha}`)
+    // A stacked rebase is onto the commit before it in its stack, which holds the base branch's head (the landing queue's batch).
+    const onBase = base.sha === step.base.sha || (step.stacked === true && await this.contains(repository, step.base.sha, base.sha))
+    if (base.branch !== step.base.branch || !onBase) return refuse('base-moved', `${repository} has ${base.branch} at ${base.sha} now, not ${step.stacked ? `under ${step.base.sha} on ` : ''}${step.base.branch} at ${step.base.sha}`)
     // Already on top of the base: nothing to rebase.
     if (await this.contains(repository, step.head, step.base.sha)) return this.rebasedAnswer(row, step, inside, true)
     // A replay mark left by an earlier rebase of this head is not this one's: gone before the branch moves.

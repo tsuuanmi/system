@@ -460,6 +460,16 @@ describe('system usage and explain output', () => {
     ])
   })
 
+  it('prints where a run\'s accepted result stands in its target\'s landing queue: its place, who holds the target, its stack (PROP-0016 I3)', () => {
+    const base = { runId: 'run_1', template: 'develop', status: 'completed', specHash: 'sha256:ab', nodes: [] }
+    expect(formatExplanation({ ...base, landing: { key: '/repo#dev', state: 'queued', position: 2, length: 3, holder: { runId: 'run_0', taskId: 'T1' }, batch: { size: 3, limit: 3, index: 2 } } })).toEqual([
+      'run_1  develop  completed  spec sha256:ab',
+      'landing queue  /repo#dev  queued  position 2 of 3  behind task T1 (run run_0), which holds the target',
+      '  stack  result 2 of 3  (batch size 3)',
+    ])
+    expect(formatExplanation({ ...base, landing: { key: '/repo#dev', state: 'asked', position: 1, length: 1 } })[1]).toBe('landing queue  /repo#dev  asked  position 1 of 1  holds the target')
+  })
+
   it('asks to free a run only on the operator\'s word that its agent is gone, and prints what was freed and each worktree (PROP-0013)', () => {
     expect(() => parseFree(['arun_00000000000000aa'])).toThrow(/your word that its agent is gone.*add --agent-gone/)
     expect(() => parseFree(['--agent-gone'])).toThrow(/name the agent run/)

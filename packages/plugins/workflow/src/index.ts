@@ -47,7 +47,7 @@ export { adviceProblem, adviseInShadow, advisorStop, ANSWER_SCHEMA, brierScores,
 export type { Advice, AdviceDetail, Advisor, AdvisorCandidate, AdvisorConfig, AdvisorCounts, AdvisorFeatures, AdvisorSettings, AdvisorSignal, CandidateAdvice, OutcomeData, Question, QuestionScore } from './advisor.ts'
 export type { HoldView, StepHold, StepInFlight } from './hold.ts'
 export type { DispatchPass, DispatchPassView, DispatchPause, DispatchSettings, DispatchStarted, DispatchStatus, DispatchWindow } from './dispatch.ts'
-export type { Config, DispatchConfig, ScheduledReviewConfig, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartedBy, StartInput, TaskCarry, TaskClaim, TaskDispatch, TaskLanding, TaskOutcome, TaskRebase, TaskStartInput, TaskView, TemplateStep, UsageDraws, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
+export type { Config, DispatchConfig, ScheduledReviewConfig, ExplainedDecision, Explanation, LandingQueueView, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartedBy, StartInput, TaskCarry, TaskClaim, TaskDispatch, TaskLanding, TaskOutcome, TaskQueue, TaskRebase, TaskStartInput, TaskView, TemplateStep, UsageDraws, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -151,6 +151,7 @@ export class Workflow extends Service {
     tieTimeoutHours: z.number().min(0.0001).max(720).default(24).description('Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9)'),
     gateTimeoutHours: z.number().min(0.0001).max(720).default(24).description('Hours a plan\'s gate waits for the operator\'s approval, then closes and fails the run, by rule (INV-9); continue the run to wait again'),
     approvalPollSeconds: z.natural().min(1).max(300).default(15).description('Seconds between the engine\'s reads of the approval queue: a remediation fix\'s request while its run waits on it, and the requests a Worker\'s deferred tool calls wait on (INV-9)'),
+    landingBatch: z.natural().min(1).max(8).default(1).description('Accepted results the head of a target branch\'s landing queue lands at once, as a stack rebased in order and checked once (a merge train); a stack that fails is bisected to the failing result, which goes back alone. 1 lands one at a time, no batching'),
     deferredCommandMinutes: z.number().min(0).max(1440).default(10).description('Minutes a board task\'s step waits on the operator for a Worker\'s deferred tool call of class command (from its request\'s creation), then treats that call as denied, for it alone: the request is withdrawn, recorded as a recovery decision deny, and the session continues once, told the call was denied (INV-9); 0 waits until the request expires'),
     maxSessionRuns: z.natural().min(1).max(50).default(5).description('Runs one session may serve when a board task\'s next attempt, or the next task of a chain, resumes the session of the work before it (INV-9); past it, the run starts a fresh session given its brief'),
     tasksFile: z.object({

@@ -5,6 +5,7 @@ import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import { waitsOnCall } from './continuations.ts'
 import type { Engine } from './engine.ts'
 import { handbookOf } from './handbook.ts'
+import { queueView } from './landing-queue.ts'
 import { blocks, bySeverity, countOf, type ResolvedNode } from './spec.ts'
 import { isSameFamily, waitingUntil } from './recovery.ts'
 import { latestAssessment } from './review.ts'
@@ -186,12 +187,16 @@ export function explain(e: Engine, runId: string): Explanation | undefined {
   const risk = riskOf(e, runId)
   // Its research Workers' web calls (T262), from the web access rule's decisions filed under it.
   const web = webCallsOf(e, runId)
+  // Where its accepted result stands in its target's landing queue (PROP-0016 I3).
+  const taskRow = e.tasks.row(runId)
+  const landing = taskRow ? queueView(e, taskRow) : undefined
   return {
     runId, template: run.template, status: run.status, specHash: run.spec_hash as ContentId,
     ...(own.length ? { decisions: own } : {}),
     ...(risk ? { risk } : {}),
     ...(stalled.length ? { stalledChecks: stalled } : {}),
     ...(web ? { webCalls: web } : {}),
+    ...(landing ? { landing } : {}),
     nodes: e.nodeRows(runId).map((node) => {
       const record = JSON.parse(node.record) as NodeRecord
       const kept = node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : []

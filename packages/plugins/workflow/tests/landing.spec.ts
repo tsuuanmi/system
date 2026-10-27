@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -35,7 +36,8 @@ const policy = (merge: Mode, requires: Check[] = []): AutonomyPolicy => ({
 /** Scripted Workers whose results name a git working tree and the subject it is at, as an agent's do. */
 class TreeWorkers extends ScriptedWorkers {
   private readonly results = new Map<string, ArtifactRef>()
-  constructor(private readonly tree: string, private readonly artifacts: () => Context['artifacts']) {
+  /** `tree`: the working tree every result names, or the one a result's text (its run's input) picks. */
+  constructor(private readonly tree: string | ((text: string) => string), private readonly artifacts: () => Context['artifacts']) {
     super()
   }
 
@@ -44,9 +46,10 @@ class TreeWorkers extends ScriptedWorkers {
     if (!execution?.result) return execution
     if (!this.results.has(id)) {
       const text = (this.artifacts().get(execution.result)!.body as { text: string }).text
+      const tree = typeof this.tree === 'string' ? this.tree : this.tree(text)
       this.results.set(id, this.artifacts().put({
         kind: 'report', bodySchema: 'agent-result@1.1', classification: 'public', producer: { type: 'worker', ref: 'w:standard' },
-        body: { schema: 'agent-result@1.1', worker: 'w:standard', runtime: 'scripted', runId: 'agent-run', promptHash: sha256(text), sandbox: 'workspace-write', text, workspace: this.tree, subject: captureGitSubject(this.tree)!.subject },
+        body: { schema: 'agent-result@1.1', worker: 'w:standard', runtime: 'scripted', runId: 'agent-run', promptHash: sha256(text), sandbox: 'workspace-write', text, workspace: tree, subject: captureGitSubject(tree)!.subject },
       }).id as ArtifactRef)
     }
     return { ...execution, result: this.results.get(id)! }
@@ -119,11 +122,12 @@ const conflicted = (step: RebaseStep): Landed => ({
   moved: ['1234567 dev: a change the result must keep'],
 })
 
-function tree(): string {
+/** A git working tree with one uncommitted change; `salt` makes its commits its own (a repository of its own, as a run's worktree is). */
+function tree(salt = ''): string {
   const dir = mkdtempSync(join(tmpdir(), 'system-workflow-landing-'))
   const git = (...args: string[]): void => void execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { stdio: 'ignore' })
   git('init', '-q')
-  writeFileSync(join(dir, 'a.c'), 'int a;\n')
+  writeFileSync(join(dir, 'a.c'), `int a;${salt ? ` /* ${salt} */` : ''}\n`)
   git('add', '.')
   git('commit', '-q', '-m', 'init')
   writeFileSync(join(dir, 'a.c'), 'int a = 1;\n')
@@ -171,12 +175,14 @@ class FirstLanding extends Landing {
 }
 
 /** The landing provider the composition mounts, as the bundle's `landing-local` row does; `swap` puts another in its place. */
-async function boot(merge: Mode, lander: Lander | undefined, requires: Check[] = [], template = 'solo', landingProvider: Plugin = LocalLanding) {
+async function boot(merge: Mode, lander: Lander | undefined, requires: Check[] = [], template = 'solo', landingProvider: Plugin = LocalLanding, many: { runs: number; batch?: number } = { runs: 1 }) {
   const dir = mkdtempSync(join(tmpdir(), 'system-workflow-landing-db-'))
-  const workspace = tree()
+  // With several runs, each has a working tree of its own, picked by the marker its input carries.
+  const workspaces = Array.from({ length: many.runs }, (_, k) => tree(many.runs > 1 ? `#${k}` : ''))
+  const workspace = workspaces[0]!
   const ctx = new Context()
-  const workers = new TreeWorkers(workspace, () => ctx.artifacts)
-  const config = { ...CONFIG, approvalPollSeconds: 1, templates: LANDING_TEMPLATES }
+  const workers = new TreeWorkers(many.runs > 1 ? (text) => workspaces.find((_, k) => text.includes(`change it #${k}`)) ?? workspace : workspace, () => ctx.artifacts)
+  const config = { ...CONFIG, approvalPollSeconds: 1, templates: LANDING_TEMPLATES, ...(many.batch ? { landingBatch: many.batch } : {}) }
   const fibers: Fiber[] = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}),
@@ -201,9 +207,14 @@ async function boot(merge: Mode, lander: Lander | undefined, requires: Check[] =
   const { subject } = captureGitSubject(workspace)!
   // A read task the engine itself accepts: done once its run reports (no operator review).
   const task = await readyTask(ctx, 'tree', { writes: { type: 'git-head', ref: subject.ref } })
-  const run = await ctx.workflow.start({ template, input: 'change it', classification: 'public', task: { taskId: task.taskId } })
+  const run = await ctx.workflow.start({ template, input: many.runs > 1 ? 'change it #0' : 'change it', classification: 'public', task: { taskId: task.taskId } })
+  const runs = [{ taskId: task.taskId, runId: run.runId }]
+  for (let k = 1; k < many.runs; k++) {
+    const more = await readyTask(ctx, `tree ${k}`, { writes: { type: 'git-head', ref: captureGitSubject(workspaces[k]!)!.subject.ref } })
+    runs.push({ taskId: more.taskId, runId: (await ctx.workflow.start({ template, input: `change it #${k}`, classification: 'public', task: { taskId: more.taskId } })).runId })
+  }
   return {
-    ctx, workers, workspace, subject, taskId: task.taskId, runId: run.runId,
+    ctx, workers, workspace, subject, taskId: task.taskId, runId: run.runId, runs,
     restart: async () => {
       await engine.dispose()
       engine = ctx.plugin(Workflow, config)
@@ -600,5 +611,209 @@ describe('ctx.workflow rebases an accepted result onto its landing target when t
     expect(optionsOf(ctx, returned)).toEqual(['commit', 'rebase', 'return'])
     expect(await merges(ctx)).toEqual([])
     expect(await ctx.board.task(taskId)).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+  })
+})
+
+/** A commit id of a run's own, as a source would name its commits (40 hex digits). */
+const idOf = (runId: string, what: string): string => createHash('sha1').update(`${runId}:${what}`).digest('hex')
+
+/**
+ * A source over a target that moves with each merge, as a real one does: it answers a commit with the
+ * target as it is now, refuses a rebase or a merge on a target that is not where the step says, and
+ * names each result's own commits.
+ */
+class MovingTarget {
+  tip = BASE.sha
+  readonly merged: string[] = []
+  readonly rebases: Array<{ runId: string; onto: string; stacked: boolean }> = []
+  /** The tree versions whose checks fail; trees not named pass. */
+  failing = new Set<string>()
+  /** What each commit and rebase says it changed (`git diff --stat`). */
+  stat = ' a.c | 3 ++-'
+
+  constructor(lander: Lander) {
+    lander.fork = FORK
+    lander.answer = (step) => this.answer(step)
+    lander.checkAnswer = (step) => {
+      const fails = this.failing.has(step.subject.version)
+      return { outcome: 'checked', results: step.checks.map((check) => ({ check, outcome: fails ? 'failed' as const : 'passed' as const, exitCode: fails ? 1 : 0, reason: 'ran', ...(fails ? { failures: [`FAIL a.spec.ts > on ${step.subject.version}`] } : {}) })) }
+    }
+  }
+
+  private answer(step: LandStep): Landed | undefined {
+    const branch = `system/run/${step.runId}`
+    if (step.step === 'commit') {
+      const head = idOf(step.runId, 'head')
+      return { outcome: 'committed', repository: '/repo', branch, head, committed: true, base: { branch: 'main', sha: this.tip }, contained: false, stat: this.stat, subject: { ref: head, version: 'v-committed' }, fork: FORK }
+    }
+    if (step.step === 'rebase') {
+      if (step.phase === 'abandon') return { outcome: 'abandoned', repository: '/repo', branch, head: step.head, left: [] }
+      // A stack's rebase is onto the commit before it, which holds the target's tip; any other is onto the tip itself.
+      if (!step.stacked && step.base.sha !== this.tip) return { outcome: 'refused', cause: 'base-moved', reason: `main is at ${this.tip} now, not at ${step.base.sha}` }
+      this.rebases.push({ runId: step.runId, onto: step.base.sha, stacked: step.stacked === true })
+      const head = idOf(step.runId, `rebased:${step.base.sha}`)
+      return { outcome: 'rebased', repository: '/repo', branch, head, from: step.head, base: step.base, subject: { ref: head, version: `v-${step.runId}-${step.stacked ? 'stack' : 'solo'}` }, stat: this.stat, already: false }
+    }
+    if (step.step === 'merge') {
+      if (step.base.sha !== this.tip) return { outcome: 'refused', cause: 'base-moved', reason: `main is at ${this.tip} now, not at ${step.base.sha}` }
+      this.merged.push(step.runId)
+      this.tip = idOf(step.runId, 'merge')
+      return { outcome: 'merged', repository: '/repo', branch, head: step.head, base: step.base, commit: this.tip, already: false }
+    }
+    return undefined
+  }
+}
+
+/** Approve the merge request the run's landing asks, once it asks. */
+async function approve(ctx: Context, runId: string): Promise<void> {
+  const asked = await until(ctx, runId, 'asked')
+  const request = (await merges(ctx)).find((r) => r.requestId === asked.requestId)!
+  await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'approved' }])
+}
+
+describe('ctx.workflow keeps one landing queue per target branch (PROP-0016 I3)', () => {
+  it('lands three results accepted together one at a time, in the order they entered the queue, each rebased and checked on the tree it merges into, none refused for a target that moved', async () => {
+    const lander = new Lander()
+    const target = new MovingTarget(lander)
+    const { ctx, runs } = await boot('ask', lander, ['tests'], 'solo', LocalLanding, { runs: 3 })
+    const states = (): string[] => runs.map((r) => landingOf(ctx, r.runId)?.state ?? 'none')
+    // All three are committed and waiting; one holds the target and asks, the others wait: one request at a time.
+    await vi.waitFor(() => expect(states().filter((s) => s === 'asked')).toHaveLength(1), { timeout: 30_000, interval: 25 })
+    await vi.waitFor(() => expect(states().filter((s) => s === 'queued')).toHaveLength(2), { timeout: 30_000, interval: 25 })
+    expect((await merges(ctx)).filter((r) => r.state === 'open')).toHaveLength(1)
+    const order = [...runs].sort((a, b) => landingOf(ctx, a.runId)!.queue!.seq - landingOf(ctx, b.runId)!.queue!.seq)
+    expect(order.map((r) => landingOf(ctx, r.runId)!.queue!.seq)).toEqual([1, 2, 3])
+    expect(landingOf(ctx, order[0]!.runId)!.state).toBe('asked')
+    expect(ctx.workflow.explain(order[2]!.runId)!.landing).toMatchObject({ state: 'queued', position: 3, length: 3, holder: { runId: order[0]!.runId } })
+    for (const [k, run] of order.entries()) {
+      await approve(ctx, run.runId)
+      await until(ctx, run.runId, 'merged')
+      // The next in line is the only one that asks meanwhile.
+      if (k < 2) await vi.waitFor(() => expect(states().filter((s) => s === 'asked')).toHaveLength(1), { timeout: 30_000, interval: 25 })
+    }
+    expect(target.merged).toEqual(order.map((r) => r.runId))
+    // Each was rebased once, onto the target as the one before it left it, and checked there, once at the landing.
+    const tips = [BASE.sha, ...order.slice(0, 2).map((r) => idOf(r.runId, 'merge'))]
+    expect(target.rebases).toEqual(order.map((r, k) => ({ runId: r.runId, onto: tips[k], stacked: false })))
+    for (const run of order) {
+      const landed = landingOf(ctx, run.runId)!
+      expect(lander.checked.filter((c) => c.runId === run.runId && c.scope === 'landing').map((c) => c.subject.version)).toEqual([`v-${run.runId}-solo`])
+      expect(landed).toMatchObject({ state: 'merged', rebase: { count: 0 } })
+      expect(landed.cause).toBeUndefined()
+      expect(optionsOf(ctx, landed)).not.toContain('refuse')
+    }
+    expect(lander.steps.filter((s) => s.step === 'merge').map((s) => s.runId)).toEqual(order.map((r) => r.runId))
+  })
+
+  it('lands a stack of N results at once when N is configured: with N=3 a failing middle result is found and sent back alone while the other two land', async () => {
+    const lander = new Lander()
+    const target = new MovingTarget(lander)
+    const { ctx, runs } = await boot('ask', lander, ['tests'], 'solo', LocalLanding, { runs: 4, batch: 3 })
+    const states = (): string[] => runs.map((r) => landingOf(ctx, r.runId)?.state ?? 'none')
+    await vi.waitFor(() => expect(states().filter((s) => s === 'asked')).toHaveLength(1), { timeout: 30_000, interval: 25 })
+    await vi.waitFor(() => expect(states().filter((s) => s === 'queued')).toHaveLength(3), { timeout: 30_000, interval: 25 })
+    const [first, lead, middle, tip] = [...runs].sort((a, b) => landingOf(ctx, a.runId)!.queue!.seq - landingOf(ctx, b.runId)!.queue!.seq)
+    // The middle result fails its checks, and so does the stack that holds it.
+    target.failing = new Set([`v-${middle!.runId}-stack`, `v-${tip!.runId}-stack`])
+    await approve(ctx, first!.runId)
+    await until(ctx, first!.runId, 'merged')
+
+    // The next three form a stack: the middle one is found failing and goes back alone.
+    const returned = await until(ctx, middle!.runId, 'returned')
+    expect(returned.reason).toMatch(/fails first with result 2 of it .* which pass: it goes back alone/)
+    expect(optionsOf(ctx, returned)).toContain('return')
+    // Its branch was put back when it went.
+    expect(lander.steps.filter((s) => s.runId === middle!.runId).map(stepOf)).toEqual(['commit', 'rebase:start', 'rebase:abandon'])
+    expect(target.rebases.filter((r) => r.runId === middle!.runId)).toEqual([{ runId: middle!.runId, onto: expect.any(String), stacked: true }])
+    expect(await ctx.board.task(runs.find((r) => r.runId === middle!.runId)!.taskId)).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+    // The head lands alone, checked on its own tree, and the batch size is recorded on the decision that formed the stack.
+    const head = await until(ctx, lead!.runId, 'asked')
+    expect(head.queue!.batch).toMatchObject({ runs: [lead!.runId, middle!.runId, tip!.runId], limit: 3 })
+    const queue = (head.decisions ?? []).map((d) => bodyOf(ctx, d)).find((b) => b.outcome.option === 'queue')
+    expect(queue?.outcome.detail).toMatchObject({ step: 'queue', limit: 3, runs: [lead!.runId, middle!.runId, tip!.runId] })
+    await approve(ctx, lead!.runId)
+    await until(ctx, lead!.runId, 'merged')
+    // The last was stacked again from the queue, and lands on the target as the head left it.
+    await approve(ctx, tip!.runId)
+    const last = await until(ctx, tip!.runId, 'merged')
+    expect(target.merged).toEqual([first!.runId, lead!.runId, tip!.runId])
+    expect(lander.steps.filter((s) => s.step === 'merge').map((s) => s.runId)).toEqual([first!.runId, lead!.runId, tip!.runId])
+    // The failing stack was checked once on the tip's tree; the tip then passed alone, on the tree it merged into.
+    expect(lander.checked.filter((c) => c.runId === tip!.runId && c.scope === 'landing').map((c) => c.subject.version)).toEqual([`v-${tip!.runId}-stack`, `v-${tip!.runId}-solo`])
+    expect(target.rebases.filter((r) => r.runId === tip!.runId).map((r) => [r.stacked, r.onto === idOf(lead!.runId, 'merge')])).toEqual([[true, false], [false, true]])
+    expect(last.queue!.batch).toBeUndefined()
+    // The search that found the middle result is a decision of the tip that ran the stack's checks.
+    expect(optionsOf(ctx, last)).toContain('bisect')
+  })
+
+  it('asks one merge for a whole stack on a request that names every task and run it lands, each with its own change; on its approval all land, each recording that request', async () => {
+    const lander = new Lander()
+    const target = new MovingTarget(lander)
+    const { ctx, runs } = await boot('ask', lander, ['tests'], 'solo', LocalLanding, { runs: 4, batch: 3 })
+    const states = (): string[] => runs.map((r) => landingOf(ctx, r.runId)?.state ?? 'none')
+    await vi.waitFor(() => expect(states().filter((s) => s === 'queued')).toHaveLength(3), { timeout: 30_000, interval: 25 })
+    const [first, lead, middle, tip] = [...runs].sort((a, b) => landingOf(ctx, a.runId)!.queue!.seq - landingOf(ctx, b.runId)!.queue!.seq)
+    await approve(ctx, first!.runId)
+    await until(ctx, first!.runId, 'merged')
+
+    // The stack's tip asks; the results under it wait on it, asking nothing.
+    const asked = await until(ctx, tip!.runId, 'asked')
+    expect(asked.queue!.batch!.lands).toEqual([lead!.runId, middle!.runId])
+    const open = (await merges(ctx)).filter((r) => r.state === 'open')
+    expect(open).toHaveLength(1)
+    const [request] = open
+    const titles = await Promise.all([lead, middle, tip].map(async (r) => (await ctx.board.task(r!.taskId))!.title))
+    expect(request!.action.summary).toBe('Merge the accepted results of 3 tasks into main as one stack (each named in the details)')
+    for (const [k, r] of [lead, middle, tip].entries()) expect(request!.action.consequences).toContain(`${k + 1}. "${titles[k]}" task ${r!.taskId}, run ${r!.runId},`)
+    expect(request!.action.consequences).toContain('one merge lands all 3 results of this stack into main')
+
+    await approve(ctx, tip!.runId)
+    const merged = await until(ctx, tip!.runId, 'merged')
+    // One merge, of the tip; it names the results under it in its commit message.
+    expect(target.merged).toEqual([first!.runId, tip!.runId])
+    const message = (lander.steps.filter((s) => s.step === 'merge').at(-1) as { message: string }).message
+    for (const r of [lead, middle]) expect(message).toContain(`task ${r!.taskId} (run ${r!.runId})`)
+    expect(bodyOf(ctx, merged.decisions!.at(-1)!).candidates[0]!.reasons[1]).toBe(`with it land the 2 result(s) stacked under it that request ${merged.requestId} named: runs ${lead!.runId}, ${middle!.runId}`)
+    for (const r of [lead, middle]) {
+      const under = await until(ctx, r!.runId, 'merged')
+      expect(under).toMatchObject({ commit: merged.commit, requestId: merged.requestId, approval: merged.approval, queue: { batch: { tip: tip!.runId } } })
+      expect(bodyOf(ctx, under.decisions!.at(-1)!).candidates[0]!.reasons[0]).toBe(`the tip's merge request ${merged.requestId} named this result among those it lands`)
+      // Its dossier evidence says whose request it landed on, and that the request named it.
+      await vi.waitFor(() => {
+        const evidence = ctx.workflow.dossier({ runId: r!.runId, limit: 50 }).entries.map((e) => e.text).filter((t) => t.includes('accepted result: merged'))
+        expect(evidence.at(-1)).toContain(`merge request ${merged.requestId} (the request of its stack's tip, run ${tip!.runId}, which named this result among those it lands)`)
+      }, { timeout: 30_000, interval: 25 })
+    }
+  })
+
+  it('names every result of the largest stack (N=8) with long changes within the request\'s bound, the tip included, before any change is listed', async () => {
+    const lander = new Lander()
+    const target = new MovingTarget(lander)
+    // A change far longer than a request could hold for eight results.
+    target.stat = Array.from({ length: 30 }, (_, k) => ` packages/plugins/some-package/src/file-${k}.ts | 12 ++++++------`).join('\n')
+    const { ctx, runs } = await boot('ask', lander, ['tests'], 'solo', LocalLanding, { runs: 9, batch: 8 })
+    const states = (): string[] => runs.map((r) => landingOf(ctx, r.runId)?.state ?? 'none')
+    await vi.waitFor(() => expect(states().filter((s) => s === 'queued')).toHaveLength(8), { timeout: 30_000, interval: 25 })
+    const [first, ...stack] = [...runs].sort((a, b) => landingOf(ctx, a.runId)!.queue!.seq - landingOf(ctx, b.runId)!.queue!.seq)
+    await approve(ctx, first!.runId)
+    await until(ctx, first!.runId, 'merged')
+
+    const tip = stack.at(-1)!
+    const asked = await until(ctx, tip.runId, 'asked')
+    const [request] = (await merges(ctx)).filter((r) => r.state === 'open')
+    const said = request!.action.consequences!
+    expect(said.length).toBeLessThanOrEqual(2000)
+    // Every result the merge lands is named whole, in order, the tip last; and only those are recorded as named.
+    const at = stack.map((r) => said.indexOf(`task ${r.taskId}, run ${r.runId},`))
+    expect(at.every((i) => i >= 0)).toBe(true)
+    expect([...at].sort((a, b) => a - b)).toEqual(at)
+    expect(said).toContain(`run ${tip.runId}, at ${asked.head} (the tip, the head this request merges)`)
+    expect(said.indexOf('Their changes, in order:')).toBeGreaterThan(at.at(-1)!)
+    expect(asked.queue!.batch!.lands).toEqual(stack.slice(0, -1).map((r) => r.runId))
+
+    await approve(ctx, tip.runId)
+    await until(ctx, tip.runId, 'merged')
+    expect(target.merged).toEqual([first!.runId, tip.runId])
+    for (const r of stack.slice(0, -1)) expect(await until(ctx, r.runId, 'merged')).toMatchObject({ requestId: asked.requestId, queue: { batch: { tip: tip.runId } } })
   })
 })

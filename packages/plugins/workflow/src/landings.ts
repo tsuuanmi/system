@@ -39,29 +39,37 @@
  * Each move is a `gate` decision. A conflict the Worker cannot resolve, or a check that fails on the
  * rebased tree, sends the result back to the board as another attempt (`Board.reopen`), with why; a
  * target that only moved spends no attempt.
+ *
+ * **One landing at a time per target** (PROP-0016 I3; docs/design/workflow-engine.md#the-landing-queue):
+ * a committed result enters its repository's and target branch's queue ({@link ./landing-queue.ts}),
+ * and only the one holding the queue's turn rebases, checks, asks, and merges; the others wait,
+ * `queued`, in the order they were committed, so a later result never moves the target under an
+ * earlier one's landing and "moved again after N rebases" cannot happen between queued results. With
+ * `landingBatch` above 1, the head takes the next ones with it as a stack: each rebased onto the one
+ * before, the tip's checks run once, one merge lands them; a stack that fails is bisected to the
+ * failing result, which goes back alone.
  */
 import { execFileSync } from 'node:child_process'
 import type { ApprovalRequest, Approvals } from '@tsuuanmi/system-approvals-core'
 import { type ArtifactRef, type Board, BoardError, type BoardTask, REOPEN_REASON_MAX, type Subject } from '@tsuuanmi/system-board-core'
 import { type Landed as LandedOn, type LandingProvider, type LandingTarget, sameSubject } from '@tsuuanmi/system-landing-core'
 import { BRIEF_LIMITS, clampText, subjectId } from '@tsuuanmi/system-libs'
-import { AdmissionFailure, type Landed, type LandStep, type RebasePhase, RUN_CHECKS, type RunCheck, type WorkerSource, type WorkRequirement } from '@tsuuanmi/system-workers-core'
+import { AdmissionFailure, type CheckStep, type Landed, type LandStep, type RebasePhase, RUN_CHECKS, type RunCheck, type WorkerSource, type WorkRequirement } from '@tsuuanmi/system-workers-core'
 import { type Draft, recordBrief, renderedChars } from './briefs.ts'
 import { MAX_FAILURE_LINE_CHARS, MAX_FAILURE_LINES } from './checks.ts'
 import type { Engine } from './engine.ts'
+import { entries, fresh, nextSeq, OPEN, queueKey } from './landing-queue.ts'
 import { queueOf } from './queue.ts'
 import { writes } from './review.ts'
 import { literal, type ResolvedNode } from './spec.ts'
-import { type NodeRecord, now, type TaskLanding, type TaskRebase, type TaskRow } from './types.ts'
+import { type NodeRecord, now, type TaskLanding, type TaskQueue, type TaskRebase, type TaskRow } from './types.ts'
 
 /** The outcomes after which the board may hold the task `done` on this run's result. */
 const SUBMITTED = new Set(['accepted', 'review', 'reconciled'])
-/** The landing states still in progress: the sweep looks at them. */
-const OPEN = ['watch', 'commit', 'rebase', 'resolving', 'returning', 'recheck', 'committed', 'asked', 'merging'] as const
 /** The landing states the task's dossier records as evidence (ADR-0070): committed, asked to merge, and every end. */
 const DOSSIER_STATES: ReadonlySet<TaskLanding['state']> = new Set(['committed', 'asked', 'merged', 'returned', 'refused', 'rejected', 'none'])
-/** Rebases one landing makes at most: a target that keeps moving past them is the operator's to merge (INV-9). */
-export const MAX_REBASES = 3
+/** Rebases one landing makes at most after its first: the queue lets no landing move the target, so only pushes from outside do (INV-9). */
+const MAX_OUTSIDE_MOVES = 8
 /** How long a rebase's conflict waits for its author's Worker to be admitted before the landing gives it up (INV-9). */
 export const RESOLVE_ADMISSION_MS = 6 * 3600_000
 /** How much of the resolving Worker's answer a reason quotes, at most. */
@@ -80,6 +88,11 @@ const rebasedNote = (landing: TaskLanding): string => {
   return `${landing.base!.branch} moved since the result's work started (from ${r.fork}): the result was rebased onto it from ${r.from}${r.executionId ? `, its conflicts resolved by ${r.worker}` : ''}${r.checks?.length ? `, and its required checks (${r.checks.join(', ')}) passed again on the rebased tree` : '; no check ran on the rebased tree, as no command check ran on the result at its acceptance'}.`
 }
 
+/** The characters a merge request's consequences hold at most (INV-9). */
+const CONSEQUENCES_MAX = 2000
+/** What a stack's own text leaves of that bound, for the words joined after it. */
+const STACK_SLACK = 1
+
 /** Commits a landing records as reverted at most (INV-9). */
 const REVERTS_MAX = 8
 
@@ -97,6 +110,12 @@ export function revertsOf(workspace: string | undefined, base: string | undefine
   } catch {
     return []
   }
+}
+
+/** The landing as it is, without the reason it last waited for. */
+const withoutReason = (landing: TaskLanding): TaskLanding => {
+  const { reason: _reason, ...rest } = landing
+  return rest
 }
 
 /** Lead or Worker text in a commit message: one line, bounded. */
@@ -163,12 +182,15 @@ export class TaskLandings {
     if (!board || this.e.stopped.signal.aborted) return
     const rows = this.e.ctx.store.db.prepare(`SELECT * FROM workflow_tasks WHERE json_extract(landing, '$.state') IN (${OPEN.map(() => '?').join(', ')})
       ORDER BY json_extract(landing, '$.at') LIMIT ${PAGE}`).all(...OPEN) as unknown as TaskRow[]
-    for (const row of rows) {
+    for (const listed of rows) {
       if (this.e.stopped.signal.aborted) return
       try {
-        await this.step(row, board)
+        // Read again: an earlier landing of this sweep may have moved this one (promoted it, stacked it, sent it back to the queue).
+        const current = fresh(this.e, listed.run_id)
+        if (!current || !(OPEN as readonly string[]).includes(current.landing.state)) continue
+        await this.step(current.row, board)
       } catch (error) {
-        this.e.ctx.logger.warn(`workflow: the landing of run ${row.run_id}'s result is looked at again: ${(error as Error)?.message ?? String(error)}`)
+        this.e.ctx.logger.warn(`workflow: the landing of run ${listed.run_id}'s result is looked at again: ${(error as Error)?.message ?? String(error)}`)
       }
     }
   }
@@ -190,6 +212,8 @@ export class TaskLandings {
     switch (landing.state) {
       case 'watch': return this.watch(row, board, landing)
       case 'commit': return this.commit(row, board, landing)
+      case 'queued': return this.queued(row, landing)
+      case 'stacked': return this.stacked(row, landing)
       case 'rebase': return this.rebase(row, board, landing)
       case 'resolving': return this.resolving(row, board, landing)
       case 'returning': return this.returning(row, board, landing)
@@ -244,13 +268,24 @@ export class TaskLandings {
     for (const key of ['reason', 'cause', 'requestId', 'expiresAt', 'approval', 'verify'] as const) delete committed[key]
     if (landed.contained) return this.merged(row, committed, { commit: landed.base.sha, already: true, source: landed.source }, [decision], `${landed.base.branch} at ${landed.base.sha} already holds ${landed.head}: nothing is left to merge`)
     if (landed.fork) committed.fork = landed.fork
+    // One landing at a time per target: the result takes the target's turn, or waits for it (the landing queue).
+    if (!committed.queue?.turn) {
+      const entered = this.enter(row, committed, landed.repository, landed.base.branch)
+      if (entered.state === 'queued') return entered
+      committed.queue = entered.queue!
+    }
     // The base moved since the result's work started: it is rebased there before the merge is asked (ADR-0068).
+    // Under the queue it moves again only by a push the queue did not make (a salvage, another tool): followed a bounded number of times (INV-9).
     if (landed.fork && landed.fork !== landed.base.sha) {
       const count = landing.rebase?.head ? landing.rebase.count + 1 : landing.rebase?.count ?? 0
-      if (count >= MAX_REBASES) {
-        return this.refuse(row, committed, 'rebase', 'moving', `${landed.base.branch} moved again after ${count} rebase(s) of this result (now at ${landed.base.sha}): a target that keeps moving is not followed further; merge ${landed.branch} by hand`, [decision])
+      if (count >= MAX_OUTSIDE_MOVES) {
+        return this.refuse(row, committed, 'rebase', 'moving', `${landed.base.branch} was moved ${count} times by pushes the landing queue did not make (now at ${landed.base.sha}): a target moved from outside is not followed further; merge ${landed.branch} by hand once pushes to it stop`, [decision])
       }
-      return { ...committed, state: 'rebase', rebase: { from: landed.head, base: landed.base, fork: landed.fork, count } }
+      return { ...committed, state: 'rebase', rebase: { from: landed.head, base: landed.base, fork: landed.fork, count }, ...this.stackedAt(committed, landed.base, undefined) }
+    }
+    // The head of a stack: nothing to rebase, so it is the stack as far as itself.
+    if (committed.queue?.batch && committed.queue.batch.runs.length > 1) {
+      return { ...committed, state: 'stacked', ...this.stackedAt(committed, landed.base, { head: landed.head, subject: landed.subject }) }
     }
     // The base did not move: the acceptance ran only the tests related to the result's files, so the
     // landing runs its full suite on the committed tree, once, before the merge is asked (T299).
@@ -258,6 +293,168 @@ export class TaskLandings {
     if (!checks.length) return committed
     if (!landed.subject) return this.refuse(row, committed, 'merge', 'checks', `source ${landed.source} named no tree for ${landed.head}, so the landing's full suite (${checks.join(', ')}) cannot run on it; merge ${landed.branch} by hand once it passes`, [decision])
     return { ...committed, state: 'recheck', verify: { subject: landed.subject, checks } }
+  }
+
+  // --- the landing queue (one per repository and target branch) ---
+
+  /**
+   * A committed result enters its target's queue. It takes the target's turn when no landing holds it
+   * and none waits ahead; otherwise it waits, `queued`, in the order it was committed (`seq`, kept
+   * across its returns to the queue). The one holding the turn is the one landing at a time.
+   */
+  private enter(row: TaskRow, landing: TaskLanding, repository: string, branch: string): TaskLanding {
+    const key = queueKey(repository, branch)
+    const seq = landing.queue?.key === key ? landing.queue.seq : nextSeq(this.e, key)
+    const busy = entries(this.e, key).some((x) => x.row.run_id !== row.run_id && (x.landing.queue?.turn || x.landing.state === 'queued'))
+    if (!busy) return { ...landing, queue: { key, seq, turn: true } }
+    const waiting: TaskLanding = { ...landing, state: 'queued', queue: { key, seq }, reason: `waits its turn in the landing queue of ${branch} in ${repository}: one landing runs at a time, so ${branch} never moves under it`, at: now() }
+    return waiting
+  }
+
+  /** A queued result: promoted when no landing holds the target and it is the first waiting; the next ones stack on it when a batch is configured. */
+  private queued(row: TaskRow, landing: TaskLanding): TaskLanding | undefined {
+    const q = landing.queue!
+    const open = entries(this.e, q.key)
+    if (open.some((x) => x.row.run_id !== row.run_id && x.landing.queue?.turn)) return undefined
+    const waiting = open.filter((x) => x.landing.state === 'queued')
+    if (waiting[0]?.row.run_id !== row.run_id) return undefined
+    const limit = this.e.config.landingBatch ?? 1
+    const stack = waiting.slice(0, limit)
+    const next: TaskLanding = { ...landing, state: 'commit', queue: { key: q.key, seq: q.seq, turn: true }, at: now() }
+    delete next.reason
+    if (stack.length < 2) return next
+    const runs = stack.map((x) => x.row.run_id)
+    const decision = this.decide(row, 'queue', `Does board task ${row.task_id}'s accepted result land with ${runs.length - 1} more as one stack on ${landing.base?.branch ?? q.key}?`, [landing.acceptance!], [
+      { option: 'queue', selected: true, reasons: [`${runs.length} results wait in the queue and the batch size is ${limit}: they are rebased in order, checked once on the last, and merged by one request`, 'a failing stack is searched, the failing result sent back alone, the ones before it landed'] },
+      { option: 'one-by-one', selected: false, reasons: [`not one at a time: the configured batch size is ${limit}`] },
+    ], { step: 'queue', key: q.key, limit, runs })
+    for (const member of stack.slice(1)) {
+      this.patch(member.row.run_id, (l) => ({ ...withoutReason(l), state: 'stacked', queue: { ...l.queue!, turn: true, batch: { runs, limit } }, at: now() }))
+    }
+    return { ...next, queue: { ...next.queue!, batch: { runs, limit } }, decisions: [...(landing.decisions ?? []), decision] }
+  }
+
+  /** The queue of a stack, with this result's own place in it: its head and the target, when a stack of more than one. */
+  private stackedAt(landing: TaskLanding, target: { branch: string; sha: string }, own: { head: string; subject?: { ref: string; version: string } | undefined } | undefined): { queue?: TaskQueue } {
+    const q = landing.queue
+    if (!q?.batch || q.batch.runs.length < 2) return {}
+    return { queue: { ...q, batch: { ...q.batch, target, ...(own ? { head: own.head, ...(own.subject ? { subject: own.subject } : {}) } : {}) } } }
+  }
+
+  /** Change another landing of the queue (its stack's member), in the one transaction-free write the sweep's single pass allows (INV-15). */
+  private patch(runId: string, change: (landing: TaskLanding) => TaskLanding): void {
+    const current = fresh(this.e, runId)
+    if (current) this.e.ctx.store.db.prepare('UPDATE workflow_tasks SET landing = ? WHERE run_id = ?').run(JSON.stringify(change(current.landing)), runId)
+  }
+
+  /** The target is read again: a stack, its base not being where it was rebased, goes back to the queue; a lone result reads it at the commit. */
+  private async again(row: TaskRow, landing: TaskLanding, reason: string): Promise<TaskLanding> {
+    if (landing.queue?.batch && landing.queue.batch.runs.length > 1) return this.requeue(row, landing, reason)
+    return { ...landing, state: 'commit', reason, at: now() }
+  }
+
+  /**
+   * A result of a stack goes back to the queue, its place kept: its branch put back at the head it was
+   * rebased from (never merged with the changes of the results it was stacked on), the stack forgotten.
+   */
+  private async requeue(row: TaskRow, landing: TaskLanding, reason: string): Promise<TaskLanding> {
+    const r = landing.rebase
+    if (r) {
+      const back = await this.landRebase(row, landing, 'abandon').catch((error: unknown) => ({ outcome: 'refused' as const, cause: 'failed' as const, reason: (error as Error).message, source: 'workers' }))
+      if (back?.outcome === 'refused' && back.cause === 'busy') return this.touch(row, landing)
+      if (back?.outcome !== 'abandoned') {
+        return this.refuse(row, landing, 'rebase', 'failed', `${reason}; and ${landing.branch} could not be put back at ${r.from} (${back ? back.outcome === 'refused' ? back.reason : back.outcome : 'no source holds the worktree'}), so it is not stacked again`, [landing.acceptance!])
+      }
+    }
+    const next: TaskLanding = { ...landing, state: 'queued', ...(r ? { head: r.from } : {}), queue: { key: landing.queue!.key, seq: landing.queue!.seq }, reason: reason.slice(0, 500), at: now() }
+    for (const key of ['rebase', 'verify', 'requestId', 'expiresAt', 'approval'] as const) delete next[key]
+    return next
+  }
+
+  /**
+   * A result in a stack (state `stacked`), the one before it done with or not, the stack as far as it
+   * waiting on the tip: it is rebased onto the head of the result before it once that has one; it
+   * waits while the tip's checks and merge run; the tip (the last of those that hold) runs the checks
+   * once, on its tree, which holds every change before it; and when the tip is merged, so is each one
+   * under it. A result found failing goes back alone; the ones after it go back to the queue.
+   */
+  private async stacked(row: TaskRow, landing: TaskLanding): Promise<TaskLanding | undefined> {
+    const b = landing.queue!.batch
+    if (!b) return this.requeue(row, landing, 'its stack is gone')
+    const peers = b.runs.map((id) => fresh(this.e, id))
+    const i = b.runs.indexOf(row.run_id)
+    const gone = (x: ReturnType<typeof fresh>): boolean => !x || x.landing.queue?.batch?.runs[0] !== b.runs[0] || !!x.landing.queue?.batch?.blame
+      || x.landing.state === 'returning' || (!(OPEN as readonly string[]).includes(x.landing.state) && x.landing.state !== 'merged')
+    // Found failing: it goes back alone, as a rebase that cannot go on does (its branch put back first).
+    if (b.blame) return this.giveUp({ ...landing, rebase: landing.rebase ?? { from: landing.head!, base: landing.base!, fork: landing.fork ?? landing.base!.sha, count: 0 } }, b.blame.why, b.blame.inputs)
+    const first = peers.findIndex(gone)
+    if (first !== -1 && first < i) return this.requeue(row, landing, `the stack of ${b.runs.length} broke at run ${b.runs[first]}, under this result: it is stacked again from the queue`)
+    const tip = first === -1 ? b.runs.length - 1 : first - 1
+    if (!b.head) {
+      // Not yet on top of the result before it: rebased onto its head once it has one.
+      const before = i > 0 ? peers[i - 1]?.landing.queue?.batch : undefined
+      if (!before?.head || !before.target) return undefined
+      const next: TaskLanding = { ...landing, state: 'rebase', rebase: { from: landing.head!, base: { branch: before.target.branch, sha: before.head }, target: before.target, fork: landing.fork ?? before.target.sha, count: 0 }, at: now() }
+      delete next.reason
+      return next
+    }
+    if (i < tip) {
+      const last = peers[tip]!.landing
+      if (last.state !== 'merged') return undefined
+      const named = last.queue?.batch?.lands?.includes(row.run_id) === true
+      const merged = this.merged(row, { ...landing, base: b.target!, head: b.head, ...(last.approval ? { approval: last.approval } : {}), ...(last.requestId ? { requestId: last.requestId } : {}) }, { commit: last.commit!, already: false, source: 'landing-queue' }, [],
+        named ? `the tip's merge request ${last.requestId} named this result among those it lands` : `the tip's merge request ${last.requestId ?? ''} did not name this result, though its merge holds it`,
+        `${landing.branch} at ${b.head} was merged with its stack: the tip, run ${b.runs[tip]}, is in ${b.target!.branch} as ${last.commit}, on one merge of the tree the stack's checks ran on`)
+      return named ? { ...merged, queue: { ...merged.queue!, batch: { ...b, tip: b.runs[tip]! } } } : merged
+    }
+    if (b.bisect) return this.bisect(row, landing, peers as Array<NonNullable<ReturnType<typeof fresh>>>, i)
+    // The tip: its tree holds every change of the stack, so its checks are the stack's, run once.
+    if (landing.rebase?.head) return { ...landing, state: 'recheck', at: now() }
+    const checks = this.requiredChecks(row, landing)
+    if (!checks.length) return { ...landing, state: 'committed', at: now() }
+    return { ...landing, state: 'recheck', verify: { subject: b.subject!, checks }, at: now() }
+  }
+
+  /**
+   * The tip's checks failed on the stack: the prefixes of the stack are checked on their own trees (each
+   * result's worktree holds it and every one before it), one a pass, by bisection, until the first that
+   * fails is known. That result goes back alone, the tip's own checks having failed on it or not; the
+   * ones before it land as the stack, the ones after it go back to the queue.
+   */
+  private async bisect(row: TaskRow, landing: TaskLanding, peers: Array<NonNullable<ReturnType<typeof fresh>>>, i: number): Promise<TaskLanding | undefined> {
+    const q = landing.queue!
+    const b = q.batch!
+    const s = b.bisect!
+    const checks = this.requiredChecks(row, landing)
+    if (s.hi - s.lo > 1) {
+      const mid = (s.lo + s.hi) >> 1
+      const member = peers[mid]!
+      const subject = member.landing.queue!.batch!.subject
+      const check = this.e.ctx.workers.check
+      if (!subject || typeof check !== 'function') return this.refuse(row, landing, 'rebase', 'checks', `the stack's prefix of ${mid + 1} result(s) cannot be checked (${subject ? 'the workers seam runs no check' : 'it names no tree'}), so the failing result is not found; merge ${landing.branch} by hand once its checks pass`, [landing.acceptance!])
+      const checked = await check.call(this.e.ctx.workers, { runId: member.row.run_id, workspace: member.landing.workspace!, subject, checks, scope: 'landing', classification: this.e.runRow(row.run_id)?.classification ?? this.e.ctx.egress.defaultClassification } satisfies CheckStep, this.e.stopped.signal)
+      if (!checked) return this.refuse(row, landing, 'rebase', 'gone', `no Worker source holds the worktree of run ${member.row.run_id} to check the stack's prefix of ${mid + 1} result(s)`, [landing.acceptance!])
+      if (checked.outcome === 'refused') {
+        if (checked.cause === 'busy') return landing.reason === checked.reason ? this.touch(row, landing) : { ...landing, reason: checked.reason, at: now() }
+        return this.refuse(row, landing, 'rebase', 'checks', `the stack's prefix of ${mid + 1} result(s) was not checked (${checked.cause}): ${checked.reason}`, [landing.acceptance!])
+      }
+      const failed = checked.results.some((c) => checks.includes(c.check) && c.outcome === 'failed')
+      if (!failed && checks.some((c) => !checked.results.some((x) => x.check === c && x.outcome !== 'error'))) {
+        return this.refuse(row, landing, 'rebase', 'checks', `the stack's prefix of ${mid + 1} result(s) did not run its checks to an exit code, so the failing result is not found: nothing is merged`, [landing.acceptance!])
+      }
+      return { ...landing, queue: { ...q, batch: { ...b, bisect: failed ? { ...s, hi: mid } : { ...s, lo: mid } } }, at: now() }
+    }
+    // The first prefix that fails ends at `hi`: that result fails on top of the ones before it.
+    const culprit = peers[s.hi]!
+    const tree = b.subject ? subjectId({ type: 'git-head', ...b.subject }) : landing.head
+    const why = `the full suite (${checks.join(', ')}) fails on the stack of ${b.runs.length} results at ${tree}${s.fails ? ` (${s.fails})` : ''}, and fails first with result ${s.hi + 1} of it (task ${culprit.row.task_id}) stacked on the ${s.hi} before it, which pass: it goes back alone`
+    const decision = this.decide(row, 'bisect', `Which result of the stack of ${b.runs.length} on ${landing.base?.branch ?? q.key} fails its checks?`, [landing.acceptance!, ...(landing.decisions ?? []).slice(-1)], [
+      { option: 'bisect', selected: true, reasons: [`task ${culprit.row.task_id} (run ${culprit.row.run_id}, result ${s.hi + 1} of ${b.runs.length}) fails first: the prefix of ${s.hi} passes, the prefix of ${s.hi + 1} does not`, 'it goes back alone; the ones before it land as a stack, the ones after it return to the queue'] },
+      { option: 'return-all', selected: false, reasons: ['not the whole stack: a result that passes with what is before it is not sent back for another one\'s failure'] },
+    ], { step: 'bisect', key: q.key, limit: b.limit, runs: b.runs, culprit: culprit.row.run_id, taskId: culprit.row.task_id })
+    if (s.hi === i) return this.giveUp(landing, why, [decision])
+    this.patch(culprit.row.run_id, (l) => ({ ...l, queue: { ...l.queue!, batch: { ...l.queue!.batch!, blame: { why, inputs: [decision] } } }, at: now() }))
+    return this.requeue(row, { ...landing, decisions: [...(landing.decisions ?? []), decision] }, `the stack broke at result ${s.hi + 1}, task ${culprit.row.task_id}, which fails its checks: this result is stacked again from the queue`)
   }
 
   // --- a target that moved (ADR-0068) ---
@@ -270,8 +467,8 @@ export class TaskLandings {
     if (landed.outcome === 'conflicted') return this.conflicted(row, board, landing, landed)
     if (landed.outcome !== 'refused') return this.refuse(row, landing, 'rebase', 'failed', `source ${landed.source} answered ${landed.outcome} to a rebase`, [landing.acceptance!])
     if (landed.cause === 'busy') return landing.reason === landed.reason ? this.touch(row, landing) : { ...landing, reason: landed.reason, at: now() }
-    // The base moved again before the rebase began: the commit reads where it is now.
-    if (landed.cause === 'base-moved') return { ...landing, state: 'commit', reason: `${landed.reason}; the base is read again`, at: now() }
+    // The base moved again before the rebase began: the commit reads where it is now (a stack goes back to the queue, its tip's base being the one that moved).
+    if (landed.cause === 'base-moved') return this.again(row, landing, `${landed.reason}; the base is read again`)
     return this.refuse(row, landing, 'rebase', landed.cause, landed.reason, [landing.acceptance!])
   }
 
@@ -305,6 +502,8 @@ export class TaskLandings {
       })
     const next: TaskLanding = { ...landing, state: 'recheck', rebase: { ...r, head: landed.head, subject: landed.subject, stat: landed.stat, checks }, decisions: [...(landing.decisions ?? []), decision], at: now() }
     delete next.reason
+    // In a stack its checks run once, on the tip: this result waits as the stack as far as itself.
+    if (next.queue?.batch && next.queue.batch.runs.length > 1) return { ...next, state: 'stacked', ...this.stackedAt(next, r.target ?? r.base, { head: landed.head, subject: landed.subject }) }
     return next
   }
 
@@ -441,13 +640,13 @@ export class TaskLandings {
     const v = landing.verify
     const r = v ? undefined : landing.rebase!
     const subject = v ? v.subject : r!.subject!
-    const base = v ? landing.base! : r!.base
+    const base = v ? landing.base! : r!.target ?? r!.base
     const head = v ? landing.head! : r!.head!
     const where = v ? 'the committed tree' : 'the rebased tree'
     const step = v ? 'merge' : 'rebase'
     const checks = this.requiredChecks(row, landing)
     const verified = (inputs: ArtifactRef[]): TaskLanding => {
-      const next: TaskLanding = { ...landing, state: 'committed', ...(r ? { head: r.head!, stat: r.stat ?? '', base: r.base } : {}), decisions: [...(landing.decisions ?? []), ...inputs], at: now() }
+      const next: TaskLanding = { ...landing, state: 'committed', ...(r ? { head: r.head!, stat: r.stat ?? '', base: r.target ?? r.base } : {}), decisions: [...(landing.decisions ?? []), ...inputs], at: now() }
       delete next.reason
       return next
     }
@@ -490,6 +689,11 @@ export class TaskLandings {
       }
       const named = lines.slice(0, 5).join(' | ')
       const why = r ? `the change does not hold with what ${base.branch} gained since ${r.fork}` : 'the full suite does not pass with the change'
+      // The tip of a stack: which result fails is searched over the stack's prefixes, never the whole stack sent back (the batch).
+      const batch = recorded.queue?.batch
+      if (batch && batch.runs.indexOf(row.run_id) > 0) {
+        return { ...recorded, state: 'stacked', queue: { ...recorded.queue!, batch: { ...batch, bisect: { lo: -1, hi: batch.runs.indexOf(row.run_id), fails: `${failed.map((c) => c.check).join(', ')} failed (${said})${named ? `: ${named}`.slice(0, 600) : ''}` } } }, at: now() }
+      }
       return this.sendBack(row, board, recorded, `its required ${failed.map((c) => c.check).join(', ')} check(s) failed on ${on} (${said}): ${why}${named ? `; failing: ${named}` : ''}`, decision)
     }
     if (pending.length) return this.refuse(row, recorded, step, 'checks', `${where}'s ${pending.join(', ')} check(s) did not run to an exit code: nothing is merged; run them on ${landing.branch} at ${head} and merge it by hand once they pass`, [decision])
@@ -590,7 +794,7 @@ export class TaskLandings {
     if (!land) return Promise.resolve(undefined)
     const r = landing.rebase!
     const message = `Rebased onto ${r.base.branch} at ${r.base.sha} (it moved from ${r.fork}) by the landing of run ${row.run_id}, board task ${row.task_id}${r.executionId ? `; its conflicts resolved by ${r.worker} (execution ${r.executionId})` : ''}.`
-    return land.call(this.e.ctx.workers, { step: 'rebase', runId: row.run_id, workspace: landing.workspace!, phase, head: r.from, base: r.base, message } satisfies LandStep)
+    return land.call(this.e.ctx.workers, { step: 'rebase', runId: row.run_id, workspace: landing.workspace!, phase, head: r.from, base: r.base, message, ...(r.target ? { stacked: true as const } : {}) } satisfies LandStep)
   }
 
   /**
@@ -663,24 +867,87 @@ export class TaskLandings {
     const prepared = await provider.prepare(this.targetOf(row, landing))
     if (prepared.outcome === 'refused') return this.refuse(row, landing, 'merge', prepared.cause, prepared.reason, [verdict.decision])
     const subject: Subject = { ...prepared.subject }
+    // The tip of a stack lands every result under it on this one approval: the request names each, with its own change.
+    const under = this.stackUnder(row, landing)
+    const stack = under.length ? await this.stackWords(board, row, task, landing, under) : undefined
+    // A stack whose every result cannot be named within the request's bound is never asked: nothing merges on a request that leaves one out.
+    if (stack && 'unnamed' in stack) return this.refuse(row, landing, 'merge', 'failed', stack.unnamed, [verdict.decision])
     const request = await this.adopt(approvals, row, subject, project) ?? await approvals.request({
       subject,
       action: {
         class: 'merge',
-        summary: line(`Merge the accepted result of task ${task ? `"${line(task.title, 80)}"` : row.task_id} into ${landing.base!.branch}`, 300),
+        summary: stack ? stack.summary : line(`Merge the accepted result of task ${task ? `"${line(task.title, 80)}"` : row.task_id} into ${landing.base!.branch}`, 300),
         consequences: [
+          // First, and within the bound by construction (stackWords): what lands is never cut.
+          ...(stack ? [stack.consequences] : []),
           ...prepared.consequences,
           'A merge always asks the operator (D56), whatever the policy\'s mode for merge.',
           // Rebased onto the base as it is now (ADR-0068): what the operator approves is that tree, checked again.
           rebasedNote(landing),
-          landing.stat ? `\n${landing.stat}` : '',
-        ].join(' ').slice(0, 2000),
+          !stack && landing.stat ? `\n${landing.stat}` : '',
+        ].join(' ').slice(0, CONSEQUENCES_MAX),
         ...(landing.decisions?.length ? { refs: landing.decisions.slice(-1) } : {}),
       },
       requester: { component: 'workflow', runId: row.run_id, ...(this.finalNode(row) ? { nodeId: this.finalNode(row)! } : {}), taskId: row.task_id, ...project },
       verdict, classification: this.e.runRow(row.run_id)?.classification ?? this.e.ctx.egress.defaultClassification,
     })
-    return { ...landing, state: 'asked', requestId: request.requestId, expiresAt: request.expiresAt, at: now() }
+    const asked: TaskLanding = { ...landing, state: 'asked', requestId: request.requestId, expiresAt: request.expiresAt, at: now() }
+    if (under.length) {
+      // What the request names is read from the request as stored, never assumed: each result under the
+      // tip must be named in it, with its task and run, or the merge is not asked on it.
+      const said = request.action.consequences ?? ''
+      const missing = under.filter((x) => !said.includes(`task ${x.row.task_id}, run ${x.row.run_id},`))
+      if (missing.length) return this.refuse(row, landing, 'merge', 'failed', `merge request ${request.requestId} does not name ${missing.map((x) => `run ${x.row.run_id}`).join(', ')} of the stack it would land: nothing is merged on it; merge ${landing.branch} by hand`, [verdict.decision])
+      asked.queue = { ...landing.queue!, batch: { ...landing.queue!.batch!, lands: under.map((x) => x.row.run_id) } }
+    }
+    return asked
+  }
+
+  /**
+   * The results a stack's tip lands with it: those under it in its stack, in order. Empty for a lone
+   * result, or the head of a stack whose later results left it. Each is alive: the tip reaches its
+   * merge request only once every result under it holds its place (else it went back to the queue).
+   */
+  private stackUnder(row: TaskRow, landing: TaskLanding): Array<NonNullable<ReturnType<typeof fresh>>> {
+    const b = landing.queue?.batch
+    if (!b || b.runs.length < 2) return []
+    return b.runs.slice(0, Math.max(0, b.runs.indexOf(row.run_id)))
+      .map((id) => fresh(this.e, id)).filter((x): x is NonNullable<ReturnType<typeof fresh>> => !!x)
+  }
+
+  /**
+   * What a stack's merge request says (the class "an approval describes what it lands"): every task and
+   * run it lands, in order, and that one approval lands them all, or none; then each one's own change
+   * (together the stack's whole change against the target). The names come first and always whole: a
+   * title is dropped before a name line is cut, and the changes share only the room the names leave
+   * within the request's bound. When even the names cannot fit, it says so (`unnamed`), and no request
+   * is asked. The summary names the count and that the list follows, never a cut list of titles.
+   */
+  private async stackWords(board: Board, row: TaskRow, task: BoardTask | undefined, landing: TaskLanding, under: Array<NonNullable<ReturnType<typeof fresh>>>): Promise<{ summary: string; consequences: string } | { unnamed: string }> {
+    const titled = async (taskId: string, known?: BoardTask): Promise<string> => {
+      const t = known ?? await board.task(taskId)
+      return t ? `"${line(t.title, 60)}" ` : ''
+    }
+    const members = [
+      ...await Promise.all(under.map(async (x) => ({ runId: x.row.run_id, taskId: x.row.task_id, title: await titled(x.row.task_id), head: x.landing.queue?.batch?.head ?? x.landing.head, stat: x.landing.rebase?.stat ?? x.landing.stat ?? '' }))),
+      { runId: row.run_id, taskId: row.task_id, title: await titled(row.task_id, task), head: landing.head, stat: landing.stat ?? '' },
+    ]
+    const branch = landing.base!.branch
+    const opening = `Approved, one merge lands all ${members.length} results of this stack into ${branch} at ${landing.base!.sha}, in this order, each rebased on the one before it, the tree of the last checked once for all of them; denied, none lands.`
+    // `task <id>, run <run>,` is what ask() reads back to know a result is named.
+    const named = (titles: boolean): string[] => members.map((m, k) => `\n${k + 1}. ${titles ? m.title : ''}task ${m.taskId}, run ${m.runId}, at ${m.head}${k === members.length - 1 ? ' (the tip, the head this request merges)' : ''}.`)
+    const fits = (lines: string[]): boolean => [opening, ...lines].join(' ').length <= CONSEQUENCES_MAX - STACK_SLACK
+    const names = fits(named(true)) ? named(true) : named(false)
+    if (!fits(names)) return { unnamed: `the stack of ${members.length} results cannot all be named within a merge request's ${CONSEQUENCES_MAX} characters, so no request is asked on it: nothing is merged; merge ${landing.branch} by hand, or land the stack with a smaller landingBatch` }
+    const head = [opening, ...names].join(' ')
+    // The changes share what the names leave, each at most 240 characters; a change that does not fit says so.
+    const room = Math.max(0, CONSEQUENCES_MAX - STACK_SLACK - head.length - ' \nTheir changes, in order:'.length)
+    const share = Math.min(240, Math.floor(room / members.length) - 8)
+    const changes = members.map((m, k) => `\n${k + 1}: ${share > 20 ? m.stat.trim().replace(/\s+/g, ' ').slice(0, share) || 'no change listed' : 'its change is in its run'}`)
+    return {
+      summary: line(`Merge the accepted results of ${members.length} tasks into ${branch} as one stack (each named in the details)`, 300),
+      consequences: [head, '\nTheir changes, in order:', ...changes].join(' ').slice(0, CONSEQUENCES_MAX - STACK_SLACK),
+    }
   }
 
   /** A request asked before a restart, on this exact subject, by this run's landing. */
@@ -705,7 +972,7 @@ export class TaskLandings {
     if (request.state === 'approved' && bound && request.resolution?.cause === 'verdict' && request.resolution.approval) {
       return { ...landing, state: 'merging', approval: request.resolution.decision, at: now() }
     }
-    if (request.resolution?.cause === 'withdrawn' && this.byPolicy(request)) return { ...landing, state: 'commit', reason: `request ${request.requestId} was withdrawn on a policy change: the merge is put to the policy in force again`, at: now() }
+    if (request.resolution?.cause === 'withdrawn' && this.byPolicy(request)) return this.again(row, landing, `request ${request.requestId} was withdrawn on a policy change: the merge is put to the policy in force again`)
     const why = !bound ? 'it is not on this landing\'s exact subject' : request.resolution?.cause === 'expired' ? 'it expired unanswered' : request.resolution?.cause === 'withdrawn' ? 'it was withdrawn' : 'the operator denied it'
     return { ...landing, state: 'rejected', reason: `request ${request.requestId} was not approved (${why}): nothing is merged; ${landing.branch} keeps the commit ${landing.head}`, ...(request.resolution ? { decisions: [...(landing.decisions ?? []), request.resolution.decision] } : {}), at: now() }
   }
@@ -732,7 +999,7 @@ export class TaskLandings {
     if (prepared.outcome === 'refused') return this.refuse(row, landing, 'merge', prepared.cause, prepared.reason, [landing.approval!])
     if (!sameSubject(prepared.subject, request.subject)) {
       const refused = this.refuse(row, landing, 'merge', 'unbound', `request ${request.requestId} approved ${request.subject.ref} at ${request.subject.version ?? 'no version'}, but the landing provider in force (${provider.id}) lands ${prepared.subject.ref} at ${prepared.subject.version}: nothing is merged on that approval; it is asked again on the provider's own subject`, [landing.approval!])
-      return { ...refused, state: 'commit', reason: refused.reason!, at: now() }
+      return this.again(row, refused, refused.reason!)
     }
     const approved = { type: 'git-head' as const, ref: request.subject.ref, version: request.subject.version! }
     const task = await board.task(row.task_id)
@@ -742,14 +1009,17 @@ export class TaskLandings {
       // The base moved or was not clean when the approval came: the merge is asked again on the base as it is then.
       if (landed.cause === 'base-moved' || landed.cause === 'dirty') {
         const refused = this.refuse(row, landing, 'merge', landed.cause, `${landed.reason}; it is asked again on ${landing.base!.branch} as it is now`, [landing.approval!])
-        return { ...refused, state: 'commit', reason: refused.reason!, at: now() }
+        return this.again(row, refused, refused.reason!)
       }
       return this.refuse(row, landing, 'merge', landed.cause, landed.reason, [landing.approval!])
     }
-    return this.merged(row, landing, { ...landed, source: landed.source ?? landed.provider }, [landing.approval!], landed.already ? `${landing.base!.branch} already held ${landing.head} (merged before a restart)` : `${landing.branch} at ${landing.head} is merged into ${landing.base!.branch} as ${landed.commit}`)
+    const lands = landing.queue?.batch?.lands ?? []
+    // A stack's tip lands the results under it too: said in a reason of its own, which names each.
+    const withStack = lands.length ? [`with it land the ${lands.length} result(s) stacked under it that request ${landing.requestId} named: runs ${lands.join(', ')}`] : []
+    return this.merged(row, landing, { ...landed, source: landed.source ?? landed.provider }, [landing.approval!], landed.already ? `${landing.base!.branch} already held ${landing.head} (merged before a restart)` : `${landing.branch} at ${landing.head} is merged into ${landing.base!.branch} as ${landed.commit}`, ...withStack)
   }
 
-  private merged(row: TaskRow, landing: TaskLanding, landed: Pick<LandedOn, 'commit' | 'already' | 'regenerated'> & { source: string }, inputs: ArtifactRef[], why: string): TaskLanding {
+  private merged(row: TaskRow, landing: TaskLanding, landed: Pick<LandedOn, 'commit' | 'already' | 'regenerated'> & { source: string }, inputs: ArtifactRef[], why: string, ...more: string[]): TaskLanding {
     const regenerated = landed.regenerated
     // A conflict only in files the repository declares generated, made again by its commands (T166): named, and their commands' autonomy decisions among the inputs (INV-13).
     const remade = regenerated ? [
@@ -757,7 +1027,7 @@ export class TaskLandings {
       `by the repository's commands (${regenerated.commands.join('; ')}), which exited 0, changed no other file, and changed nothing on a repeat`,
     ] : []
     const decision = this.decide(row, 'merge', `Is board task ${row.task_id}'s accepted result merged into ${landing.base!.branch}?`, [...(landing.decisions ?? []).slice(-1), ...inputs, ...((regenerated?.autonomy ?? []) as ArtifactRef[])], [
-      { option: 'merge', selected: true, reasons: [why, ...remade, landing.approval ? `on ${landing.requestId ? `the operator's approval of request ${landing.requestId}` : 'the autonomy policy'} (decision ${landing.approval})` : 'no merge was needed'] },
+      { option: 'merge', selected: true, reasons: [why, ...more, ...remade, landing.approval ? `on ${landing.requestId ? `the operator's approval of request ${landing.requestId}` : 'the autonomy policy'} (decision ${landing.approval})` : 'no merge was needed'] },
       { option: 'refuse', selected: false, reasons: [regenerated ? 'not refuse: the branch and the base were where the approval saw them, and the merge met conflicts only in generated files, which were regenerated' : 'not refuse: the branch and the base were where the approval saw them, and the merge met no conflict'] },
     ], { step: 'merge', source: landed.source, branch: landing.branch, head: landing.head, base: landing.base, commit: landed.commit, already: landed.already, ...(regenerated ? { regenerated: { files: regenerated.files, commands: regenerated.commands } } : {}), ...(landing.requestId ? { requestId: landing.requestId } : {}) })
     const reverts = revertsOf(landing.workspace, landing.base?.sha, landing.head)
@@ -787,12 +1057,22 @@ export class TaskLandings {
     }, { ...PRODUCER, runId: row.run_id, ...(node ? { nodeId: node } : {}) }).id as ArtifactRef
   }
 
+  /** What the dossier says of a stack's request: whose it is, and which results it names and lands. */
+  private stackNote(row: TaskRow, landing: TaskLanding): string {
+    const b = landing.queue?.batch
+    if (!b || !landing.requestId) return ''
+    // `tip` is set on a result under the tip only when the tip's request named it.
+    if (b.tip && b.tip !== row.run_id) return ` (the request of its stack's tip, run ${b.tip}, which named this result among those it lands)`
+    if (b.lands?.length) return ` (a stack's request: it names and lands, with this result, the results of runs ${b.lands.join(', ')} stacked under it)`
+    return ''
+  }
+
   private save(row: TaskRow, landing: TaskLanding): void {
     // A landing that reached an outcome is the System's evidence in the task's dossier (ADR-0070), once
     // per state: committed, asked, and where it ended; never the steps between.
     if (landing.state !== this.view(row)?.state && DOSSIER_STATES.has(landing.state)) {
       this.e.tasks.dossiers.safely('the landing', () => this.e.tasks.dossiers.evidence(row.run_id,
-        `Landing of run ${row.run_id}'s accepted result: ${landing.state}${landing.commit ? `, commit ${landing.commit}` : ''}${landing.requestId ? `, merge request ${landing.requestId}` : ''}${landing.reason ? `: ${landing.reason}` : ''}.`,
+        `Landing of run ${row.run_id}'s accepted result: ${landing.state}${landing.commit ? `, commit ${landing.commit}` : ''}${landing.requestId ? `, merge request ${landing.requestId}` : ''}${this.stackNote(row, landing)}${landing.reason ? `: ${landing.reason}` : ''}.`,
         landing.decisions?.length ? [landing.decisions.at(-1)!] : [], landing.subject ? { type: 'git-head', ref: landing.subject.ref, version: landing.subject.version } : undefined))
     }
     this.e.ctx.store.transaction((db) => {
@@ -865,9 +1145,13 @@ export class TaskLandings {
 
   private mergeMessage(row: TaskRow, task: BoardTask | undefined, landing: TaskLanding, version: string): string {
     const on = landing.requestId ? `the operator's approval of request ${landing.requestId}` : 'the autonomy policy'
+    // A stack's tip: the results under it land in this merge too, each named, as its request named them.
+    const lands = (landing.queue?.batch?.lands ?? []).map((id) => fresh(this.e, id)).filter((x): x is NonNullable<ReturnType<typeof fresh>> => !!x)
     return [
-      `system: merge task ${row.task_id}${task ? `: ${line(task.title)}` : ''}`, '',
-      `Lands ${landing.branch} at ${landing.head}, the accepted result of run ${row.run_id}, into ${landing.base!.branch} at ${landing.base!.sha}, on ${on} (decision ${landing.approval}).`, '',
+      `system: merge task ${row.task_id}${task ? `: ${line(task.title)}` : ''}${lands.length ? ` and ${lands.length} stacked under it` : ''}`, '',
+      `Lands ${landing.branch} at ${landing.head}, the accepted result of run ${row.run_id}, into ${landing.base!.branch} at ${landing.base!.sha}, on ${on} (decision ${landing.approval}).`,
+      ...(lands.length ? ['', `With it land the results stacked under it, which the request named, in order: ${lands.map((x) => `task ${x.row.task_id} (run ${x.row.run_id})`).join(', ')}.`] : []), '',
+      ...lands.flatMap((x) => [`System-Task: ${x.row.task_id}`, `System-Run: ${x.row.run_id}`]),
       `System-Task: ${row.task_id}`, `System-Run: ${row.run_id}`, `System-Landing: ${version}`,
     ].join('\n')
   }

@@ -255,7 +255,8 @@ export interface TaskCarry {
 
 /**
  * Where the landing of a task's accepted result stands (ADR-0060): `watch` until the board has the
- * task done on it; `commit` while its worktree is committed on its branch; then, when the base moved
+ * task done on it; `commit` while its worktree is committed on its branch; `queued` while the target's
+ * turn is another's, `stacked` while it waits on the stack it is in (docs/design/workflow-engine.md#the-landing-queue); then, when the base moved
  * since the result's work started (ADR-0068), `rebase` while it is made again on top of the base,
  * `resolving` while a writing step resolves the rebase's conflict, `returning` while a rebase that
  * cannot go on is abandoned and the result sent back (persisted before either, so a restart finishes
@@ -268,7 +269,9 @@ export interface TaskCarry {
  * (nothing to land: the task moved on, or no source holds the tree).
  */
 export interface TaskLanding {
-  state: 'watch' | 'commit' | 'rebase' | 'resolving' | 'returning' | 'recheck' | 'committed' | 'asked' | 'merging' | 'merged' | 'returned' | 'refused' | 'rejected' | 'none'
+  state: 'watch' | 'commit' | 'queued' | 'stacked' | 'rebase' | 'resolving' | 'returning' | 'recheck' | 'committed' | 'asked' | 'merging' | 'merged' | 'returned' | 'refused' | 'rejected' | 'none'
+  /** Its place in its target's queue, once committed: `queued` waits for the target's turn, `stacked` waits on its stack (TaskQueue). */
+  queue?: TaskQueue
   /** Where the result forked from the base, as its commit found it (ADR-0068). */
   fork?: string
   /** The landing's rebase onto its target, once the base moved since the result's work started (ADR-0068). */
@@ -316,7 +319,7 @@ export interface TaskRebase {
   from: string
   base: { branch: string; sha: string }
   fork: string
-  /** Rebases this landing made before this one: a target that keeps moving is followed a bounded number of times. */
+  /** Rebases this landing made before this one (a target moved by a push the queue did not make is followed each time). */
   count: number
   /** Once rebased: the branch's new head, the worktree's exact subject at it, and the change against the base. */
   head?: string
@@ -348,6 +351,57 @@ export interface TaskRebase {
    * neither records it twice nor loses it.
    */
   returning?: { why: string; inputs: ArtifactRef[]; decision?: ArtifactRef }
+  /**
+   * A result stacked on an earlier one of its batch (`from` onto that one's rebased head, `base`): the
+   * target's own tip, which the stack merges into and which the merge request binds.
+   */
+  target?: { branch: string; sha: string }
+}
+
+/**
+ * A landing's place in its target's queue (one per repository and target branch, ADR-0068 successor):
+ * results enter in the order they were committed (`seq`), one holds the target's `turn` at a time, and
+ * a later one never moves the target under it. With a batch, the head holds the turn for the stack
+ * (`batch.runs`, in order; `limit` is the configured size): each is rebased onto the one before, the
+ * tip's checks run once, one merge lands the stack.
+ */
+export interface TaskQueue {
+  /** `<repository>#<branch>`. */
+  key: string
+  seq: number
+  /** The landing holds the target: it, and its stack, is the one landing at a time. */
+  turn?: true
+  /** Where the results of a stack are, in order, and the batch size configured when it was formed. */
+  batch?: {
+    runs: string[]
+    limit: number
+    /** This result's head and exact subject once it is on top of the one before it (the stack as far as it). */
+    head?: string
+    subject?: { ref: string; version: string }
+    /** The target's tip the stack was rebased onto. */
+    target?: { branch: string; sha: string }
+    /** A failing stack's search: the prefix up to `lo` passed, the one up to `hi` fails (indexes in `runs`). */
+    bisect?: { lo: number; hi: number; fails?: string }
+    /** On the tip, once its merge request is asked: the results under it that the request names and lands with it, in order. */
+    lands?: string[]
+    /** On a result under the tip, once merged with it: the tip's run, whose request named it. */
+    tip?: string
+    /** Set on the result found to fail, by the tip that found it: it goes back alone. */
+    blame?: { why: string; inputs: ArtifactRef[] }
+  }
+}
+
+/** A landing queue as `explain` and `/ui` show it: where a result stands in its target's queue. */
+export interface LandingQueueView {
+  key: string
+  state: TaskLanding['state']
+  /** From 1; undefined once the landing ended. */
+  position?: number
+  length: number
+  /** The result that holds the target's turn, when it is not this one. */
+  holder?: { runId: string; taskId: string }
+  /** The stack this result is in: its size now, the configured size, and its place in it (from 1). */
+  batch?: { size: number; limit: number; index: number }
 }
 
 /**
@@ -536,6 +590,8 @@ export interface Explanation {
    * and egress outcome. Only when there are any.
    */
   webCalls?: WebCalls
+  /** Where the run's accepted result stands in its target's landing queue, while it is in one. */
+  landing?: LandingQueueView
 }
 
 /** A run's web calls, as `explain` and `/ui` show them (T262). */
@@ -639,6 +695,12 @@ export interface Config {
    * fix's request while its run waits on it, and the requests a Worker's deferred tool call waits on.
    */
   approvalPollSeconds?: number
+  /**
+   * Results the head of a target's landing queue lands at once, as a stack rebased in order and checked
+   * once (a merge train; default 1: no batching). A stack that fails is bisected to the failing result,
+   * which goes back alone.
+   */
+  landingBatch?: number
   /**
    * Minutes a board task's step waits on the operator for its Worker's deferred tool call of class
    * `command`, from its request's creation (default 10; INV-9); past it the call is treated as
