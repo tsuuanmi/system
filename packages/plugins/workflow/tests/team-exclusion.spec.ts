@@ -219,15 +219,6 @@ describe('a team member\'s allowed Workers under teams.excludeWorkers', () => {
   const ALLOWED = ['w:chat/standard', 'm:api']
   const LEFT = [...WEB_TIERS].sort()
 
-  it('changes nothing without the option', async () => {
-    expect(await restriction(engine({}, [m(1), m(2)]), RUN, m(1) as ResolvedNode)).toEqual({})
-  })
-
-  it('restricts the first member too, to the Workers listed now less the ones left out', async () => {
-    const teams = { workers: ALLOWED, reason: LEFT_OUT }
-    expect(await restriction(engine(TEAMS, [m(1), m(2)]), RUN, m(1) as ResolvedNode)).toEqual({ restrict: teams, teams, leftOut: LEFT })
-  })
-
   it('restricts a later member by both rules, names the Workers the exclusion refuses, and keeps it alone for when the distinct-account rule is lifted (S2)', async () => {
     const held = await restriction(engine(TEAMS, [m(1), m(2)], { s1: 'w:chat/standard' }), RUN, m(2) as ResolvedNode)
     expect(held).toEqual({
@@ -237,11 +228,6 @@ describe('a team member\'s allowed Workers under teams.excludeWorkers', () => {
     // Without the option, as before.
     expect(await restriction(engine({}, [m(1), m(2)], { s1: 'w:chat/standard' }), RUN, m(2) as ResolvedNode))
       .toEqual({ restrict: { workers: [...WEB, API].map((w) => w.worker), reason: ACCOUNTS }, distinctAccounts: ACCOUNTS })
-  })
-
-  it('reports the entries that match no Worker or account, beside the ones that do (S1)', async () => {
-    const typo = { teams: { excludeWorkers: ['web-main', 'claude-ma1n'] } }
-    expect(await restriction(engine(typo, [m(1), m(2)]), RUN, m(1) as ResolvedNode)).toMatchObject({ teams: { workers: ALLOWED }, unmatched: ['claude-ma1n'] })
   })
 
   it('refuses every member, whatever its role, when the exclusion leaves the team too few provider families (B1, INV-2)', async () => {

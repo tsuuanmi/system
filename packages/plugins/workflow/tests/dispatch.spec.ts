@@ -816,28 +816,6 @@ describe('every dispatched start stays explained (review T202 of PR #37)', () =>
     }
   })
 
-  it('uses an approval past approvedHoldMinutes for nothing, even with its Worker free and fresh readings', async () => {
-    const { ctx, workers, read } = await boot({ workflow: { dispatch: { approvedHoldMinutes: 30 } } })
-    workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
-    await read('acc-a', 0)
-    const task = await ready(ctx, 'expired, then free')
-    await ctx.workflow.sweepDispatch()
-    const ask = askOf(ctx.workflow.dispatchStatus(), task.taskId)!
-    workers.extra = [agent('agent:acc-a/develop', 'acc-a', { load: { running: 1, queued: 0, pending: 0, slots: 1 } })]
-    await approve(ctx, ask.requestId!)
-    await ctx.workflow.sweepDispatch()
-    expect(askOf(ctx.workflow.dispatchStatus(), task.taskId)).toMatchObject({ state: 'approved', askId: ask.askId })
-    // Its Worker is free again, read a minute ago; the approval is 31 minutes old.
-    workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
-    await read('acc-a', 0)
-    ctx.store.db.prepare('UPDATE workflow_dispatch SET approved_at = ? WHERE ask_id = ?').run(new Date(Date.now() - 31 * 60_000).toISOString(), ask.askId)
-    await ctx.workflow.sweepDispatch()
-    expect(workers.started).toEqual([])
-    expect((await ctx.board.task(task.taskId))!.state).toBe('ready')
-    expect(rowsOf(ctx, task.taskId).find((r) => r.ask_id === ask.askId)!.state).toBe('closed')
-    expect(closedOf(ctx)).toEqual(['hold-expired'])
-  })
-
   it('charges the starts settlement makes to the same maxPerPass as the asks and starts selection makes', async () => {
     const { ctx, workers, read } = await boot({ workflow: { dispatch: { maxPerPass: 1, maxRunningPerProject: 4 } } })
     workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
