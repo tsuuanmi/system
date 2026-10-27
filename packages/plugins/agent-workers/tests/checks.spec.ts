@@ -15,7 +15,7 @@ import Artifacts from '@tsuuanmi/system-artifacts'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
-import { captureGitSubject, SchemaRegistry } from '@tsuuanmi/system-libs'
+import { captureGitSubject, CLEAN_VERSION, SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type RunCheck, type WorkRequirement } from '@tsuuanmi/system-workers'
 import type { Checked } from '@tsuuanmi/system-workers-core'
@@ -274,6 +274,32 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
       // A clean change passes both.
       const clean = await write('run_clean')
       expect(await check('run_clean', clean)).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed' }, { check: 'lint', outcome: 'passed', exitCode: 0 }] })
+    })
+
+    it('checks a tip in a worktree of its own, set up and confined, bound to exactly that commit and clean (T305b, INV-5)', async () => {
+      const repo = repository()
+      const { ctx } = await boot(repo, { checks: { tests: TESTS } }, [...SETUP, TESTS])
+      const commit = git(repo, 'rev-parse', 'HEAD')
+      const checked = await ctx.workers.checkTip!({ runId: 'daily-tip', repository: repo, commit, classification: 'operator-shared' })
+      expect(checked).toMatchObject({ source: 'agents', outcome: 'checked', result: { check: 'tests', outcome: 'passed', exitCode: 0, reason: expect.stringContaining(`exited 0 on git:${commit}:${CLEAN_VERSION}`) } })
+      if (checked?.outcome !== 'checked') throw new Error('not checked')
+      expect((ctx.artifacts.get(checked.evidence as `sha256:${string}`)!.body as { subject: unknown }).subject).toEqual({ type: 'git-head', ref: commit, version: CLEAN_VERSION })
+      // Asked again for the same commit and day: the stored outcome, the suite not run twice (INV-4).
+      expect(await ctx.workers.checkTip!({ runId: 'daily-tip', repository: repo, commit, classification: 'operator-shared' })).toMatchObject({ outcome: 'checked', result: { outcome: 'passed' } })
+      // A repository no setup names is no source's.
+      expect(await ctx.workers.checkTip!({ runId: 'daily-other', repository: repository(), commit, classification: 'operator-shared' })).toBeUndefined()
+    })
+
+    it('refuses to check a tip whose setup changed a tracked file or left an untracked one: what would run is not the commit asked for (T305b, INV-5)', async () => {
+      for (const [runId, change] of [['daily-tracked', 'cp dep.js test.mjs'], ['daily-untracked', 'cp dep.js extra.js']] as const) {
+        const repo = repository()
+        const { ctx } = await boot(repo, { commands: [...SETUP, change], checks: { tests: TESTS } }, [...SETUP, change, TESTS])
+        const commit = git(repo, 'rev-parse', 'HEAD')
+        const checked = await ctx.workers.checkTip!({ runId, repository: repo, commit, classification: 'operator-shared' })
+        expect(checked, runId).toMatchObject({ outcome: 'refused', cause: 'moved', reason: expect.stringContaining(`git:${commit}:${CLEAN_VERSION}`) })
+        // Nothing ran on the changed tree.
+        expect(ctx.store.db.prepare('SELECT 1 FROM agent_check_runs WHERE workflow_run_id = ?').get(runId), runId).toBeUndefined()
+      }
     })
 
     it('sets the worktree up again, offline and confined, for a result that adds a workspace package, before its checks, which pass and never start an install; recorded as a decision (T235)', async () => {
@@ -768,6 +794,7 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
       'assertion.mjs': script(' FAIL  packages/x/tests/a.spec.ts > suite > test\nAssertionError: expected 1 to be 2\n Tests  1 failed | 90 passed (91)', 'alone'),
       'workers.mjs': 'console.log(`workers ${process.env.SYSTEM_CHECK_MAX_WORKERS}`)\n',
       'scope.mjs': 'console.log(`scope ${process.env.SYSTEM_CHECK_SCOPE} base ${/^[0-9a-f]{40}$/.test(process.env.SYSTEM_CHECK_BASE ?? "") ? "the fork" : "none"}`)\n',
+      'alone.mjs': 'console.log(`alone ${process.env.SYSTEM_CHECK_ALONE} base ${process.env.SYSTEM_CHECK_BASE ?? "none"}`)\n',
     })
     const step = (runId: string, at: { workspace: string; subject: { ref: string; version: string } }, checks: RunCheck[] = ['tests']) =>
       ({ runId, workspace: at.workspace, subject: at.subject, checks, classification: 'operator-shared' as const })
@@ -828,6 +855,21 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
       expect(evidenceOf(ctx, landing).checks[0]!.output!.tail).toBe('scope landing base the fork\n')
       // And each is stored, so neither runs again.
       expect(await checks.check({ ...step('run_scope', at), scope: 'landing' })).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed' }] })
+    })
+
+    it('never hands a check what its own parent check said: run inside a check run alone, its first run is not alone, and it gets no starting commit it was not given', async () => {
+      // This suite itself runs as a check, and a check that failed only on timeouts runs again with SYSTEM_CHECK_ALONE=1.
+      vi.stubEnv('SYSTEM_CHECK_ALONE', '1')
+      vi.stubEnv('SYSTEM_CHECK_BASE', 'feedfacefeedfacefeedfacefeedfacefeedface')
+      cleanups.push(() => vi.unstubAllEnvs())
+      const repo = repository()
+      commit(repo, files())
+      const { write, checksWith, ctx } = await boot(repo, { checks: { tests: 'node alone.mjs' } }, [...SETUP, 'node alone.mjs'])
+      const at = await write('run_alone')
+      // A worktree with no starting commit recorded, as one made before T299 was: its check is told none.
+      ctx.store.db.prepare('UPDATE agent_worktrees SET forked_at = NULL WHERE workflow_run_id = ?').run('run_alone')
+      const checked = await checksWith({ queue: new CheckQueue() }).check(step('run_alone', at))
+      expect(evidenceOf(ctx, checked).checks[0]!.output!.tail).toBe('alone 0 base none\n')
     })
 
     it('runs a check that failed only on timeouts once more alone, on a recorded decision, and its second result counts', async () => {

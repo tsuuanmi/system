@@ -136,6 +136,14 @@ export const FORK_MIGRATION = {
   version: 16,
   sql: 'ALTER TABLE agent_worktrees ADD COLUMN forked_at TEXT;',
 }
+/**
+ * When a check on a tip (T305b), which has no agent run, last started or ended in the worktree: its
+ * retention counts from then, never from when the worktree was cut, so a long daily run is never past it.
+ */
+export const USED_MIGRATION = {
+  version: 23,
+  sql: 'ALTER TABLE agent_worktrees ADD COLUMN used_at TEXT;',
+}
 /** Characters of a change's `git diff --stat` a landing reports at most (INV-9). */
 const STAT_CHARS = 1500
 
@@ -163,9 +171,15 @@ export const notKnownGone = (alias: string): string => `${alias}liveness_decisio
 const FREE = `NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.workflow_run_id = w.workflow_run_id AND r.status IN ('queued', 'running'))
   AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.workflow_run_id = w.workflow_run_id AND ${notKnownGone('r.')} AND r.run_id IS NOT ?)`
 
-/** A worktree that is {@link FREE} (with no run excepted), and whose workflow run's last agent run ended before the cutoff (the second `?`). */
+/**
+ * When a worktree was last used: its workflow run's last agent run, or the last start or end of a check
+ * on a tip in it (`used_at`, T305b), whichever is later; when it was cut, with neither.
+ */
+const LAST_USED = `max(COALESCE((SELECT MAX(r.updated_at) FROM agent_runs r WHERE r.workflow_run_id = w.workflow_run_id), w.created_at), COALESCE(w.used_at, ''))`
+
+/** A worktree that is {@link FREE} (with no run excepted), and last used before the cutoff (the second `?`). */
 const IDLE = `${FREE}
-  AND COALESCE((SELECT MAX(r.updated_at) FROM agent_runs r WHERE r.workflow_run_id = w.workflow_run_id), w.created_at) < ?`
+  AND ${LAST_USED} < ?`
 
 /** A worktree that cannot be prepared, checked, or retired; what git said, if it ran. */
 class WorktreeError extends Error {
@@ -502,6 +516,8 @@ interface WorktreeRow {
   /** The worktree's administrative directory, recorded when it was added (real path). */
   gitdir: string
   created_at: string
+  /** The last start or end of a check on a tip in it (T305b). */
+  used_at?: string | null
   removed_at: string | null
   /** The `retention` decision that retires it, once the rule has decided. */
   decision: string | null
@@ -578,6 +594,8 @@ export type RunWorktreeRelease = WorktreeRelease & { runId: string }
 
 export class Worktrees {
   private readonly queues = new Map<string, Promise<unknown>>()
+  /** The worktrees a check on a tip uses now, in this process (T305b), by repository and run: none is retired while it is. */
+  private readonly inUse = new Set<string>()
   private version: [number, number] | undefined
 
   /**
@@ -626,6 +644,36 @@ export class Worktrees {
   }
 
   /**
+   * Hold the worktree of `runId` on `repository` (a real path) for a check on a tip (T305b), which has no
+   * agent run to keep it: from now until the returned release, through its setup, its wait in the queue
+   * of checks, and its command, neither the retention nor the operator's removal retires it, and it is
+   * listed in use. Its `used_at` is set at both ends, so its retention counts from the check's end, and a
+   * stop that cuts the check (the hold is this process's) leaves it counted from the check's start.
+   * Taken before {@link acquire}, so no sweep comes between the worktree's cut and its hold.
+   */
+  use(repository: string, runId: string): () => void {
+    const key = `${repository}\0${runId}`
+    const stamp = (): void => {
+      this.ctx.store.transaction((db) => {
+        db.prepare('UPDATE agent_worktrees SET used_at = ? WHERE repository = ? AND workflow_run_id = ? AND removed_at IS NULL').run(new Date().toISOString(), repository, runId)
+      })
+    }
+    this.inUse.add(key)
+    stamp()
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      stamp()
+      this.inUse.delete(key)
+    }
+  }
+
+  private used(row: Pick<WorktreeRow, 'repository' | 'workflow_run_id'>): boolean {
+    return this.inUse.has(`${row.repository}\0${row.workflow_run_id}`)
+  }
+
+  /**
    * Where the worktree of `runId` on the repository at `workspace` is, or where {@link acquire} adds
    * it: the stored path, else the planned one. Reads only: a run's brief names it before it exists.
    */
@@ -638,9 +686,10 @@ export class Worktrees {
    * The worktree of `runId` on `repository` (a real path from {@link check}): the stored one,
    * after checking it is still this run's, or a new one. A new one is added from the run's branch
    * when that exists (a run continued after its worktree was removed), else on a new branch from
-   * the repository's HEAD. One change at a time per repository. Throws {@link WorktreeError}.
+   * the repository's HEAD, or at the commit `at` (the daily check's tip, T305b). One change at a
+   * time per repository. Throws {@link WorktreeError}.
    */
-  acquire(repository: string, runId: string): Promise<string> {
+  acquire(repository: string, runId: string, at = 'HEAD'): Promise<string> {
     if (!RUN_ID.test(runId)) return Promise.reject(new WorktreeError(`${runId} cannot name a worktree`))
     return this.exclusive(repository, async () => {
       const row = this.row(repository, runId)
@@ -669,7 +718,7 @@ export class Worktrees {
           throw new WorktreeError(`${branch} ends in ${tip}, the retention's commit of the worktree cut to start from the work of run ${row.carried_from}, which never got into it: that commit holds no run's work (the files it did not get are deleted), so no worktree is added from it; the branch is left for the operator`)
         }
       }
-      await git(repository, exists ? ['worktree', 'add', path, branch] : ['worktree', 'add', '-b', branch, path, 'HEAD'])
+      await git(repository, exists ? ['worktree', 'add', path, branch] : ['worktree', 'add', '-b', branch, path, at])
       const common = real(resolve(repository, (await git(repository, ['rev-parse', '--git-common-dir'])).trim()))
       const gitdir = pointer(path)
       if (!common || !gitdir || !under(gitdir, join(common, 'worktrees'))) throw new WorktreeError(`${path} was added, and its .git file does not point into the worktrees of ${repository}; it is left for the operator`)
@@ -682,7 +731,7 @@ export class Worktrees {
           ON CONFLICT (repository, workflow_run_id) DO UPDATE SET path = excluded.path, branch = excluded.branch, gitdir = excluded.gitdir, created_at = excluded.created_at,
           removed_at = NULL, decision = NULL, failure = NULL, failed_at = NULL, setup_hash = NULL, setup_decision = NULL, carried_from = NULL, carried_commit = NULL, forked_at = excluded.forked_at`).run(repository, runId, path, branch, gitdir, new Date().toISOString(), forkedAt)
       })
-      this.ctx.logger.info(`agent Workers: run ${runId} works in ${path} on ${branch}, ${exists ? 'added again from that branch' : `branched from the HEAD of ${repository}`}`)
+      this.ctx.logger.info(`agent Workers: run ${runId} works in ${path} on ${branch}, ${exists ? 'added again from that branch' : `branched from ${at === 'HEAD' ? 'the HEAD' : at} of ${repository}`}`)
       return path
     })
   }
@@ -779,11 +828,16 @@ export class Worktrees {
       ORDER BY failed_at IS NOT NULL, failed_at, created_at LIMIT ?`).all(null, cutoff, SWEEP_BATCH) as unknown as WorktreeRow[]
     for (const candidate of due) {
       if (stopped.aborted) break
+      // A check on a tip uses it now (T305b): it stays, whatever its age.
+      if (this.used(candidate)) {
+        outcome.kept.push(candidate.path)
+        continue
+      }
       await this.exclusive(candidate.repository, async () => {
         // Looked at again alone: a run of the workflow run may have taken the worktree meanwhile.
         const row = this.ctx.store.db.prepare(`SELECT * FROM agent_worktrees w WHERE repository = ? AND workflow_run_id = ? AND removed_at IS NULL AND ${IDLE}`)
           .get(candidate.repository, candidate.workflow_run_id, null, cutoff) as WorktreeRow | undefined
-        if (!row) return
+        if (!row || this.used(row)) return
         try {
           // Decided once: a worktree that stays in place is retried under the same decision.
           const decision = row.decision ?? this.decide(row, retentionHours)
@@ -838,11 +892,11 @@ export class Worktrees {
     const rows = this.ctx.store.db.prepare(`SELECT w.*,
       EXISTS (SELECT 1 FROM agent_runs r WHERE r.workflow_run_id = w.workflow_run_id AND r.status IN ('queued', 'running')) AS busy,
       EXISTS (SELECT 1 FROM agent_runs r WHERE r.workflow_run_id = w.workflow_run_id AND r.status NOT IN ('queued', 'running') AND ${notKnownGone('r.')}) AS held,
-      COALESCE((SELECT MAX(r.updated_at) FROM agent_runs r WHERE r.workflow_run_id = w.workflow_run_id), w.created_at) AS last
+      ${LAST_USED} AS last
       FROM agent_worktrees w WHERE removed_at IS NULL ORDER BY created_at, workflow_run_id LIMIT ?`).all(limit) as unknown as Array<WorktreeRow & { busy: number; held: number; last: string }>
     const worktrees: RunWorktree[] = []
     for (const row of rows) {
-      const state = row.busy ? 'in-use' : row.held ? 'held' : 'finished'
+      const state = row.busy || this.used(row) ? 'in-use' : row.held ? 'held' : 'finished'
       worktrees.push({
         runId: row.workflow_run_id, repository: row.repository, path: row.path, branch: row.branch, createdAt: row.created_at, lastActivityAt: row.last, state,
         changes: await this.exclusive(row.repository, () => this.changesOf(row)),
@@ -893,6 +947,7 @@ export class Worktrees {
   /** {@link plan} of one worktree, `freeing` the agent run the operator frees (not counted as holding it), or none. */
   private async planOne(row: WorktreeRow, commit: boolean, freeing: string | null): Promise<WorktreeRelease> {
     const base = { path: row.path, branch: row.branch }
+    if (this.used(row)) return { ...base, outcome: 'kept', why: `a check on a tip runs in it now (${row.workflow_run_id}), so it stays` }
     if (!this.ctx.store.db.prepare(`SELECT 1 FROM agent_worktrees w WHERE repository = ? AND workflow_run_id = ? AND ${FREE}`).get(row.repository, row.workflow_run_id, freeing)) {
       return {
         ...base, outcome: 'kept',
@@ -2036,7 +2091,7 @@ export class Worktrees {
 
   /** The `retention` decision that retires a worktree (INV-13), recorded on its row. */
   private decide(row: WorktreeRow, retentionHours: number): string {
-    const last = (this.ctx.store.db.prepare('SELECT MAX(updated_at) AS last FROM agent_runs WHERE workflow_run_id = ?').get(row.workflow_run_id) as { last: string | null }).last ?? row.created_at
+    const last = (this.ctx.store.db.prepare(`SELECT ${LAST_USED} AS last FROM agent_worktrees w WHERE repository = ? AND workflow_run_id = ?`).get(row.repository, row.workflow_run_id) as { last: string | null } | undefined)?.last ?? row.created_at
     const decision = this.ctx.artifacts.recordDecision({
       schema: 'decision@1.3', decisionType: 'retention', question: `Is the worktree ${row.path} of workflow run ${row.workflow_run_id} removed?`, inputs: [],
       candidates: [

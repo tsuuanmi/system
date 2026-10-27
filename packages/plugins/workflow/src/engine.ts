@@ -32,6 +32,7 @@ import { MATERIAL_REQUEST, runSnapshot, showsTextMaterial, sourceOf } from './so
 import { TaskRuns } from './tasks.ts'
 import { decide, expireTie, proving, restriction, runtimeOf, tally, teamGroup, teamPrompt } from './teams.ts'
 import { Dispatcher } from './dispatch.ts'
+import { DailyChecks } from './daily-check.ts'
 import { ScheduledReviews } from './scheduled-review.ts'
 import { type Config, errorOf, LEASE_TTL_MS, newId, TASK_WAIT_MS, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type TaskBudget, type TaskCarry, type TaskDispatch, type WorkflowError, WorkflowFailure } from './types.ts'
 import { view } from './views.ts'
@@ -62,6 +63,8 @@ export class Engine {
   readonly dispatch: Dispatcher
   /** The scheduled review of one area a day (D93 item 8), off unless configured on; its settings validated here. */
   readonly scheduledReviews: ScheduledReviews
+  /** The daily run of every browser spec on a ref's tip (T305b), off unless configured on; its settings validated here. */
+  readonly dailyChecks: DailyChecks
   readonly templates: Record<string, NodeTemplate[]>
   /** The version of the package each contributed template came from (`Workflow.template`), for the playbook a handbook slice names. */
   readonly templateVersions = new Map<string, string>()
@@ -94,6 +97,7 @@ export class Engine {
     // A dispatch setting out of its range refuses the row, with its path (INV-2).
     this.dispatch = new Dispatcher(this)
     this.scheduledReviews = new ScheduledReviews(this)
+    this.dailyChecks = new DailyChecks(this)
     this.templates = { ...DEFAULT_TEMPLATES, ...config.templates }
     // Checked at load, not at the first call. A configured template that fails preflight is refused
     // alone, with why (INV-2): the engine and every other template keep working, and health names it.

@@ -168,6 +168,8 @@ describe('related tests (T299)', () => {
     const browser = browserSpecs()
     expect(checkScope({ SYSTEM_CHECK_SCOPE: 'landing', SYSTEM_CHECK_BASE: 'a1b2c3d4e5f6' }).browserBase).toBe('a1b2c3d4e5f6')
     expect(checkScope({ SYSTEM_CHECK_SCOPE: 'landing' }).browserBase).toBeUndefined()
+    // The daily run of a tip (T305b): the whole suite, no browser spec left out, whatever starting commit is named.
+    expect(checkScope({ SYSTEM_CHECK_SCOPE: 'daily', SYSTEM_CHECK_BASE: 'a1b2c3d4e5f6' })).toEqual({ full: expect.stringContaining('daily') })
     expect(skippedBrowserSpecs(['packages/plugins/workflow/src/engine.ts'], { all, specs: browser })).toEqual(browser)
     expect(skippedBrowserSpecs(['packages/plugins/provider-chatgpt-web/src/driver.ts'], { all, specs: browser })).toEqual([])
     expect(skippedBrowserSpecs(['packages/plugins/workflow/src/engine.ts'], { every: true, all, specs: browser })).toEqual([])

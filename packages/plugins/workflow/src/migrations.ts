@@ -187,4 +187,16 @@ export const MIGRATIONS = [{
   // one row per task, the first time; their count moves the bound from warn to refuse.
   version: 26,
   sql: 'CREATE TABLE workflow_handbook_tasks (task_id TEXT PRIMARY KEY, created_at TEXT NOT NULL);',
+}, {
+  // The daily run of every browser spec on a ref's tip (T305b, D104): one row per run, the commit it
+  // checked, its state, the failing lines (JSON array), and the board task a failure proposed. At most
+  // one scheduled (not manual) run a day; `check_id` names the check's worktree and stored outcome, so a
+  // run a restart cut resumes its own check.
+  version: 27,
+  sql: `CREATE TABLE workflow_daily_checks (
+    check_id TEXT PRIMARY KEY, day TEXT NOT NULL, trigger TEXT NOT NULL, repo_ref TEXT NOT NULL, commit_sha TEXT NOT NULL, state TEXT NOT NULL, problem TEXT,
+    failures TEXT NOT NULL DEFAULT '[]', evidence TEXT, last_green TEXT, task_id TEXT, duplicate INTEGER NOT NULL DEFAULT 0, started_at TEXT NOT NULL, finished_at TEXT
+  );
+  CREATE UNIQUE INDEX workflow_daily_checks_day ON workflow_daily_checks (day) WHERE trigger = 'schedule';
+  CREATE INDEX workflow_daily_checks_state ON workflow_daily_checks (state, started_at);`,
 }]

@@ -27,6 +27,7 @@ import { MIGRATIONS } from './migrations.ts'
 import { approve, continueRun, stop, supersede } from './operator.ts'
 import { pollMs } from './queue.ts'
 import { deleteRun, purge } from './retention.ts'
+import { type DailyCheckReport, type DailyCheckRow, dailyCheckProblems, renderDailyReport } from './daily-check.ts'
 import { renderReport, type ScheduledReviewReport, type ScheduledReviewRow, scheduledReviewProblems } from './scheduled-review.ts'
 import { retryHeldWakes, wake, wakeSafely } from './sessions.ts'
 import type { NodeTemplate } from './spec.ts'
@@ -36,6 +37,8 @@ import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, T
 import { draws, explain, usage } from './views.ts'
 
 export { renderReport as renderScheduledReviewReport, SCHEDULED_REVIEW, SCHEDULED_REVIEW_NODES, scheduledReviewProblems, scheduledReviewSettings } from './scheduled-review.ts'
+export { dailyCheckProblems, dailyCheckSettings, renderDailyReport as renderDailyCheckReport } from './daily-check.ts'
+export type { DailyCheckReport, DailyCheckRow, DailyCheckSettings } from './daily-check.ts'
 export type { AreaTotals, FiledTask, ScheduledReviewReport, ScheduledReviewRow, ScheduledReviewSettings } from './scheduled-review.ts'
 export { compose, DEFAULT_TEMPLATES, preflight, resolve } from './spec.ts'
 export type { Instructions, NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
@@ -47,7 +50,7 @@ export { adviceProblem, adviseInShadow, advisorStop, ANSWER_SCHEMA, brierScores,
 export type { Advice, AdviceDetail, Advisor, AdvisorCandidate, AdvisorConfig, AdvisorCounts, AdvisorFeatures, AdvisorSettings, AdvisorSignal, CandidateAdvice, OutcomeData, Question, QuestionScore } from './advisor.ts'
 export type { HoldView, StepHold, StepInFlight } from './hold.ts'
 export type { DispatchPass, DispatchPassView, DispatchPause, DispatchSettings, DispatchStarted, DispatchStatus, DispatchWindow } from './dispatch.ts'
-export type { Config, DispatchConfig, ScheduledReviewConfig, ExplainedDecision, Explanation, LandingQueueView, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartedBy, StartInput, TaskCarry, TaskClaim, TaskDispatch, TaskLanding, TaskOutcome, TaskQueue, TaskRebase, TaskStartInput, TaskView, TemplateStep, UsageDraws, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
+export type { Config, DailyCheckConfig, DispatchConfig, ScheduledReviewConfig, ExplainedDecision, Explanation, LandingQueueView, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartedBy, StartInput, TaskCarry, TaskClaim, TaskDispatch, TaskLanding, TaskOutcome, TaskQueue, TaskRebase, TaskStartInput, TaskView, TemplateStep, UsageDraws, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -100,7 +103,7 @@ export function checkConfig(config: Config = {}): string[] {
       return [`template ${name}: ${(error as Error).message}`]
     }
   })
-  return [...templates, ...checkTeams(config.teams), ...dispatchProblems(config), ...scheduledReviewProblems(config)]
+  return [...templates, ...checkTeams(config.teams), ...dispatchProblems(config), ...scheduledReviewProblems(config), ...dailyCheckProblems(config)]
 }
 
 export class Workflow extends Service {
@@ -198,6 +201,16 @@ export class Workflow extends Service {
       taskTemplate: z.string().description('The board task template the proposed tasks name, when the project uses one (default none)'),
       template: z.string().description('The workflow template a review runs (default scheduled-review, which the software-development profile provides)'),
     }).description('The scheduled review of existing code, one area a day, filing confirmed findings as proposed board tasks (docs/design/handbook.md#scheduled-review)'),
+    dailyCheck: z.object({
+      enabled: z.boolean().default(false).description('Run the whole suite, every browser spec with it, on the tip of ref once a day, and propose a failure as one board task (T305b; docs/engineering/testing.md). Off by default: the operator turns it on, with projectId and repository, and a worktreeSetup of that repository (agent-workers) with a tests check'),
+      projectId: z.string().description('The board project a failure is proposed in (required when enabled)'),
+      repository: z.string().description('Absolute path of the git repository whose tip is checked, in a worktree of its own and never its working tree (required when enabled)'),
+      ref: z.string().default('dev').description('The branch or ref checked, at its tip (default dev)'),
+      hourUtc: z.natural().max(23).default(4).description('The UTC hour from which the day\'s run may start; one scheduled run a day at most (default 4)'),
+      timeoutMinutes: z.natural().min(1).max(1440).description('Minutes a run may take before it is recorded as an error (default 180)'),
+      actionClass: z.string().description('The action class the proposed task carries (default workspace-write)'),
+      taskTemplate: z.string().description('The board task template the proposed task names, when the project uses one (default none)'),
+    }).description('The daily run of every browser spec on the tip of a ref, filing a failure as one board task (docs/engineering/testing.md)'),
     repositories: z.object({
       hosts: z.array(z.string()).default(['github.com']).description('Hosts a review may read a public repository from'),
       maxFiles: z.natural().min(1).max(200).description('Files a review reads from a repository (default 40)'),
@@ -229,7 +242,9 @@ export class Workflow extends Service {
       // pass is one interval after start, so a restart never starts a review on the board's first moments.
       const reviewing = engine.scheduledReviews.enabled ? setInterval(() => void engine.scheduledReviews.tick(), 15 * 60_000) : undefined
       reviewing?.unref()
-      const daily = setInterval(() => purge(engine), 24 * 60 * 60_000)
+      const checking = engine.dailyChecks.enabled ? setInterval(() => void engine.dailyChecks.tick(), 15 * 60_000) : undefined
+      checking?.unref()
+      const daily =setInterval(() => purge(engine), 24 * 60 * 60_000)
       daily.unref()
       // Dispatch (ADR-0064): every dispatch.sweepSeconds; with dispatch.enabled false, no timer runs.
       const dispatching = engine.dispatch.settings.enabled ? setInterval(() => void engine.dispatch.sweep(), engine.dispatch.settings.sweepSeconds * 1000) : undefined
@@ -245,6 +260,7 @@ export class Workflow extends Service {
       return async () => {
         clearInterval(daily)
         clearInterval(reviewing)
+        clearInterval(checking)
         clearInterval(deferrals)
         clearInterval(dispatching)
         await engine.close()
@@ -258,6 +274,8 @@ export class Workflow extends Service {
       c.effect(() => () => engine.tasks.detach(board))
       // A scheduled review a stop or restart cut is settled from its durable run (INV-4), schedule on or not.
       queueMicrotask(() => void engine.scheduledReviews.reconcile().catch((error: unknown) => ctx.logger.warn(`workflow: scheduled reviews were not reconciled: ${(error as Error)?.message ?? String(error)}`)))
+      // A daily run a stop or restart cut resumes its own stored check (INV-4), schedule on or not.
+      queueMicrotask(() => void engine.dailyChecks.reconcile().catch((error: unknown) => ctx.logger.warn(`workflow: daily checks were not reconciled: ${(error as Error)?.message ?? String(error)}`)))
     })
     ctx.on('worker-sessions/delivered', (sessionIds) => {
       for (const id of sessionIds) wakeSafely(engine, id)
@@ -499,6 +517,27 @@ export class Workflow extends Service {
    */
   scheduledReviewTick(at?: Date): Promise<ScheduledReviewRow | undefined> {
     return this.engine.scheduledReviews.tick(at)
+  }
+
+  /**
+   * The daily check's pass at `at` (T305b): when `dailyCheck.enabled`, from its UTC hour, and none is
+   * recorded for the day, the whole suite with every browser spec runs on the tip of the configured ref,
+   * and a failure is proposed as one board task (none while an earlier one is open). A test seam as
+   * `scheduledReviewTick(at)` is; the engine's own timer calls it every 15 minutes. Undefined when nothing was due.
+   */
+  dailyCheckTick(at?: Date): Promise<DailyCheckRow | undefined> {
+    return this.engine.dailyChecks.tick(at)
+  }
+
+  /** A daily run now, outside the schedule: the operator's own run. Recorded as a manual run. */
+  dailyCheckNow(at?: Date): Promise<DailyCheckRow | undefined> {
+    return this.engine.dailyChecks.now(at)
+  }
+
+  /** The daily runs: the latest, the latest green, and the latest `limit` runs (default 30); a read of the engine's rows only. */
+  dailyCheckReport(limit?: number): DailyCheckReport & { text: string } {
+    const report = this.engine.dailyChecks.report(limit)
+    return { ...report, text: renderDailyReport(report) }
   }
 
   /** A scheduled review now, outside the schedule (`area` names a guide's area; else the day's): the operator's own run. Recorded as a manual review. */

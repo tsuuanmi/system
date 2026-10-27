@@ -730,6 +730,32 @@ export interface Config {
   dispatch?: DispatchConfig
   /** The scheduled review of existing code, one area a day, filing confirmed findings as proposed board tasks (D93 item 8; ./scheduled-review.ts). Off by default. */
   scheduledReview?: ScheduledReviewConfig
+  /** The daily run of every browser spec on a ref's tip, filing a failure as one board task (T305b; ./daily-check.ts). Off by default. */
+  dailyCheck?: DailyCheckConfig
+}
+
+/**
+ * The daily check's settings (T305b), each validated when the row loads. Off unless the operator sets
+ * `enabled`; then `projectId` and `repository` are required. The repository's own `worktreeSetup`
+ * (agent-workers) gives the setup and the `tests` command it runs.
+ */
+export interface DailyCheckConfig {
+  /** Whether the daily run happens (default false: the operator turns it on). */
+  enabled?: boolean
+  /** The board project a failure is proposed in (required when enabled). */
+  projectId?: string
+  /** Path of the git repository whose tip is checked (required when enabled). */
+  repository?: string
+  /** The branch or ref checked, at its tip (default `dev`). */
+  ref?: string
+  /** The UTC hour from which the day's run may start (0 to 23, default 4). */
+  hourUtc?: number
+  /** Minutes a run may take before it is recorded as an error (default 180). */
+  timeoutMinutes?: number
+  /** The action class the proposed task carries (default `workspace-write`). */
+  actionClass?: string
+  /** The board task template the proposed task names, when the project uses one (default none). */
+  taskTemplate?: string
 }
 
 /**

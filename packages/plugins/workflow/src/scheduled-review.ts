@@ -277,11 +277,11 @@ export const citesShown = (f: Pick<Finding, 'file' | 'line'>, lines: ReadonlyMap
   !!f.file && !!f.line && f.line <= (lines.get(f.file) ?? 0)
 
 /** The states of a board task that count as open for the duplicate rule: a task not yet done or cancelled. */
-const OPEN_STATES = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval'] as const
+export const OPEN_STATES = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval'] as const
 /** Lines within which a finding at the same file counts as the same one as an open task's. */
 const SAME_PLACE = 3
 
-const squeeze = (title: string): string => title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+export const squeeze = (title: string): string => title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 
 /** A task a review proposed, as its row keeps it. */
 export interface FiledTask { taskId: string; key: string; title: string; file: string; line: number }

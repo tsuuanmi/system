@@ -1461,6 +1461,23 @@ export const APP_JS = `'use strict'
       reasons)
   }
 
+  // Home's "Daily run" (T305b): the last daily run of every browser spec on dev's tip, its state, commit, and last green
+  // commit, and the task a failure proposed. Shown only when the daily run is on or has run.
+  const DAILY_TONE = { passed: 'ok', failed: 'bad', error: 'warn', running: 'info' }
+  const dailyOf = async () => { try { return await api('daily-check') } catch (error) { return error.status === 404 || error.status === 503 ? null : { error } } }
+  const dailyView = (daily) => {
+    if (!daily || (!daily.error && !daily.enabled && !daily.last)) return null
+    const panel = (...parts) => el('section', { class: 'panel', 'aria-label': 'Daily run' }, el('h3', {}, 'Daily run of every browser spec'), ...parts)
+    if (daily.error) return panel(el('p', { class: 'state failed' }, 'The daily run could not be read: ' + daily.error.message + '.'))
+    const l = daily.last
+    if (!l) return panel(el('p', { class: 'muted' }, 'No daily run yet: it runs once a day on ' + daily.ref + ', from ' + String(daily.hourUtc).padStart(2, '0') + ':00 UTC.'))
+    return panel(
+      el('p', {}, chip(l.state, DAILY_TONE[l.state] || 'idle'), ' ', l.ref + ' at ' + l.commit.slice(0, 12) + ' · ', ago(l.startedAt)),
+      l.problem ? el('p', { class: 'muted' }, l.problem) : null,
+      l.taskId ? el('p', {}, (l.duplicate ? 'Open already: task ' : 'Proposed task ') + l.taskId + '.') : null,
+      el('p', { class: 'muted' }, daily.lastGreen ? 'Last green: ' + daily.lastGreen.commit.slice(0, 12) + ' on ' + daily.lastGreen.day : 'No daily run has passed yet.'))
+  }
+
   // Home's "Started by itself" (PROP-0014 D2, T256): what dispatch started in the last 24 h, at the bottom of Home, as a
   // table: one row per task, its newest attempt's run state as a chip, its Worker, how long its run ran (ticking while it
   // runs), and when it started; every attempt, with how it was let start, folded into the task's row. The newest 5 tasks,
@@ -1555,6 +1572,7 @@ export const APP_JS = `'use strict'
     const projectName = (id) => projectTitles.get(id) || id
     const names = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.name]) : [])
     const dispatch = await dispatchOf()
+    const daily = await dailyOf()
     waits = await readWaiting()
     const part = (name) => waits.unknown ? { unknown: waits.unknown } : waits[name]
     const look = 'value' in part('runs') ? part('runs').value : []
@@ -1715,6 +1733,7 @@ export const APP_JS = `'use strict'
         !rightNow && ready !== undefined ? el('p', { 'aria-label': 'Capacity' }, capacityText(c ? c.ready : undefined, ready), ' ', pageLink('board', 'Open Board')) : null))),
         el('div', { class: 'col-more' },
       goView(dispatch, q, names, jump),
+      dailyView(daily),
       since,
       // Each run by its task's title (else its template), its state, its progress and current Worker; every step's Worker, its template, and its id folded (T124, T171).
       el('section', { 'aria-label': 'Recent runs' }, el('h2', {}, 'Recent runs'),
