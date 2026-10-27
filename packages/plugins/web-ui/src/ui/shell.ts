@@ -1,5 +1,5 @@
 /** A script or stylesheet of the page: its URL, and optionally its subresource-integrity hash and CSP nonce. */
-export interface Asset {
+interface Asset {
   src: string
   /** `sha256-<base64>` and the like: the `integrity` attribute. */
   integrity?: string
@@ -7,7 +7,7 @@ export interface Asset {
   nonce?: string
 }
 
-export interface ShellInput {
+interface ShellInput {
   stylesheets: readonly Asset[]
   scripts: readonly Asset[]
 }

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderShell } from '../src/ui/shell.ts'
 import { css, stylesheet } from '../src/ui/styles/css.ts'
-import { DARK, declare, LIGHT } from '../src/ui/styles/tokens.ts'
 import { APP_CSS, PAGE_HTML } from './client-build.ts'
 
 describe('the page shell and the styles are TypeScript', () => {
@@ -19,12 +18,12 @@ describe('the page shell and the styles are TypeScript', () => {
   })
 
   it('builds the stylesheet from the tokens, once each', () => {
-    expect(declare({ a: '1px', b: '2px' })).toBe('--a: 1px; --b: 2px;')
     expect(css`x { ${'y'} }`).toBe('x { y }')
     expect(stylesheet('a', 'b')).toBe('\na\nb\n')
     expect(APP_CSS).toContain(`:root { color-scheme: light dark;\n  /* Colours`)
-    expect(APP_CSS).toContain(declare(LIGHT))
-    expect(APP_CSS).toContain(`@media (prefers-color-scheme: dark) { :root { ${declare(DARK)} } }`)
+    // Each token is declared once as a custom property: the light colours in :root, the dark ones under the media query.
+    expect(APP_CSS).toContain('--fg: #1f1f1f; --page: #f8f9fa;')
+    expect(APP_CSS).toMatch(/@media \(prefers-color-scheme: dark\) \{ :root \{ --fg: #e3e3e3; --page: #131314;[^}]* \} \}/)
     expect(APP_CSS).not.toMatch(/\$\{|undefined/)
   })
 })
