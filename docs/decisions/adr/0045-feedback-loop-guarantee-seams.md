@@ -42,7 +42,7 @@ Option 2.
 
 **`experiments` (core: work state machine), contract 1.0**
 ([experiments](../../design/experiments.md)). An abstract `Experiments` in
-`system-experiments-core` owns `ctx.experiments`: `lookup`, `register`, `get`, `list`, `link`, the
+`system-feedback-core` owns `ctx.experiments`: `lookup`, `register`, `get`, `list`, `link`, the
 evaluation engine's `begin`, `settle`, and `close`, `recordLesson`, and `lessons`. It computes the
 exact identity and the structured fingerprint by pure functions pinned by their versions, answers
 every registration EXACT_REPEAT, RELATED, CONTEXT_CHANGED, or NOVEL, checks the retry predicates
@@ -51,7 +51,7 @@ An exact repeat is always refused. With the registry unavailable, nothing is pre
 
 **`evaluations` (core: gate), contract 1.0**
 ([evaluations](../../design/evaluations.md)). An abstract `Evaluations` in
-`system-evaluations-core` owns `ctx.evaluations`: `collector`, `start`, `sweep`, `get`, and `list`.
+`system-feedback-core` owns `ctx.evaluations`: `collector`, `start`, `sweep`, `get`, and `list`.
 It checks pins, seals, the judge, the families, and the collectors before any trial; schedules
 paired, interleaved trials from the seed; records each trial before its run starts and never
 starts one twice; measures through collectors and the resource ledger; analyses once at the

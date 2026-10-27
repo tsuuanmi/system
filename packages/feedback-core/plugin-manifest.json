@@ -1,0 +1,23 @@
+{
+  "schema": "plugin-manifest@1.1",
+  "name": "@tsuuanmi/system-feedback-core",
+  "version": "0.0.0",
+  "description": "The feedback loop's seam definitions and library: ctx.experiments (hypotheses, pre-registered experiments with their exact identity and fingerprint, the four registry answers, lessons), ctx.evaluations (a pre-registered experiment run offline as paired, interleaved trials, measured by registered collectors, classified by the deterministic verdict rule), and the statistics they pin (the exact paired sign-flip test, golden-tested against SciPy); with their conformance suites and fake providers",
+  "class": {
+    "kind": "core",
+    "component": "gate"
+  },
+  "provides": [],
+  "consumes": [],
+  "defines": [
+    {
+      "seam": "evaluations",
+      "version": "1.0.0"
+    },
+    {
+      "seam": "experiments",
+      "version": "1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

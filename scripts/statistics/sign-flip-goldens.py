@@ -5,7 +5,7 @@ committed. The TypeScript tests read the fixture; nothing runs Python at test ti
 Run from the repository root (SciPy and NumPy go to uv's cache, never into the repository):
 
   uv run --no-project --python 3.14.2 --with scipy==1.18.1 --with numpy==2.5.4 \
-    python -I scripts/statistics/sign-flip-goldens.py packages/statistics/tests/fixtures/sign-flip.scipy.json
+    python -I scripts/statistics/sign-flip-goldens.py packages/feedback-core/tests/fixtures/sign-flip.scipy.json
 
 - Every p-value is SciPy's own: `scipy.stats.permutation_test` with
   `permutation_type='samples'` and `n_resamples=inf`, which enumerates all 2^n sign vectors.

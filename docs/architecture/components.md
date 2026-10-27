@@ -344,9 +344,7 @@ runs the work the router admitted to them. Callers never reach a source directly
   [decision-core](../../packages/decision-core/README.md),
   [landing-core](../../packages/landing-core/README.md),
   [landing-local](../../packages/plugins/landing-local/README.md),
-  [experiments-core](../../packages/experiments-core/README.md),
-  [evaluations-core](../../packages/evaluations-core/README.md),
-  [statistics](../../packages/statistics/README.md).
+  [feedback-core](../../packages/feedback-core/README.md).
 
 ## Host
 

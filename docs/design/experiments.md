@@ -11,7 +11,7 @@
 > [`objective-contract@1.0`](../reference/schemas.md#objective-contract), and the `registration`
 > decision of [`decision@1.7`](../reference/schemas.md#decision).
 >
-> Defined in [`experiments-core`](../../packages/experiments-core/README.md), contract 1.0, its
+> Defined in [`feedback-core`](../../packages/feedback-core/README.md), contract 1.0, its
 > suite passed by the fake `FakeExperiments`. Differs from target: no store-backed provider, no
 > bundle row, and no MCP `experiments_*` tools yet (F3); nothing registers an experiment yet (the
 > `improve` template is F6). Status audited 2026-10-27: nothing of this seam changed from T236 to
@@ -27,7 +27,7 @@ kept here too, and whether one still applies is computed when it is read.
 
 ## Seam
 
-`ctx.experiments` (`Experiments` in `@tsuuanmi/system-experiments-core`), contract 1.0:
+`ctx.experiments` (`Experiments` in `@tsuuanmi/system-feedback-core`), contract 1.0:
 
 | Method | Does |
 |---|---|
@@ -228,6 +228,6 @@ makes it history, shown as possibly stale:
 
 ## Conformance
 
-[`experiments-core/conformance/experiments.ts`](../../packages/experiments-core/conformance/experiments.ts),
+[`feedback-core/conformance/experiments.ts`](../../packages/feedback-core/conformance/experiments.ts),
 11 scenarios at contract 1.0, run against the fake provider; a store-backed provider (F3) will run the same
 suite.

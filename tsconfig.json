@@ -177,14 +177,8 @@
       "@tsuuanmi/system-plugin-host": [
         "packages/plugins/plugin-host/src/index.ts"
       ],
-      "@tsuuanmi/system-experiments-core": [
-        "packages/experiments-core/src/index.ts"
-      ],
-      "@tsuuanmi/system-evaluations-core": [
-        "packages/evaluations-core/src/index.ts"
-      ],
-      "@tsuuanmi/system-statistics": [
-        "packages/statistics/src/index.ts"
+      "@tsuuanmi/system-feedback-core": [
+        "packages/feedback-core/src/index.ts"
       ]
     }
   },

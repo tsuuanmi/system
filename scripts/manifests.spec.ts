@@ -29,7 +29,7 @@ describe('the manifests the workspace ships (REQ-HOST-7)', () => {
   it('has one for every plugin and every seam definition, each valid as the host reads it, and all agreeing with the code', () => {
     expect(derived.map((d) => d.path).filter((p) => p.startsWith('packages/plugins/')).length).toBe(40)
     expect(derived.filter((d) => d.manifest.defines).map((d) => d.dir).sort()).toEqual([
-      'agent-runtime-core', 'approvals-core', 'board-core', 'decision-core', 'digest-core', 'evaluations-core', 'experiments-core', 'gateway-core', 'landing-core', 'models-core', 'plugin-host-core', 'provider-core',
+      'agent-runtime-core', 'approvals-core', 'board-core', 'decision-core', 'digest-core', 'feedback-core', 'gateway-core', 'landing-core', 'models-core', 'plugin-host-core', 'provider-core',
       'resources-core', 'workers-core',
     ])
     for (const d of derived) expect(readManifest(readFileSync(join(root, d.path, 'plugin-manifest.json'), 'utf8'), d.manifest.name).state, d.dir).toBe('valid')
@@ -46,8 +46,8 @@ describe('the manifests the workspace ships (REQ-HOST-7)', () => {
     expect(of('landing-local').manifest).toMatchObject({ class: { kind: 'core', component: 'gate' }, provides: [{ seam: 'landing', version: '1.0.0' }], consumes: [{ seam: 'workers', range: expect.stringMatching(/^\^1\./) }] })
     expect(of('workflow').manifest.consumes).toContainEqual({ seam: 'landing', range: '^1.0.0', optional: true })
     expect(of('board-core').manifest).toMatchObject({ schema: 'plugin-manifest@1.1', class: { kind: 'core', component: 'work-state-machine' }, provides: [], defines: [{ seam: 'board', version: '1.5.0' }] })
-    expect(of('experiments-core').manifest).toMatchObject({ class: { kind: 'core', component: 'work-state-machine' }, defines: [{ seam: 'experiments', version: '1.0.0' }] })
-    expect(of('evaluations-core').manifest).toMatchObject({ class: { kind: 'core', component: 'gate' }, defines: [{ seam: 'evaluations', version: '1.0.0' }] })
+    // Two core seams in one package (PROP-0018 T12): it takes the class of the first, sorted.
+    expect(of('feedback-core').manifest).toMatchObject({ class: { kind: 'core' }, defines: [{ seam: 'evaluations', version: '1.0.0' }, { seam: 'experiments', version: '1.0.0' }] })
     expect(of('runtime-claude-agent-sdk').manifest.class).toEqual({ kind: 'family', family: 'worker' })
     expect(of('report').manifest).toMatchObject({ class: { kind: 'family', family: 'surface' }, provides: [], consumes: expect.arrayContaining([{ seam: 'board', range: '^1.5.0', optional: true }]) })
     expect(of('plugin-host').manifest).toMatchObject({ class: { kind: 'core', component: 'plugin-host' }, consumes: expect.arrayContaining([{ seam: 'loader', range: '^1.0.0' }, { seam: 'profileContext', range: '^1.0.0', optional: true }]) })

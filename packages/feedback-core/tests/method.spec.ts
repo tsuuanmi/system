@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { type AnalysisMethod as EngineMethod, analysisInput, type Evaluation, type Trial, verdictOf } from '@tsuuanmi/system-evaluations-core'
-import type { Experiment, ObjectiveContract } from '@tsuuanmi/system-experiments-core'
 import { describe, expect, it } from 'vitest'
-import { METHODS, type PairedCases, signFlipInterval, signFlipMethod, STATISTICS, StatisticsError, UNBOUNDED } from '../src/index.ts'
+import {
+  type AnalysisMethod as EngineMethod, analysisInput, type Evaluation, type Experiment, METHODS, type ObjectiveContract, type PairedCases, signFlipInterval, signFlipMethod,
+  STATISTICS, StatisticsError, type Trial, UNBOUNDED, verdictOf,
+} from '../src/index.ts'
 
 const example = <T>(name: string): T => JSON.parse(readFileSync(fileURLToPath(new URL(`../../../schemas/examples/${name}.json`, import.meta.url)), 'utf8')) as T
 const review = example<ObjectiveContract>('objective-contract.review')

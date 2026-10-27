@@ -1,11 +1,12 @@
 /**
  * The library's analysis method in the shape the evaluation engine calls: `AnalysisMethod` of
- * `@tsuuanmi/system-evaluations-core` (docs/design/evaluations.md#an-evaluation), matched
- * structurally so the library depends on nothing. Per case, each arm's level is the mean of its
+ * `../evaluations` (docs/design/evaluations.md#an-evaluation), matched structurally (its
+ * tests check that it is one). Per case, each arm's level is the mean of its
  * repetitions (the case is the unit of analysis); the method gives the sign-flip interval of the
  * paired difference at the protocol's confidence. Inference only: the thresholds and the outcome
  * are the verdict rule's (`verdictOf`), which reads these intervals once, at the horizon.
  */
+import type { Interval } from '../evaluations/index.ts'
 import { MAX_PAIRS, signFlipInterval, StatisticsError } from './sign-flip.ts'
 
 /** What an experiment pins (`environment.statistics`) and every analysis names: a change that can change any output is a new version. */
@@ -34,16 +35,15 @@ export const GOLDENS: Goldens = Object.freeze({
  */
 export const UNBOUNDED = Number.MAX_VALUE
 
-export interface Interval { estimate: number; lower: number; upper: number }
 /** Per case, one arm's values over its repetitions; a ratio metric's numerator's and denominator's. */
-export type ArmValues = { values: readonly number[] } | { numerator: readonly number[]; denominator: readonly number[] }
+export type PairedArmValues = { values: readonly number[] } | { numerator: readonly number[]; denominator: readonly number[] }
 /** What the engine passes a method: one metric's paired values per case, at the protocol's confidence (`AnalysisInput`). */
 export interface PairedCases {
   confidence: number
   ratio: boolean
-  cases: ReadonlyArray<{ case: string; baseline: ArmValues; candidate: ArmValues }>
+  cases: ReadonlyArray<{ case: string; baseline: PairedArmValues; candidate: PairedArmValues }>
 }
-export interface AnalysisMethod {
+export interface SignFlipMethod {
   readonly kind: 'sign-flip'
   readonly library: string
   readonly version: string
@@ -53,7 +53,7 @@ export interface AnalysisMethod {
 /** The sum of the values in ascending order, so it does not depend on the order they came in. */
 const sorted = (xs: readonly number[]): number => [...xs].sort((a, b) => a - b).reduce((s, x) => s + x, 0)
 
-function level(values: ArmValues, arm: string, id: string): number {
+function level(values: PairedArmValues, arm: string, id: string): number {
   if (!('values' in values)) throw new StatisticsError('ratio', `case ${id}: the ${arm} arm has a ratio's parts, but the metric is not a ratio`)
   if (values.values.length === 0) throw new StatisticsError('unpaired', `case ${id}: the ${arm} arm has no value`)
   return sorted(values.values) / values.values.length
@@ -70,7 +70,7 @@ const bounded = (x: number): number => (x === Infinity ? UNBOUNDED : x === -Infi
  * ratio metric (a ratio of sums over cases, not a mean of paired differences), no case, more than
  * 20 cases, an arm with no value, a value that is not finite, and a confidence outside (0.5, 1).
  */
-export function signFlipMethod(goldens: Pick<Goldens, 'verified'> = GOLDENS): AnalysisMethod {
+export function signFlipMethod(goldens: Pick<Goldens, 'verified'> = GOLDENS): SignFlipMethod {
   return {
     kind: 'sign-flip',
     library: STATISTICS.library,
@@ -94,4 +94,4 @@ export function signFlipMethod(goldens: Pick<Goldens, 'verified'> = GOLDENS): An
 }
 
 /** Every method of the library, as the engine finds them by kind, library, and version. */
-export const METHODS: readonly AnalysisMethod[] = [signFlipMethod()]
+export const METHODS: readonly SignFlipMethod[] = [signFlipMethod()]

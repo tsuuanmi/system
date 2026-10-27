@@ -325,26 +325,7 @@ importers:
         specifier: ^4.6.6
         version: 4.6.7
 
-  packages/evaluations-core:
-    dependencies:
-      '@tsuuanmi/system-experiments-core':
-        specifier: workspace:*
-        version: link:../experiments-core
-      '@tsuuanmi/system-libs':
-        specifier: workspace:*
-        version: link:../libs
-    devDependencies:
-      '@deepseek-ai/cordis':
-        specifier: 4.0.5-alpha.1
-        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
-      '@tsuuanmi/system-artifacts':
-        specifier: workspace:*
-        version: link:../plugins/artifacts
-      '@tsuuanmi/system-store':
-        specifier: workspace:*
-        version: link:../plugins/store
-
-  packages/experiments-core:
+  packages/feedback-core:
     dependencies:
       '@tsuuanmi/system-libs':
         specifier: workspace:*
@@ -1812,18 +1793,6 @@ importers:
       '@tsuuanmi/system-store':
         specifier: workspace:*
         version: link:../plugins/store
-
-  packages/statistics:
-    devDependencies:
-      '@tsuuanmi/system-evaluations-core':
-        specifier: workspace:*
-        version: link:../evaluations-core
-      '@tsuuanmi/system-experiments-core':
-        specifier: workspace:*
-        version: link:../experiments-core
-      '@tsuuanmi/system-libs':
-        specifier: workspace:*
-        version: link:../libs
 
   packages/system-bundle:
     dependencies:

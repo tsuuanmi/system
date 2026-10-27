@@ -303,8 +303,9 @@ export function derive(facts: CodeFacts, pkgs: Pkg[] = scan(), model: string = r
         if (!c) problems.push(`${p.path}: ctx.${s} is not in the seam catalog (docs/architecture/plugin-model.md#seam-catalog)`)
         return c ? JSON.stringify(c) : undefined
       }).filter((c): c is string => c !== undefined))]
-      if (found.length > 1) problems.push(`${p.path}: its seams ${seams.join(', ')} are of several classes in the seam catalog`)
-      if (found.length === 1) cls = JSON.parse(found[0]!) as Class
+      // A package that defines several core seams (feedback-core) takes the class of the first; a core and a family seam together are a mistake.
+      if (found.length > 1 && found.some((c) => (JSON.parse(c) as Class).kind !== 'core')) problems.push(`${p.path}: its seams ${seams.join(', ')} are of several classes in the seam catalog`)
+      else if (found.length >= 1) cls = JSON.parse(found[0]!) as Class
       classSource = `the seam catalog's class of ctx.${seams.join(', ctx.')}`
     } else {
       const named = families.get(p.dir) ?? []

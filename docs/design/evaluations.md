@@ -9,7 +9,7 @@
 > [`objective-contract@1.0`](../reference/schemas.md#objective-contract) and an
 > [`experiment@1.0`](../reference/schemas.md#experiment).
 >
-> Defined in [`evaluations-core`](../../packages/evaluations-core/README.md), contract 1.0, its
+> Defined in [`feedback-core`](../../packages/feedback-core/README.md), contract 1.0, its
 > suite passed by the fake `FakeEvaluations` over the experiments fake. Differs from target: no
 > store-backed provider and no bundle row yet (F4); the statistics library
 > ([statistics](statistics.md)) has one method, `sign-flip`, so a protocol naming `bootstrap` or
@@ -27,7 +27,7 @@ verdict is evidence a promotion request cites, and the operator decides
 
 ## Seam
 
-`ctx.evaluations` (`Evaluations` in `@tsuuanmi/system-evaluations-core`), contract 1.0:
+`ctx.evaluations` (`Evaluations` in `@tsuuanmi/system-feedback-core`), contract 1.0:
 
 | Method | Does |
 |---|---|
@@ -172,7 +172,7 @@ recorded plus the next reservation must stay within the funded lines.
 
 ## Conformance
 
-[`evaluations-core/conformance/evaluations.ts`](../../packages/evaluations-core/conformance/evaluations.ts),
+[`feedback-core/conformance/evaluations.ts`](../../packages/feedback-core/conformance/evaluations.ts),
 8 scenarios at contract 1.0, run against the fake engine over the experiments fake; a
 store-backed provider (F4) will run the same suite, its `World` backed by board tasks served by
 workflow runs on scripted Workers.

@@ -5,8 +5,8 @@
  * `verdict` decision that records it. Intervals are read only at the horizon: v1 takes no interim
  * look. INCONCLUSIVE is never read as equivalence.
  */
-import type { ArtifactRef, Direction, Experiment, ObjectiveContract, Outcome } from '@tsuuanmi/system-experiments-core'
-import { OUTCOMES, protocolHash } from '@tsuuanmi/system-experiments-core'
+import type { ArtifactRef, Direction, Experiment, ObjectiveContract, Outcome } from '../experiments/index.ts'
+import { OUTCOMES, protocolHash } from '../experiments/index.ts'
 import type { Check, EndReason, Evaluation, Interval } from './index.ts'
 import { CHECKS } from './index.ts'
 

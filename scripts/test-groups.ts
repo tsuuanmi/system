@@ -53,7 +53,7 @@ export const GROUPS: Readonly<Record<string, Group>> = {
   },
   workflow: {
     about: 'the workflow engine, the board, approvals, resources, digests, landing, worker sessions, the feedback-loop seams, and the profiles that contribute templates',
-    packages: ['workflow', 'board-core', 'board', 'approvals-core', 'approvals', 'resources-core', 'resources', 'digest-core', 'digest', 'digest-extractive', 'decision-core', 'landing-core', 'landing-local', 'worker-sessions', 'experiments-core', 'evaluations-core', 'profile-software-development', 'profile-scientific-research'],
+    packages: ['workflow', 'board-core', 'board', 'approvals-core', 'approvals', 'resources-core', 'resources', 'digest-core', 'digest', 'digest-extractive', 'decision-core', 'landing-core', 'landing-local', 'worker-sessions', 'feedback-core', 'profile-software-development', 'profile-scientific-research'],
   },
   workers: {
     about: 'routing and the Worker sources behind it: agent runtimes and agent Workers, and model Workers',
@@ -69,7 +69,7 @@ export const GROUPS: Readonly<Record<string, Group>> = {
   },
   libs: {
     about: 'the libraries, the schemas, and the repository scripts with their repository-wide checks',
-    packages: ['libs', 'statistics', 'schemas'],
+    packages: ['libs', 'schemas'],
     paths: ['scripts/'],
   },
 }

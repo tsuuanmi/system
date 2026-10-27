@@ -1594,7 +1594,7 @@ guesses.
   statistics library's ([statistics](../design/statistics.md)).
 - The registry also refuses a contract whose primary or a guardrail has no method or no metric, whose
   ratio reads an undefined metric or a ratio, or that guards the primary or one metric twice
-  (`contractProblems` in [`experiments-core`](../../packages/experiments-core/README.md)). Example:
+  (`contractProblems` in [`feedback-core`](../../packages/feedback-core/README.md)). Example:
   [`objective-contract.review.json`](../../schemas/examples/objective-contract.review.json).
 
 ### `hypothesis`

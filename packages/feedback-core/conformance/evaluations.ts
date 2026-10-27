@@ -14,9 +14,9 @@ import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
   type ArtifactRef, type BudgetLine, type Environment, type ExactSubject, type Experiment, type ExperimentDraft, type HypothesisDraft, independenceProblems,
   type ObjectiveContract, type Partition, protocolHash,
-} from '@tsuuanmi/system-experiments-core'
+} from '../src/experiments/index.ts'
 import { expect } from 'vitest'
-import { operatorRecords, registrationOf } from '../../experiments-core/conformance/experiments.ts'
+import { operatorRecords, registrationOf } from './experiments.ts'
 import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import {
   type AnalysisMethod, analysisInput, armVector, type ArmValues, canAfford, type Check, CHECKS, type Collection, type Collector, collectorProblems, evaluationIdOf,

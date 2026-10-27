@@ -33,7 +33,7 @@ pnpm workspaces ([`pnpm-workspace.yaml`](../../pnpm-workspace.yaml)):
 | `schemas/` | the JSON Schemas, as the package `@tsuuanmi/system-schemas` |
 | `packages/libs` | pure shared libraries: canonical JSON, content ids, schema validation, durable files |
 | `packages/*-core` | seam definitions (abstract classes and conformance suites) and shared mechanisms, such as `provider-core`, `workers-core`, `agent-runtime-core`, and `gateway-core`; every package is in the [package graph](../architecture/packages.md) |
-| `packages/ui-ops`, `packages/gateway-turns`, `packages/statistics` | libraries: the UI engine, the gateways' shared text tool protocol, and the evaluation engine's statistics |
+| `packages/ui-ops`, `packages/gateway-turns` | libraries: the UI engine and the gateways' shared text tool protocol |
 | `packages/plugins/*` | every Cordis plugin, one package each |
 | `packages/system-bundle` | the bundle that mounts the plugins ([`cordis.patch.yml`](../../packages/system-bundle/cordis.patch.yml)) |
 | `packages/cli` | the `system` command |

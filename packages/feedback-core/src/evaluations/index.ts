@@ -7,10 +7,10 @@
  * `verdict` decision. It decides no promotion. The types mirror `evaluation@1.0`; the schemas in
  * `schemas/` are canonical. The schedule, the integrity checks, and the verdict rule are pure
  * functions here, the same for every provider; the statistics are the pinned library's (F2).
- * @module @tsuuanmi/system-evaluations-core
+ * @module @tsuuanmi/system-feedback-core/evaluations
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
-import type { ArtifactRef, Arm, EvidencePartition, Method, MethodKind, Outcome } from '@tsuuanmi/system-experiments-core'
+import type { ArtifactRef, Arm, EvidencePartition, Method, MethodKind, Outcome } from '../experiments/index.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

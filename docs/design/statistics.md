@@ -8,7 +8,7 @@
 > the [dependency register](../engineering/dependencies.md). Consumer: the evaluation engine, which
 > finds a method by kind, library, and version ([evaluations](evaluations.md#an-evaluation)).
 >
-> Implemented in [`statistics`](../../packages/statistics/README.md); differs from target: no
+> Implemented in [`feedback-core`](../../packages/feedback-core/README.md#statistics); differs from target: no
 > evaluation engine calls it until the store-backed `evaluations` provider (F4). Status audited
 > 2026-10-27: nothing of it changed from T236 to T295.
 
@@ -171,7 +171,7 @@ reference is SciPy 1.18.1 (NumPy 2.5.4, Python 3.14.2), `scipy.stats.permutation
 - **Generation.** [`scripts/statistics/sign-flip-goldens.py`](../../scripts/statistics/sign-flip-goldens.py)
   is run once, by hand, with `uv run --with` (its command names the exact versions, fetched into
   uv's cache, never into the repository), and writes
-  [`sign-flip.scipy.json`](../../packages/statistics/tests/fixtures/sign-flip.scipy.json), which is
+  [`sign-flip.scipy.json`](../../packages/feedback-core/tests/fixtures/sign-flip.scipy.json), which is
   committed with the versions it ran with. Python is used only there: the tests read the fixture.
 - **Datasets.** Two to twenty pairs: integers, halves and quarters (every sum exact), zero and equal
   differences, every difference zero, every one positive, small counts on 20 pairs, continuous draws

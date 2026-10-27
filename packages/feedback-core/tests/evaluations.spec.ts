@@ -4,14 +4,13 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Artifacts from '@tsuuanmi/system-artifacts'
-import type { Environment, Experiment, ObjectiveContract } from '@tsuuanmi/system-experiments-core'
 import Store from '@tsuuanmi/system-store'
 import { describe, expect, it } from 'vitest'
-import { emptyState as emptyRegistry, FakeExperiments, VOCABULARY } from '../../experiments-core/conformance/experiments.ts'
+import { emptyState as emptyRegistry, FakeExperiments, VOCABULARY } from '../conformance/experiments.ts'
 import { runSuite } from '../../libs/conformance/runner.ts'
 import { emptyState, evaluationsSuite, FakeEvaluations } from '../conformance/evaluations.ts'
 import {
-  canAfford, CHECKS, collectorProblems, type Evaluation, EVALUATIONS_CONTRACT, judgeTouched, netBenefit, pinProblems, schedule, sealProblems, trialInvalid,
+  canAfford, CHECKS, collectorProblems, type Environment, type Evaluation, EVALUATIONS_CONTRACT, type Experiment, type ObjectiveContract, judgeTouched, netBenefit, pinProblems, schedule, sealProblems, trialInvalid,
   verdictDecision, verdictOf,
 } from '../src/index.ts'
 

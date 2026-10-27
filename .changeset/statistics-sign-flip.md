@@ -1,5 +1,5 @@
 ---
-"@tsuuanmi/system-statistics": minor
+"@tsuuanmi/system-feedback-core": minor
 ---
 
 The evaluation engine's statistics library (PROP-0011 F2). Nothing calls it yet: the store-backed evaluation engine is F4.

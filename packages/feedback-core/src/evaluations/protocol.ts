@@ -5,8 +5,8 @@
  * pinned analysis. None of them is a statistic.
  */
 import { createHash } from 'node:crypto'
-import type { Arm, BudgetLine, Environment, EvidencePartition, Experiment, ObjectiveContract, Unit } from '@tsuuanmi/system-experiments-core'
-import { environmentHash } from '@tsuuanmi/system-experiments-core'
+import type { Arm, BudgetLine, Environment, EvidencePartition, Experiment, ObjectiveContract, Unit } from '../experiments/index.ts'
+import { environmentHash } from '../experiments/index.ts'
 import type { AnalysisInput, ArmValues, Check, Collector, Measurement, Route, Trial, TrialSpec } from './index.ts'
 
 /** The schedule's version: how the order is drawn from the seed. */

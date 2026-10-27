@@ -1,8 +1,8 @@
 {
-  "name": "@tsuuanmi/system-experiments-core",
+  "name": "@tsuuanmi/system-feedback-core",
   "version": "0.0.0",
   "private": true,
-  "description": "Experiment registry seam definition: ctx.experiments, hypotheses and pre-registered experiments with their exact identity and fingerprint, the four registry answers, and lessons, with its conformance suite and a fake provider",
+  "description": "The feedback loop's seam definitions and library: ctx.experiments (hypotheses, pre-registered experiments with their exact identity and fingerprint, the four registry answers, lessons), ctx.evaluations (a pre-registered experiment run offline as paired, interleaved trials, measured by registered collectors, classified by the deterministic verdict rule), and the statistics they pin (the exact paired sign-flip test, golden-tested against SciPy); with their conformance suites and fake providers",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

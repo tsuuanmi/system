@@ -7,7 +7,7 @@
  * whose applicability is computed when they are read. The types mirror `hypothesis@1.0`,
  * `experiment@1.0`, `lesson@1.0`, and `objective-contract@1.0`; the schemas in `schemas/` are
  * canonical. The keys, the answer, and the checks every provider applies are pure functions here.
- * @module @tsuuanmi/system-experiments-core
+ * @module @tsuuanmi/system-feedback-core/experiments
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
 
