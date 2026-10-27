@@ -543,7 +543,10 @@ second execution path (INV-1).
     account's load below `maxRunningPerAccount`, no running step on it, every pool available, every
     window known (fresh, `ok`, a used share) with headroom above `quota.reservePercent`, not metered
     (D65), and its account and repository (its workspace) within their bounds. No account, no
-    reading, a stale one, or a ledger without `quota()`: never free (INV-2).
+    reading, a stale one, or a ledger without `quota()`: never free (INV-2). The one exception
+    (T294): an account whose windows have no reading at all, in pools configured
+    `unknown: available`, is admitted at `maxRunningUnreadPerAccount` (1) runs, after every account
+    with headroom, and recorded "unread, admitted at the unread bound"; a reading replaces the bound.
   - **The policy** (`ctx.approvals.check` on `dispatch`, once per project per pass): `ask` opens one
     request on `{content, dispatch:<taskId>:attempt:<n>, quota-score@2:<sha256>}` after the ask's
     row (`asking`) and its decisions are recorded, adopted after a crash; an attempt the operator
@@ -585,7 +588,7 @@ second execution path (INV-1).
     `workflow.dispatch.chosen|started|closed|paused|resumed|notice`.
   - **Settings** (`dispatch`): `enabled`, `sweepSeconds` (10 to 3600), `maxPerPass` (1 to 16),
     `maxRunning` (1 to `maxActiveRuns − leaveRunsFree`, default 8 or that), `maxRunningPerProject`,
-    `maxRunningPerAccount`, `maxRunningPerRepository` (each 1 to 16), `leaveRunsFree` (0 to
+    `maxRunningPerAccount`, `maxRunningUnreadPerAccount`, `maxRunningPerRepository` (each 1 to 16), `leaveRunsFree` (0 to
     `maxActiveRuns − 1`, default 4 or that), `maxOpenAsks` (1 to 32), `approvedHoldMinutes` (1 to
     240), `maxPerHour` (0 to 120), `maxPerHourPerProject` (0 to `maxPerHour`); one out of its range
     refuses the row with its path (`dispatchProblems`, also in `checkConfig`).

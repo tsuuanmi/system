@@ -713,6 +713,8 @@ export interface DispatchConfig {
   maxRunningPerProject?: number
   /** The same, per account of the chosen Worker; also the most an account's load may be for it to be free (1 to 16, default 1). */
   maxRunningPerAccount?: number
+  /** Dispatched runs or asks on one account none of whose windows has a reading yet (pool `unknown: available`), at most (1 to 16, default 1; T294). A reading replaces it. */
+  maxRunningUnreadPerAccount?: number
   /** The same, per repository: the chosen writing Worker's workspace (1 to 16, default 4; D64). */
   maxRunningPerRepository?: number
   /** Active runs kept for the lead's and the operator's own starts (0 to maxActiveRuns − 1, default 4). */

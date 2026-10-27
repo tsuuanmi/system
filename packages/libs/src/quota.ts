@@ -143,6 +143,13 @@ export interface AccountQuota {
   over?: WindowQuota
   /** Why it is not free by its quota, in words; empty when free. */
   why: string[]
+  /**
+   * No window of a pool configured `unknown: available` has ever been read, and nothing else holds the
+   * account back (T294): a caller may admit it at a bounded concurrency. A reading replaces this.
+   */
+  unread?: true
+  /** The lines of `why` that only say the account is unread; a caller that admits it at its bound leaves them out. */
+  unreadWhy?: string[]
 }
 
 const round1 = (n: number): number => Math.round(n * 10) / 10
@@ -218,7 +225,12 @@ export function accountQuotaOf(pools: readonly QuotaPool[] | { unknown: string }
     if (!pool.available) why.push(`pool ${pool.pool} is not available${pool.until ? ` until ${pool.until}` : ''}`)
   }
   const assumed = read.some(({ pool, windows: ws }) => pool.unknown === 'available' && ws.some((w) => !w.known))
-  if (assumed) why.push('a pool is available only because it is configured unknown: available; its windows are not known, so it is never read as having headroom')
+  const assumedLine = 'a pool is available only because it is configured unknown: available; its windows are not known, so it is never read as having headroom'
+  if (assumed) why.push(assumedLine)
+  // Unread: every window of the account has no reading at all (one read window, known or not, ends it), in pools available by `unknown: available`.
+  const notKnown = read.flatMap(({ pool, windows: ws }) => ws.filter((w) => !w.known).map((w) => ({ pool, w })))
+  const unread = assumed && read.every((p) => p.windows.length > 0 && p.pool.available && p.pool.unknown === 'available') && windows.every((w) => w.state === 'none')
+  const unreadWhy = unread ? [...notKnown.map(({ w }) => `${windowName(w)} window of ${w.pool}: ${w.unknown}`), assumedLine] : []
   const allKnown = windows.length > 0 && windows.every((w) => w.known) && read.every((p) => p.windows.length > 0)
   for (const w of allKnown ? windows : []) {
     if (w.headroom! <= 0) why.push(`${windowName(w)} window of ${w.pool}: used ${w.used} %, no headroom above the ${settings.reservePercent} % reserve`)
@@ -230,6 +242,7 @@ export function accountQuotaOf(pools: readonly QuotaPool[] | { unknown: string }
   return {
     pools: read.map(({ pool, windows: ws }) => ({ pool: pool.pool, available: pool.available, ...(pool.until ? { until: pool.until } : {}), windows: ws })),
     knowledge, ...(binding ? { binding } : {}), ...(ahead[0] ? { soonest: ahead[0] } : {}), free: why.length === 0, ...(over ? { over } : {}), why,
+    ...(unread ? { unread: true as const, unreadWhy } : {}),
   }
 }
 
@@ -284,7 +297,7 @@ export function headroomOrderOf<T>(items: readonly T[], poolsOf: (item: T) => re
 
 /** An account's quota in one clause: "known, 5 h: used 10 %, resets in 40 min, headroom 70" (its binding and soonest windows). */
 export function headroomLine(quota: AccountQuota): string {
-  const parts: string[] = [quota.knowledge]
+  const parts: string[] = [quota.unread ? 'unread' : quota.knowledge]
   const shown = [quota.binding, quota.soonest].filter((w, i, all): w is WindowQuota => w !== undefined && all.findIndex((x) => x?.pool === w.pool && x?.window === w.window) === i)
   for (const w of shown) parts.push(`${windowName(w)}: used ${w.used} %${w.resetsInMinutes !== undefined ? `, resets in ${minutesText(w.resetsInMinutes)}` : ''}`)
   if (quota.binding) parts.push(`headroom ${quota.binding.headroom}`)
@@ -333,10 +346,17 @@ export interface QuotaCandidate {
   pools: readonly QuotaPool[] | { unknown: string } | undefined
   /** Why it is not free besides its quota, in words (the caller's: its state, a step on it, a bound of its account or repository). */
   busy?: readonly string[]
+  /**
+   * The bound an unread account is admitted at (T294): `running` dispatched runs or asks its account
+   * has now, at most `limit`. Absent: an unread account is not admitted.
+   */
+  unreadBound?: { running: number; limit: number }
 }
 
 /** The keys a candidate is ordered by, each lower first: the headroom order's, with routing's own around them. */
 export interface QuotaKeys extends HeadroomKeys {
+  /** 1 for an account admitted only at the unread bound: after every account with a reading, whatever its tier. */
+  unread: number
   tier: number
   /** 1 for metered, then the quota class's rank. */
   metered: number
@@ -371,7 +391,7 @@ export interface QuotaScore {
 const loadOf = (load: QuotaCandidate['load']): number => (load ? load.running + load.queued + load.pending : 0)
 
 /** The reserve key first (an account over its reserve last while another has headroom), then routing's tier and class, the rest of the headroom order, then load and priority. */
-const KEY_ORDER: ReadonlyArray<keyof QuotaKeys> = ['reserve', 'tier', 'metered', 'quota', 'knowledge', 'useSoon', 'resetsIn', 'headroom', 'load', 'priority']
+const KEY_ORDER: ReadonlyArray<keyof QuotaKeys> = ['unread', 'reserve', 'tier', 'metered', 'quota', 'knowledge', 'useSoon', 'resetsIn', 'headroom', 'load', 'priority']
 
 function lineOf(c: QuotaCandidate, quota: AccountQuota): string {
   const parts = [`tier ${c.tier}`, c.quotaClass + (c.metered ? ' (metered)' : ''), headroomLine(quota)]
@@ -384,6 +404,7 @@ function beats(chosen: { c: QuotaCandidate; q: AccountQuota; k: QuotaKeys }, oth
   const who = chosen.c.worker
   const key = KEY_ORDER.find((k) => chosen.k[k] !== other.k[k])
   switch (key) {
+    case 'unread': return `${who}'s account has a reading; this one is unread, admitted only at the unread bound, so it comes after every account with headroom`
     case 'tier': return `${who} has the lower tier ${chosen.c.tier}`
     case 'metered': return `${who} is not metered; metered pools come last`
     case 'quota': return `${who} has the preferred quota class ${chosen.c.quotaClass}`
@@ -404,22 +425,30 @@ export function quotaScoreOf(candidates: readonly QuotaCandidate[], settings: Qu
   const problems = quotaSettingsProblems(settings)
   if (problems.length) throw new RangeError(`quotaScoreOf: ${problems.join('; ')}`)
   const admitted = headroomOrderOf(candidates.filter((c) => !c.refused?.length), (c) => c.pools, settings, now).map(({ item: c, quota: q, keys }) => ({
-    c, q, k: { ...keys, tier: c.tierRank, metered: c.metered ? 1 : 0, quota: c.quotaRank, load: loadOf(c.load), priority: c.priorityRank } as QuotaKeys,
+    c, q, k: { ...keys, unread: q.unread && c.unreadBound ? 1 : 0, tier: c.tierRank, metered: c.metered ? 1 : 0, quota: c.quotaRank, load: loadOf(c.load), priority: c.priorityRank } as QuotaKeys,
   }))
   admitted.sort((a, b) => {
     for (const key of KEY_ORDER) if (a.k[key] !== b.k[key]) return a.k[key] - b.k[key]
     return compare(a.c.worker, b.c.worker)
   })
-  const notFree = (a: (typeof admitted)[number]): string[] => [
-    ...(a.c.metered ? ['metered: dispatch never starts work on a metered pool by itself (D65)'] : []),
-    ...(a.c.busy ?? []),
-    ...a.q.why,
-  ]
+  /** An unread account the caller bounds is admitted at that bound: its unread lines drop out, unless the bound is reached. */
+  const unreadOf = (a: (typeof admitted)[number]): { bound: NonNullable<QuotaCandidate['unreadBound']> } | undefined => (a.q.unread && a.c.unreadBound ? { bound: a.c.unreadBound } : undefined)
+  const notFree = (a: (typeof admitted)[number]): string[] => {
+    const bound = unreadOf(a)?.bound
+    return [
+      ...(a.c.metered ? ['metered: dispatch never starts work on a metered pool by itself (D65)'] : []),
+      ...(a.c.busy ?? []),
+      ...(bound ? a.q.why.filter((w) => !a.q.unreadWhy!.includes(w)) : a.q.why),
+      ...(bound && bound.running >= bound.limit ? [`unread: its account has ${bound.running} dispatched run(s) or ask(s), the unread bound is ${bound.limit}`] : []),
+    ]
+  }
   const chosen = admitted.find((a) => notFree(a).length === 0)
   const ranked: ScoredCandidate[] = admitted.map((a, i) => {
     const why = notFree(a)
     const line = lineOf(a.c, a.q)
-    const reasons = a === chosen ? [`free: every window has headroom above the ${settings.reservePercent} % reserve`, line, `first in the quota order (${QUOTA_SCORE})`]
+    const bound = unreadOf(a)?.bound
+    const reasons = a === chosen && bound ? [`unread, admitted at the unread bound (${bound.running} of ${bound.limit} dispatched run(s) or ask(s) on its account): no window has been read yet`, line, `first in the quota order (${QUOTA_SCORE})`]
+      : a === chosen ? [`free: every window has headroom above the ${settings.reservePercent} % reserve`, line, `first in the quota order (${QUOTA_SCORE})`]
       : why.length ? [...why.map((w) => `not free: ${w}`), line]
         : [`free, but ${beats(chosen!, a, settings)}`, line]
     return { worker: a.c.worker, admitted: true, free: why.length === 0, place: i + 1, quota: a.q, keys: a.k, line, reasons }

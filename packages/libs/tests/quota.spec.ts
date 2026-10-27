@@ -92,6 +92,31 @@ describe('accountQuotaOf: the windows of an account by its readings (INV-2)', ()
     expect(accountQuotaOf([pool('local', [{ seconds: FIVE_H, used: 10 }], { unknown: 'available' })], S, NOW).knowledge).toBe('known')
   })
 
+  it('reads a pool with no reading at all, by unknown: available, as unread; a reading, or any other unknown, is not (T294)', () => {
+    const unread = accountQuotaOf([pool('local', [{ seconds: FIVE_H, none: true }], { unknown: 'available' })], S, NOW)
+    expect(unread).toMatchObject({ unread: true, free: false })
+    expect(unread.unreadWhy!.every((w) => unread.why.includes(w))).toBe(true)
+    expect(accountQuotaOf([pool('local', [{ seconds: FIVE_H, used: 10, age: 40 }], { unknown: 'available' })], S, NOW).unread).toBeUndefined()
+    expect(accountQuotaOf([pool('local', [{ seconds: FIVE_H, none: true }])], S, NOW).unread).toBeUndefined()
+    // One read window, exhausted, beside an unread one: the account is not unread, and is never admitted.
+    const mixed = [pool('local', [{ id: '5h', seconds: FIVE_H, used: 95, resetsIn: 60 }, { id: '7d', seconds: WEEK, none: true }], { unknown: 'available' })]
+    expect(accountQuotaOf(mixed, S, NOW).unread).toBeUndefined()
+    expect(quotaScoreOf([candidate('w', mixed, { unreadBound: { running: 0, limit: 1 } })], S, NOW).chosen).toBeUndefined()
+  })
+
+  it('admits an unread account at its bound, after every account with headroom, whatever its tier (T294)', () => {
+    const unreadPools = [pool('local', [{ seconds: FIVE_H, none: true }], { unknown: 'available' })]
+    const bound = (running: number): { running: number; limit: number } => ({ running, limit: 1 })
+    const only = quotaScoreOf([candidate('w', unreadPools, { unreadBound: bound(0) })], S, NOW)
+    expect(only.chosen).toBe('w')
+    expect(only.candidates[0]!.reasons[0]).toMatch(/^unread, admitted at the unread bound \(0 of 1/)
+    expect(quotaScoreOf([candidate('w', unreadPools, { unreadBound: bound(1) })], S, NOW).candidates[0]!.reasons[0]).toMatch(/not free: unread: its account has 1 dispatched run/)
+    expect(quotaScoreOf([candidate('w', unreadPools)], S, NOW).chosen).toBeUndefined()
+    const both = quotaScoreOf([candidate('w', unreadPools, { unreadBound: bound(0), tierRank: 0 }), candidate('r', open(10), { tierRank: 2 })], S, NOW)
+    expect(both.chosen).toBe('r')
+    expect(order(both)).toEqual(['r', 'w'])
+  })
+
   it('keeps the reserve: free only with headroom above it, at 0 and at 90', () => {
     expect(accountQuotaOf(open(79), S, NOW)).toMatchObject({ free: true, binding: { headroom: 1 } })
     expect(accountQuotaOf(open(80), S, NOW)).toMatchObject({ free: false, binding: { headroom: 0 } })

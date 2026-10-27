@@ -70,6 +70,14 @@ describe('capacity now: the Right now summary, made once on the server from the 
     expect(value(over.quotaUnknown).items.map((u) => u.account)).toEqual(['c-unread'])
   })
 
+  it('says an account whose pool is configured unknown: available with no reading is unread, not free (T294)', async () => {
+    const c = await readCapacity(services([worker('web')], [pool('web', undefined, { unknown: 'available' })]), { scope: 'operator', now: NOW })
+    valid(c)
+    expect(value(c.free).items).toEqual([])
+    expect(value(c.quotaUnknown).items[0]!.why).toContain('unread')
+    expect(value(c.accounts).items[0]!.canWork).toEqual({ unknown: expect.stringContaining('unread') })
+  })
+
   it('never counts an unknown reading as free capacity (INV-2): no reading, no used share, a reset already past, or no ledger', async () => {
     const workers = [worker('read'), worker('none'), worker('noshare'), worker('stale')]
     const c = await readCapacity(services(workers, [
