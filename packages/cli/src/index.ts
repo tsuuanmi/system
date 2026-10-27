@@ -873,6 +873,53 @@ export async function hostRoster(json: boolean, call: typeof callTool = callTool
   return outcome.text
 }
 
+/**
+ * `system plugin [list|off <row> [reason…]|on <row>] [--json]` (ADR-0078): the MCP `plugin` tool's
+ * arguments, or undefined when the words are not one of these.
+ */
+export function parsePlugin(rest: readonly string[]): { args: Record<string, string>; json: boolean } | undefined {
+  const json = rest.includes('--json')
+  const [action = 'list', row, ...words] = rest.filter((a) => a !== '--json')
+  if (action === 'list') return row === undefined ? { args: { action }, json } : undefined
+  if ((action !== 'off' && action !== 'on') || !row || row.startsWith('--')) return undefined
+  if (action === 'on' && words.length) return undefined
+  return { args: { action, row, ...(words.length ? { reason: words.join(' ') } : {}) }, json }
+}
+
+/** A row as MCP `plugin` lists it (`RowState` of the plugin host, contract 1.2). */
+export interface PluginRowView { id: string; name: string; on: boolean; required: boolean; why: string; turned?: { on: boolean; reason?: string; since: string; decision: string } }
+
+/** `system plugin list` for a terminal: each row on or off, required or optional, and its last runtime turn with why. */
+export function formatPluginRows(rows: readonly PluginRowView[]): string[] {
+  return rows.map((r) => {
+    const turned = r.turned ? `; turned ${r.turned.on ? 'on' : 'off'} ${r.turned.since}${r.turned.reason ? `: ${r.turned.reason}` : ''} (decision ${r.turned.decision})` : ''
+    return `${r.on ? 'on ' : 'off'}  ${r.id} (${r.name}) ${r.required ? 'required' : 'optional'}${turned}`
+  })
+}
+
+/**
+ * `system enforce [list] | set <mechanism> <off|warn|on|configured> [reason…]` (ADR-0078): the MCP
+ * `enforce` tool's arguments, or undefined when the words are not one of these.
+ */
+export function parseEnforce(rest: readonly string[]): { args: Record<string, string>; json: boolean } | undefined {
+  const json = rest.includes('--json')
+  const [action = 'list', mechanism, mode, ...words] = rest.filter((a) => a !== '--json')
+  if (action === 'list') return mechanism === undefined ? { args: {}, json } : undefined
+  if (action !== 'set' || !mechanism || !mode || !['off', 'warn', 'on', 'configured'].includes(mode)) return undefined
+  return { args: { mechanism, mode, ...(words.length ? { reason: words.join(' ') } : {}) }, json }
+}
+
+/** A mechanism as MCP `enforce` gives it (`EnforceState` of the plugin host, contract 1.2). */
+export interface EnforceView { mechanism: string; row: string; modes: string[]; mode: string; configured: string; override?: { mode: string; reason?: string; since: string; decision: string }; what: string }
+
+/** `system enforce` for a terminal: each mechanism's mode in force, and why when it was set live. */
+export function formatEnforce(states: readonly EnforceView[]): string[] {
+  return states.map((s) => {
+    const how = s.override ? `set live ${s.override.since}${s.override.reason ? `: ${s.override.reason}` : ''} (decision ${s.override.decision}; configured ${s.configured})` : 'as configured'
+    return `${s.mechanism}: ${s.mode}, ${how}; takes ${s.modes.join('|')} (row ${s.row})`
+  })
+}
+
 /** Dispatch as MCP `dispatch_status`, `dispatch_pause`, and `dispatch_resume` give it (ADR-0064), as much as `system dispatch` prints. */
 export interface DispatchView {
   enabled: boolean

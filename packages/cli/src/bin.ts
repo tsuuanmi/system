@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostCapacity, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, type DispatchView, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, leadInbox, leadToken, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseLead, parseMetrics, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem, useProfile } from './index.ts'
+import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, type EnforceView, formatEnforce, formatPluginRows, parseEnforce, parsePlugin, type PluginRowView,hostCapacity, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, type DispatchView, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, leadInbox, leadToken, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseLead, parseMetrics, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem, useProfile } from './index.ts'
 import { bundlePlugins, bundleStudioPolicy, parseProjectNew, profileHost, type ProjectHost, projectNew } from './project.ts'
 
 const USAGE = `Usage: system <command> [--profile system|system-test]
@@ -131,6 +131,11 @@ const USAGE = `Usage: system <command> [--profile system|system-test]
                             Worker each would likely go to (the roster's now)
   plugins [--json]          every plugin of the composition: its recorded lifecycle state, on or off, version,
                             class, rows, why a manifest is absent or refused, and what the manifest check found
+  plugin [list|off <row> [reason…]|on <row>] [--json]
+                            the rows, on or off, required or optional; or turn an optional row off or on in the
+                            running host, no restart, kept in the profile's patch (a required row is refused)
+  enforce [list|set <mechanism> <off|warn|on|configured> [reason…]] [--json]
+                            each gate-like mechanism's mode; or set one live, no restart (configured clears it)
   shutdown [--deadline <s>] drain, then stop the running profile (unfinished runs resume on start)
   check [--env-file <file>]  check the profile against this install's code before starting it (an update's preflight);
                             --env-file: also the daemon unit's environment file (names only, never values)
@@ -752,6 +757,26 @@ async function main(args: string[]): Promise<number> {
     case 'plugins': {
       const plugins = await hostPlugins()
       console.log(rest.includes('--json') ? JSON.stringify(plugins, null, 2) : formatPlugins(plugins).join('\n'))
+      return 0
+    }
+    case 'plugin': {
+      // A row turned off or on in the running host, no restart (ADR-0078).
+      const parsed = parsePlugin(rest)
+      if (!parsed) break
+      const outcome = await callTool('plugin', parsed.args)
+      if (outcome.isError) throw new Error(outcome.text)
+      const listed = (outcome.structured as { rows?: PluginRowView[] }).rows
+      console.log(parsed.json ? JSON.stringify(outcome.structured, null, 2) : listed ? formatPluginRows(listed).join('\n') : outcome.text)
+      return 0
+    }
+    case 'enforce': {
+      // A gate-like mechanism's mode, set live (ADR-0078).
+      const parsed = parseEnforce(rest)
+      if (!parsed) break
+      const outcome = await callTool('enforce', parsed.args)
+      if (outcome.isError) throw new Error(outcome.text)
+      const listed = (outcome.structured as { mechanisms?: EnforceView[] }).mechanisms
+      console.log(parsed.json ? JSON.stringify(outcome.structured, null, 2) : listed ? formatEnforce(listed).join('\n') : outcome.text)
       return 0
     }
     case 'resume': {

@@ -26,15 +26,15 @@ Packages importing packages, importer by row, imported by column; each cell is v
 | importer \ imported | kernel | guarantee | capability | surface | profile |
 |---|---|---|---|---|---|
 | kernel | 15 / 6 | 0 / 1 | 1 / 0 | · | · |
-| guarantee | 39 / 11 | 1 / 0 | · | · | · |
+| guarantee | 40 / 11 | 1 / 0 | · | · | · |
 | capability | 51 / 16 | 0 / 1 | 1 / 3 | · | · |
-| surface | 18 / 12 | 0 / 1 | · | · | · |
+| surface | 19 / 11 | 0 / 1 | · | · | · |
 | profile | 2 / 1 | 1 / 2 | · | · | · |
 
 ## Counts
 
 - 61 packages: 19 kernel, 15 guarantee, 18 capability, 7 surface, 2 profile.
-- 183 package-to-package edges (129 value, 54 type); 12 of them end in a plugin (4 value, 8 type).
+- 184 package-to-package edges (131 value, 53 type); 12 of them end in a plugin (4 value, 8 type).
 - 11 violations (3 value, 8 type) in 7 of 42 plugins: 7 import a guarantee provider (`guarantee-provider`), 4 import another plugin outside its family (`plugin-to-plugin`).
 
 ## Edges that end in a plugin

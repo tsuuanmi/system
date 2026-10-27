@@ -15,7 +15,8 @@
 > split, no promotion); a plugin the manifest check finds something in (no manifest, or a consumed
 > seam version its providers do not satisfy) is recorded and makes health down, but still runs: the
 > host cannot refuse a row ([ADR-0048](../decisions/adr/0048-the-plugin-host-checks-the-composition-at-start.md));
-> a row turned on or off while the host runs is recorded at its next start. Status audited
+> a row the configuration turns on or off is recorded at its next start, and one the operator turns
+> while the host runs ([runtime switches](#runtime-switches), ADR-0078) is recorded at once. Status audited
 > 2026-10-27: nothing of this mechanism changed from T236 to T295 (the canary on a live update,
 > T219, T269, is the [workflow engine's](workflow-engine.md); no lifecycle step is automated).
 
@@ -76,13 +77,16 @@ package's.
 
 ## Seam
 
-`ctx.pluginHost` (`PluginHost` in `@tsuuanmi/system-plugin-host-core`), contract 1.1, a guarantee
+`ctx.pluginHost` (`PluginHost` in `@tsuuanmi/system-plugin-host-core`), contract 1.2, a guarantee
 seam of the plugin host:
 
 | Method | Does |
 |---|---|
 | `list()` | every plugin of the composition, in the order of its first row, then each retired one by name: its rows, whether a row mounts it, its manifest's state (`valid`, `absent`, `refused`, with why), the manifest it declares with the host's `_meta.lifecycle`, its lifecycle as last recorded, and (1.1) what the manifest check found in it (`findings`) with the decision that recorded them (`checked`) |
 | `get(name)` | one plugin, by its name or a name its manifest renames |
+| `rows()` (1.2, optional) | every row: on or off, required or optional with why (`rowRequirement`), and its last runtime turn while the row is still as it left it |
+| `turn(row, on, reason?)` (1.2, optional) | turn an optional row off or on in the running host ([runtime switches](#runtime-switches)); refused with a `SwitchError` (`unknown`, `required`, `control`, `unsupported`, `quiescence`, `failed`, `patch`) |
+| `enforcement()`, `setEnforce(mechanism, mode, reason?)`, `enforced(mechanism)` (1.2, optional) | each gate-like mechanism's enforce mode, its live override set (a `gate` decision first), and the override a mechanism reads at each use |
 
 The definition also holds what every provider applies the same way: reading a declared manifest
 (`readManifest`), the reconciliation of the composition with the record (`reconcile`,
@@ -185,12 +189,35 @@ each decision the one before it: the artifacts' retention keeps the whole histor
 only what differs, so the same composition records nothing, and a crash before the transaction
 commits leaves nothing half-recorded: the next start records it.
 
+## Runtime switches
+
+Contract 1.2 ([ADR-0078](../decisions/adr/0078-a-plugin-or-a-mechanism-is-turned-off-at-runtime.md);
+the rule in [plugin model](../architecture/plugin-model.md#turning-a-plugin-off)). A turn, one at a
+time:
+
+| Step | On failure |
+|---|---|
+| find the row; refuse a required one (`rowRequirement`) or an unknown one; refuse turning off one whose plugin provides a seam the switches are served on (`servesSwitches`: `ctx.mcp`) | `required`, `unknown`, `control`: nothing changes |
+| edit the profile's patch (`<profile>/cordis.patch.yml`) by lines: the row's targeted entry gets `disabled`, or one is appended; comments and other entries stay | a flow mapping or flow list it cannot edit: `patch`, nothing changes |
+| record the turn's `lifecycle` decision before anything moves (INV-13): the state its rows will give the plugin, its reason in the rationale, chained to the decision before; a row with no manifest gets a `lifecycle` decision of its own with options `on` and `off` | a decision that cannot be recorded: the turn fails and nothing moves |
+| `Entry.update({ disabled })` in the DSH loader (it writes nothing back for an entry already disabled), then wait for the fiber's unload (its disposers, each finishing or handing back its in-flight work) or its start, within `quiesceSeconds` (default 60) | past the bound: `quiescence`; a start that throws: `failed`; the row is put back, and a `lifecycle` decision chained to the turn's records that it did not complete (the plugin's record names it, its state as before); the patch is not written |
+| one store transaction: the plugin's record and the turn's record, both naming the turn's decision, and the patch written durably in its own mode | the row is put back: `patch`, recorded as not completed, as above |
+
+A crash after the turn's decision and before the transaction leaves that decision unanswered and the
+patch unwritten: the next start reconciles the composition as the patch gives it (INV-4).
+
+With no profile directory (a test, the matrix) no patch is written, and the result says a restart does
+not keep the turn. The enforce overrides live in the store (`plugin_enforce`), read into memory at
+start and changed only through `setEnforce`, each a `gate` decision of rule `plugin-host.enforce`
+whose candidates are the modes the mechanism takes.
+
 ## Boundaries
 
 - `plugin-host` is the only `system` plugin that reads the DSH loader: an adapter from the host to a
   `system` seam ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)).
-- It records and checks; it never mounts, stops, or gates a plugin. A row is turned on or off by
-  the operator's configuration ([runbook](../operations/runbooks.md#turn-an-off-row-back-on)).
+- It records and checks; it never mounts, stops, or gates a plugin by itself. A row is turned on or
+  off by the operator's configuration ([runbook](../operations/runbooks.md#turn-an-off-row-back-on)),
+  or by the operator's word while it runs ([runbook](../operations/runbooks.md#turn-a-plugin-off)).
   Refusing a row the check finds something in needs a veto point in the DSH loader and a further
   change to this contract, by its own ADR
   ([ADR-0048](../decisions/adr/0048-the-plugin-host-checks-the-composition-at-start.md)).
@@ -201,9 +228,12 @@ commits leaves nothing half-recorded: the next start records it.
 ## Conformance
 
 [`plugin-host-core/conformance/plugin-host.ts`](../../packages/plugin-host-core/conformance/plugin-host.ts),
-11 scenarios at contract 1.1 (6 since 1.0; since 1.1: a row with no manifest or a refused one, the
-allowance, an unsatisfied range, a satisfied one, and a finding recorded once), run against the
-fake provider and against the store-backed provider reading a stub of the loader over installed
-package directories. The profile end-to-end test boots the shipped composition through the real
+12 scenarios at contract 1.2 (6 since 1.0; since 1.1: a row with no manifest or a refused one, the
+allowance, an unsatisfied range, a satisfied one, and a finding recorded once; since 1.2: a required
+row refused, and a mode a mechanism does not take refused), run against the fake provider (pinned at
+1.1) and against the store-backed provider reading a stub of the loader over installed package
+directories. A turn itself (quiescence, the patch, the put-back past the bound, a restart) is tested
+on the store-backed provider over a loader whose entries run real plugins
+(`plugin-host/tests/plugin-host.spec.ts`), and on the whole bundle by the removability matrix. The profile end-to-end test boots the shipped composition through the real
 loader, once more with a patch that drops the allowance: each DSH row is found and recorded, health
 is down, and every row still runs.

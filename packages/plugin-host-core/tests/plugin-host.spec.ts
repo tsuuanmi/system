@@ -9,14 +9,15 @@ import { describe, expect, it } from 'vitest'
 import { runSuite } from '../../libs/conformance/runner.ts'
 import { FakePluginHost, manifestText, pluginHostSuite } from '../conformance/plugin-host.ts'
 import {
-  checkComposition, checkHash, compositionHash, type ManifestRead, MANIFEST_MAX_BYTES, PLUGIN_HOST_CONTRACT, pluginRecords, pluginsOf, readManifest, reconcile,
+  checkComposition, checkHash, compositionHash, type ManifestRead, MANIFEST_MAX_BYTES, pluginRecords, pluginsOf, readManifest, reconcile,
   reconcileChecks, type RecordedCheck, type RecordedLifecycle, satisfies,
 } from '../src/index.ts'
 
-// The seam's own fake passes the suite every provider must pass (ADR-0037).
+// The seam's own fake passes the suite every provider must pass (ADR-0037). It holds no loader, so it
+// implements none of 1.2's optional runtime switches, and pins the contract before them.
 runSuite(pluginHostSuite, {
   name: 'the fake provider',
-  contract: PLUGIN_HOST_CONTRACT,
+  contract: '1.1',
   boot: async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-plugin-host-'))
     const ctx = new Context()

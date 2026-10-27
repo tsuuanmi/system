@@ -7,6 +7,7 @@ export {
   bodyText, NO_LOCAL_SANDBOX, QUESTION_LIMITS, questionsOf, type ReadArtifact, renderBrief, type RenderOptions, type StartInput, startPrompt,
 } from './briefs.ts'
 export { extractJson, SchemaError, SchemaRegistry } from './schemas.ts'
+export { ENFORCE_MODES, type EnforceMode, enforceMode, type EnforceSource, type Mechanism, MECHANISMS, mechanismOf } from './enforce.ts'
 export { dshHome, ensurePrivateDir, fsyncDir, readOrCreateSecretFile, writeFileDurable } from './files.ts'
 export { issueLeadToken, LEAD_PROJECT, leadId, leadTokenFile, leadTokens, listLeads, revokeLeadToken } from './lead-tokens.ts'
 export { nodeVersionProblem, sqliteRuntimeProblem, SUPPORTED_NODE } from './runtime.ts'

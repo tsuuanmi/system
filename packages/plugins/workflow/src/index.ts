@@ -149,6 +149,11 @@ export class Workflow extends Service {
       warnTasks: z.natural().max(1000).default(30).description('Distinct board tasks whose slice is built in warn mode: a slice over the 6,000-token bound is sent whole with a handbook.bound decision; past them, such a slice is refused and the step fails config_error'),
       root: z.string().description('The System repository the handbook\'s homes are read from: the invariants and the ADR index (layer 1) and the rule inventory, docs/design/handbook.md (layer 4); default, the repository this package sits in. Unread, each version says so'),
     }).description('The per-Worker handbook slice and its bound (docs/design/handbook.md)'),
+    enforce: z.object({
+      evidenceGate: z.union(['off', 'warn', 'on']).default('on').description('The evidence gate at the end of a writing step of a board task\'s run: on refuses a step that shows no output of its required checks, warn records that refusal and lets the step end, off does not look'),
+      handbookBound: z.union(['warn', 'on']).default('on').description('The handbook slice\'s bound: on refuses a slice over it once the warn period (handbook.warnTasks) is over, warn always sends it whole and records it; handbook.enabled false gives no slice'),
+      reviewGuides: z.union(['off', 'on']).default('on').description('The selection of the REVIEW.md guides of the areas a review\'s change touches: off gives a review none'),
+    }).description('Each gate-like mechanism\'s start mode (ADR-0078); the plugin host\'s live override (system enforce set) wins, read at each use'),
     maxReviewCycles: z.natural().min(1).max(5).default(3).description('Reviews of one change, the first included, before remediation stops'),
     fixSessionWaitMinutes: z.number().min(0).max(1440).default(60).description('Minutes a review\'s fix that continues its author\'s session waits for that session\'s Worker while it cannot take the fix now (out of quota, signed out, not listed), from the fix\'s first wait, spending no attempt; past it, the session is handed off to another Worker with its earlier turns, recorded (INV-9); 0 hands off at once'),
     tieTimeoutHours: z.number().min(0.0001).max(720).default(24).description('Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9)'),

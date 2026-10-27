@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -9,7 +9,8 @@ import Store from '@tsuuanmi/system-store'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { manifestText } from '../../../plugin-host-core/conformance/plugin-host.ts'
 import StorePluginHost, { compositionOf, exportLog, type LoaderView, logLines, packageBases, packageDir, packageManifest } from '../src/index.ts'
-import { install, stubLoader } from './composition.ts'
+import { editPatch } from '../src/patch.ts'
+import { install, liveLoader, stubLoader } from './composition.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -238,6 +239,182 @@ describe('the daemon\'s log', () => {
     expect(() => ctx.logger('x').warn('lost')).not.toThrow()
     expect(logLines({ sn: 1, ts: 0, name: 'x', type: 'warn', level: 2, args: ['two\nlines'] })).toBe('1970-01-01T00:00:00.000Z warn x: two\n1970-01-01T00:00:00.000Z warn x: lines\n')
     await fiber.dispose()
+  })
+})
+
+describe('the operator\'s runtime switches (contract 1.2, ADR-0078)', () => {
+  const SURFACE = '@x/surface'
+  const CORE = '@x/core'
+  const MODEL = '@x/no-manifest-model'
+  const DSH = '@x/no-manifest-host'
+
+  /** A host over a live loader: an optional row `s` whose plugin provides `ctx.thing` and stops only once `inFlight` settles, a required row `k`, two rows with no manifest, one of them named optional; a profile with its patch. */
+  async function boot(options: { inFlight?: () => Promise<void>; quiesceSeconds?: number; workflowConfig?: Record<string, unknown> } = {}) {
+    const dir = temp()
+    const profile = join(dir, 'profile')
+    install(profile, {
+      [SURFACE]: manifestText(SURFACE), [CORE]: manifestText(CORE, { class: { kind: 'core', component: 'gate' } }), [MODEL]: undefined, [DSH]: undefined,
+      '@x/workflow': manifestText('@x/workflow', { class: { kind: 'core', component: 'runner' } }),
+      '@x/mcp': manifestText('@x/mcp', { provides: [{ seam: 'mcp', version: '1.0.0' }] }),
+    })
+    const patch = join(profile, 'cordis.patch.yml')
+    writeFileSync(patch, '# Operator overrides for the system profile.\n[]\n')
+    chmodSync(patch, 0o640)
+    const stopped: string[] = []
+    const thing = {
+      name: 'thing',
+      apply: (c: Context) => {
+        c.provide('thing' as never, { here: true } as never)
+        c.effect(() => async () => {
+          await options.inFlight?.()
+          stopped.push('thing')
+        })
+      },
+    }
+    const ctx = new Context()
+    const kernel = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {})]
+    await Promise.all(kernel)
+    const loader = liveLoader(ctx, profile, [
+      { id: 's', name: SURFACE, mounted: true, plugin: thing }, { id: 'k', name: CORE, mounted: true },
+      { id: 'model', name: MODEL, mounted: true }, { id: 'timer', name: DSH, mounted: true },
+      { id: 'workflow', name: '@x/workflow', mounted: true, ...(options.workflowConfig ? { config: options.workflowConfig } : {}) },
+      { id: 'mcp-server', name: '@x/mcp', mounted: true },
+    ])
+    const env = [
+      ctx.plugin({ name: 'loader', apply: (c: Context) => void c.provide('loader', loader) }),
+      ctx.plugin({ name: 'profile', apply: (c: Context) => void c.provide('profileContext' as never, { dir: profile } as never) }),
+    ]
+    await Promise.all(env)
+    const config = { allowWithoutManifest: [MODEL, DSH], optionalWithoutManifest: [MODEL], ...(options.quiesceSeconds ? { quiesceSeconds: options.quiesceSeconds } : {}) }
+    let host = ctx.plugin(StorePluginHost, config)
+    await host
+    onTestFinished(async () => {
+      for (const fiber of [host, ...env, ...kernel].reverse()) await fiber.dispose()
+    })
+    const restart = async (): Promise<void> => {
+      await host.dispose()
+      host = ctx.plugin(StorePluginHost, config)
+      await host
+    }
+    return { ctx, patch, stopped, restart }
+  }
+
+  const lifecycles = (ctx: Context) => ctx.artifacts.list({ kind: 'decision', decisionType: 'lifecycle', limit: 1000 })
+
+  it('turns an optional row off while the host runs: its plugin finishes its in-flight work and stops, its seam is absent, the turn is a lifecycle decision with the reason, kept in the profile\'s patch; on again restores it with no restart (T322)', async () => {
+    let release!: () => void
+    const inFlight = new Promise<void>((resolve) => { release = resolve })
+    let disposing = false
+    const { ctx, patch, stopped, restart } = await boot({ inFlight: async () => { disposing = true; await inFlight } })
+    expect(ctx.get('thing' as never)).toBeDefined()
+    const before = lifecycles(ctx).length
+    const recorded = ctx.pluginHost.get(SURFACE)!.lifecycle!
+    let settled = false
+    const turning = ctx.pluginHost.turn!('s', false, 'its digests are wrong today').finally(() => { settled = true })
+    // Quiescence: the turn waits on the plugin's own disposal, which waits on its work in flight.
+    await vi.waitFor(() => expect(disposing).toBe(true))
+    expect(settled).toBe(false)
+    release()
+    const off = await turning
+    expect(stopped).toEqual(['thing'])
+    expect(ctx.get('thing' as never)).toBeUndefined()
+    expect(off).toMatchObject({ changed: true, patch, row: { id: 's', on: false, required: false, turned: { on: false, reason: 'its digests are wrong today' } } })
+    expect(ctx.pluginHost.rows!().find((r) => r.id === 's')).toEqual(off.row)
+    // One lifecycle decision, chained to the one before, with the operator's reason; the plugin is a candidate now.
+    expect(lifecycles(ctx)).toHaveLength(before + 1)
+    expect(ctx.pluginHost.get(SURFACE)).toMatchObject({ mounted: false, lifecycle: { state: 'candidate', decision: off.row.turned!.decision } })
+    const decision = ctx.artifacts.get(off.row.turned!.decision)!.body as { inputs: string[]; outcome: { option: string; detail: { from: string } }; rationale: string }
+    expect(decision).toMatchObject({ inputs: [recorded.decision], outcome: { option: 'candidate', detail: { from: 'default' } } })
+    expect(decision.rationale).toContain('its digests are wrong today')
+    // Kept in the profile's patch, its comment kept, and the file's mode.
+    expect(readFileSync(patch, 'utf8')).toBe('# Operator overrides for the system profile.\n- id: s\n  disabled: true\n')
+    expect(statSync(patch).mode & 0o777).toBe(0o640)
+    // A restart over the same record keeps the turn and its reason, and records nothing.
+    await restart()
+    expect(lifecycles(ctx)).toHaveLength(before + 1)
+    expect(ctx.pluginHost.rows!().find((r) => r.id === 's')).toEqual(off.row)
+    // On again: the plugin applies, its seam is back, without a restart of anything else.
+    const on = await ctx.pluginHost.turn!('s', true)
+    expect(on).toMatchObject({ changed: true, row: { on: true, turned: { on: true } } })
+    expect(ctx.get('thing' as never)).toBeDefined()
+    expect(ctx.pluginHost.get(SURFACE)!.lifecycle!.state).toBe('default')
+    expect(readFileSync(patch, 'utf8')).toBe('# Operator overrides for the system profile.\n- id: s\n  disabled: false\n')
+    expect((await ctx.pluginHost.turn!('s', true)).changed).toBe(false)
+    // A row with no manifest the configuration names optional turns too, recorded; one it does not name is required.
+    expect((await ctx.pluginHost.turn!('model', false, 'no routes')).row).toMatchObject({ on: false, required: false })
+    await expect(ctx.pluginHost.turn!('timer', false)).rejects.toMatchObject({ failure: 'required' })
+  })
+
+  it('refuses to turn off a required row, an unknown one, or the row that serves the switches, saying why, and changes nothing (T322, INV-2)', async () => {
+    const { ctx, patch } = await boot()
+    const before = lifecycles(ctx).length
+    await expect(ctx.pluginHost.turn!('k', false, 'try')).rejects.toMatchObject({ name: 'SwitchError', failure: 'required', message: expect.stringMatching(/row k is required.*guarantee seam/) })
+    await expect(ctx.pluginHost.turn!('nope', false)).rejects.toMatchObject({ failure: 'unknown' })
+    expect(ctx.pluginHost.rows!().find((r) => r.id === 'k')).toMatchObject({ on: true, required: true })
+    // A switch never removes its own control surface: the row that serves ctx.mcp, optional by its family, stays on.
+    await expect(ctx.pluginHost.turn!('mcp-server', false, 'try')).rejects.toMatchObject({ failure: 'control', message: expect.stringMatching(/ctx\.mcp.*nothing could turn it on again/) })
+    expect(ctx.pluginHost.rows!().find((r) => r.id === 'mcp-server')).toMatchObject({ on: true, required: false })
+    expect(lifecycles(ctx)).toHaveLength(before)
+    expect(readFileSync(patch, 'utf8')).toBe('# Operator overrides for the system profile.\n[]\n')
+  })
+
+  it('records the turn before it moves anything, and when its plugin does not stop within the bound puts the row back and records that, chained to it: the loader, the record, and the patch agree the row is on (INV-13, INV-9)', async () => {
+    let release!: () => void
+    const never = new Promise<void>((resolve) => { release = resolve })
+    onTestFinished(() => release())
+    let disposing = false
+    const { ctx, patch } = await boot({ inFlight: () => { disposing = true; return never }, quiesceSeconds: 1 })
+    const before = lifecycles(ctx).length
+    const turning = ctx.pluginHost.turn!('s', false, 'stuck')
+    // The plugin is being disposed: its decision is already recorded (INV-13).
+    await vi.waitFor(() => expect(disposing).toBe(true))
+    const authorized = lifecycles(ctx).slice(before)
+    expect(authorized).toHaveLength(1)
+    expect(authorized[0]!.body).toMatchObject({ outcome: { option: 'candidate' } })
+    await expect(turning).rejects.toMatchObject({ failure: 'quiescence' })
+    expect(ctx.pluginHost.rows!().find((r) => r.id === 's')).toMatchObject({ on: true })
+    expect(ctx.pluginHost.rows!().find((r) => r.id === 's')!.turned).toBeUndefined()
+    // The failure is a decision of its own, chained to the turn it ends; the record names it, the state as before.
+    expect(lifecycles(ctx)).toHaveLength(before + 2)
+    const recorded = ctx.pluginHost.get(SURFACE)!.lifecycle!
+    const failed = ctx.artifacts.get(recorded.decision)!.body as { inputs: string[]; outcome: { option: string }; rationale: string }
+    expect(recorded.state).toBe('default')
+    expect(failed).toMatchObject({ inputs: [authorized[0]!.id], outcome: { option: 'default' }, rationale: expect.stringMatching(/did not complete.*quiesceSeconds/) })
+    expect(readFileSync(patch, 'utf8')).toBe('# Operator overrides for the system profile.\n[]\n')
+  })
+
+  it('moves a mechanism\'s enforce mode live, from on to warn, recorded as a gate decision and kept across a restart; a mode it does not take is refused; configured clears it (T322)', async () => {
+    const { ctx, restart } = await boot({ workflowConfig: { enforce: { reviewGuides: 'off' } } })
+    const modes = () => Object.fromEntries(ctx.pluginHost.enforcement!().map((s) => [s.mechanism, s.mode]))
+    // The owning row's configured mode is the one in force while no override is set.
+    expect(modes()).toEqual({ 'evidence-gate': 'on', 'handbook-bound': 'on', 'review-guides': 'off', 'lead-rights': 'on' })
+    expect(ctx.pluginHost.enforced!('evidence-gate')).toBeUndefined()
+    const set = ctx.pluginHost.setEnforce!('evidence-gate', 'warn', 'refusing good steps')
+    expect(set).toMatchObject({ mechanism: 'evidence-gate', mode: 'warn', configured: 'on', override: { mode: 'warn', reason: 'refusing good steps' } })
+    expect(ctx.pluginHost.enforced!('evidence-gate')).toBe('warn')
+    const decision = ctx.artifacts.get(set.override!.decision)!.body as { decisionType: string; decider: { id: string }; outcome: { option: string; detail: { from: string } } }
+    expect(decision).toMatchObject({ decisionType: 'gate', decider: { id: 'plugin-host.enforce' }, outcome: { option: 'warn', detail: { from: 'on' } } })
+    await restart()
+    expect(ctx.pluginHost.enforced!('evidence-gate')).toBe('warn')
+    expect(() => ctx.pluginHost.setEnforce!('lead-rights', 'warn')).toThrow(expect.objectContaining({ failure: 'unsupported', message: expect.stringMatching(/only on/) }))
+    expect(() => ctx.pluginHost.setEnforce!('handbook-bound', 'off')).toThrow(expect.objectContaining({ failure: 'unsupported' }))
+    expect(() => ctx.pluginHost.setEnforce!('red-herring', 'warn')).toThrow(expect.objectContaining({ failure: 'unknown' }))
+    const cleared = ctx.pluginHost.setEnforce!('evidence-gate', 'configured')
+    expect(cleared).toMatchObject({ mode: 'on' })
+    expect(cleared.override).toBeUndefined()
+    expect(ctx.pluginHost.enforced!('evidence-gate')).toBeUndefined()
+  })
+})
+
+describe('the profile\'s patch, edited by lines (ADR-0078)', () => {
+  it('sets a targeted entry\'s disabled, adds one, and refuses a flow mapping it cannot edit by lines', () => {
+    const text = '# keep\n- insert:\n    - id: digest\n      name: x\n- id: digest\n  config:\n    disabled: nested\n# after\n- id: other\n  disabled: true\n'
+    expect(editPatch(text, 'digest', true)).toBe('# keep\n- insert:\n    - id: digest\n      name: x\n- id: digest\n  disabled: true\n  config:\n    disabled: nested\n# after\n- id: other\n  disabled: true\n')
+    expect(editPatch(text, 'other', false)).toContain('- id: other\n  disabled: false\n')
+    expect(editPatch('- id: a\n  disabled: true', 'b', true)).toBe('- id: a\n  disabled: true\n- id: b\n  disabled: true\n')
+    expect(editPatch('', 'b', false)).toBe('- id: b\n  disabled: false\n')
+    expect(() => editPatch('- { id: b, disabled: false }\n', 'b', true)).toThrow(expect.objectContaining({ failure: 'patch' }))
+    expect(() => editPatch('[{ id: a }]\n', 'b', true)).toThrow(expect.objectContaining({ failure: 'patch' }))
   })
 })
 

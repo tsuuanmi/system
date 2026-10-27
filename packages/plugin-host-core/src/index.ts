@@ -14,7 +14,7 @@
  * @module @tsuuanmi/system-plugin-host-core
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
-import { canonicalJson, contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
+import { canonicalJson, contentId, type EnforceMode, type EnforceSource, SchemaRegistry } from '@tsuuanmi/system-libs'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -22,8 +22,13 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** The contract version this definition and its conformance suite describe; 1.1 adds the manifest check (`PluginRecord.findings`, `checked`). */
-export const PLUGIN_HOST_CONTRACT = '1.1' as const
+/**
+ * The contract version this definition and its conformance suite describe; 1.1 adds the manifest
+ * check (`PluginRecord.findings`, `checked`); 1.2 (ADR-0078) the operator's runtime switches, each
+ * optional: a row turned off or on in the running host (`rows`, `turn`) and the live override of a
+ * mechanism's enforce mode (`enforcement`, `setEnforce`, `enforced`).
+ */
+export const PLUGIN_HOST_CONTRACT = '1.2' as const
 
 /** The file a plugin package declares its manifest in, at the package's root. */
 export const MANIFEST_FILE = 'plugin-manifest.json'
@@ -119,7 +124,64 @@ export type ManifestFinding =
   | { kind: 'no-manifest'; manifest: 'absent' | 'refused'; reason: string }
   | { kind: 'unsatisfied'; seam: string; range: string; provider?: string; version: string; reason: string }
 
-export abstract class PluginHost extends Service {
+/** 1.2: one row of the composition as the operator turns it: on or off now, whether it may be turned off, and its last runtime turn. */
+export interface RowState {
+  id: string
+  /** The package it loads. */
+  name: string
+  /** Whether it runs now. */
+  on: boolean
+  /** A required row is never turned off at runtime ({@link rowRequirement}). */
+  required: boolean
+  /** Why it is required or optional. */
+  why: string
+  /** Its last runtime turn, while the row is still as it left it: on or off, the operator's reason, when, and the `lifecycle` decision that recorded it. */
+  turned?: { on: boolean; reason?: string; since: string; decision: ArtifactRef }
+}
+
+/** 1.2: a mechanism's enforce mode as the host reports it ({@link EnforceSource}). */
+export interface EnforceState {
+  mechanism: string
+  row: string
+  /** The modes it takes. */
+  modes: EnforceMode[]
+  /** The mode in force: the override, else the owning row's configured one, else `on`. */
+  mode: EnforceMode
+  /** The owning row's configured mode (`enforce.<key>`), `on` when it sets none. */
+  configured: EnforceMode
+  /** The operator's live override, with its `gate` decision; none: the configured mode is in force. */
+  override?: { mode: EnforceMode; reason?: string; since: string; decision: ArtifactRef }
+  what: string
+}
+
+/** 1.2: why a runtime switch was refused; nothing changed in the running host, its record, or the profile's patch. */
+export type SwitchFailure = 'unknown' | 'required' | 'control' | 'unsupported' | 'quiescence' | 'failed' | 'patch'
+
+/**
+ * 1.2: the seams the operator's runtime switches are served on: MCP `plugin` and `enforce`, which
+ * `system plugin` and `system enforce` call. A row whose plugin provides one is never turned off at
+ * runtime, whatever its class: nothing could turn it on again (ADR-0078). Its patch turns it off.
+ */
+const SWITCH_SEAMS: readonly string[] = ['mcp']
+
+/** 1.2: why a row may not be turned off at runtime because it serves the switches, or undefined. */
+export function servesSwitches(read: ManifestRead | undefined): string | undefined {
+  if (read?.state !== 'valid') return undefined
+  const seam = read.manifest.provides.find((p) => SWITCH_SEAMS.includes(p.seam))?.seam
+  return seam ? `it provides ctx.${seam}, which serves the operator's runtime switches (system plugin, system enforce): turned off, nothing could turn it on again; turn it off in the profile's patch and restart` : undefined
+}
+
+export class SwitchError extends Error {
+  constructor(readonly failure: SwitchFailure, message: string) {
+    super(message)
+    this.name = 'SwitchError'
+  }
+}
+
+/** 1.2: what a runtime turn did: the row as it is now, and the patch file it wrote (none: the profile has none, and a restart does not keep it). */
+export interface Turned { row: RowState; patch?: string; changed: boolean }
+
+export abstract class PluginHost extends Service implements EnforceSource {
   constructor(ctx: Context) {
     super(ctx, 'pluginHost')
   }
@@ -129,6 +191,90 @@ export abstract class PluginHost extends Service {
 
   /** One plugin, by its name or a name it was renamed from; undefined when the host knows none. */
   abstract get(name: string): PluginRecord | undefined
+
+  /** 1.2, optional: every row of the composition, on or off, required or optional, and its last runtime turn. */
+  rows?(): RowState[]
+
+  /**
+   * 1.2, optional: turn an optional row off or on in the running host: its plugin is disposed (its
+   * in-flight work finished or handed back, as its seam's disposal does) or applied, within a bound;
+   * then a `lifecycle` decision is recorded and the profile's patch is written, so a restart keeps it.
+   * A required row, an unknown one, a disposal past its bound, and a patch it cannot write are refused
+   * ({@link SwitchError}), leaving the row as it was.
+   */
+  turn?(row: string, on: boolean, reason?: string): Promise<Turned>
+
+  /** 1.2, optional: each mechanism's enforce mode. */
+  enforcement?(): EnforceState[]
+
+  /** 1.2, optional: set a mechanism's live override (`configured` clears it), recorded as a `gate` decision first; a mode it does not take is refused. */
+  setEnforce?(mechanism: string, mode: EnforceMode | 'configured', reason?: string): EnforceState
+
+  /** 1.2, optional: a mechanism's live override, undefined when none is set; read at each use ({@link EnforceSource}). */
+  enforced?(mechanism: string): EnforceMode | undefined
+}
+
+/**
+ * 1.2: whether a row may be turned off at runtime, the same for every provider (docs/architecture/plugin-model.md#required-and-optional-rows).
+ * A row whose plugin declares a core class provides a guarantee seam: required. One of a plugin
+ * family is optional. One with no valid manifest is required (the host cannot tell what it is, INV-2),
+ * unless the host's configuration names its package among the optional ones (the DSH model rows).
+ */
+export function rowRequirement(read: ManifestRead | undefined, name: string, optionalWithoutManifest: readonly string[] = []): { required: boolean; why: string } {
+  if (read?.state === 'valid') {
+    const c = read.manifest.class
+    return c.kind === 'core'
+      ? { required: true, why: `it provides a guarantee seam (core component ${c.component}): with it off, System is not the product it promises` }
+      : { required: false, why: `it is of the ${c.family} family, a capability or a surface: with it off, System still works and what needs it says it is not mounted` }
+  }
+  if (optionalWithoutManifest.includes(name)) return { required: false, why: 'its package ships no manifest, and the plugin host\'s configuration names it optional (optionalWithoutManifest)' }
+  return { required: true, why: `its package declares no manifest the host read (${read?.state ?? 'absent'}), so the host cannot tell it is optional` }
+}
+
+/**
+ * 1.2: the `lifecycle` decision of a runtime turn of `row`: the plugin's state once the turn is done
+ * (`default` while a row of it is on, else `candidate`), chained to its decision before, with the
+ * operator's reason. Recorded before the plugin's record, as every lifecycle decision is (INV-13).
+ */
+export function turnDecision(rows: readonly CompositionRow[], name: string, row: string, on: boolean, reason: string | undefined, version: string, previous: RecordedLifecycle | undefined, digest: ArtifactRef | undefined): LifecycleDecision {
+  const plugin = pluginsOf(rows).find((p) => p.name === name)
+  const state: LifecycleState = plugin?.mounted ? 'default' : 'candidate'
+  const body = decision(name, state, plugin, version, compositionHash(rows), previous, digest)
+  const said = reason ? `: ${reason}` : ''
+  return { ...body, rationale: `The operator turned row ${row} ${on ? 'on' : 'off'} in the running host (system plugin ${on ? 'on' : 'off'})${said}; the host disposed or applied it and records the state its rows now give it.`.slice(0, 1000) }
+}
+
+/** 1.2: the body of an enforce override's `gate` decision (`decision@1.0`), as a provider records it through `ctx.artifacts.recordDecision`. */
+export interface EnforceDecision {
+  schema: 'decision@1.0'
+  decisionType: 'gate'
+  question: string
+  inputs: ArtifactRef[]
+  candidates: Array<{ option: EnforceMode; selected: boolean; reasons: string[] }>
+  decider: { type: 'rule'; id: 'plugin-host.enforce'; version: '1' }
+  outcome: { option: EnforceMode; detail: { mechanism: string; from: EnforceMode; override: boolean; reason?: string } }
+  deterministic: true
+  rationale: string
+}
+
+/**
+ * 1.2: the `gate` decision of a live enforce override: the mode `to` now in force (the override, or the
+ * configured one once `cleared`), each mode the mechanism takes a candidate with why, chained to the
+ * override it replaces.
+ */
+export function enforceDecision(mechanism: { id: string; modes: readonly EnforceMode[] }, from: EnforceMode, to: EnforceMode, cleared: boolean, reason: string | undefined, previous: ArtifactRef | undefined): EnforceDecision {
+  const how = cleared ? 'the operator cleared the live override, so the owning row\'s configured mode is in force' : 'the operator set it live (system enforce set)'
+  return {
+    schema: 'decision@1.0',
+    decisionType: 'gate',
+    question: `Which enforce mode does mechanism ${mechanism.id} run in?`,
+    inputs: previous ? [previous] : [],
+    candidates: mechanism.modes.map((option) => ({ option, selected: option === to, reasons: [option === to ? `${how}${reason ? `: ${reason}` : ''}`.slice(0, 300) : `not ${option}: ${to} is in force`] })),
+    decider: { type: 'rule', id: 'plugin-host.enforce', version: '1' },
+    outcome: { option: to, detail: { mechanism: mechanism.id, from, override: !cleared, ...(reason ? { reason: reason.slice(0, 500) } : {}) } },
+    deterministic: true,
+    rationale: 'A gate-like mechanism moves between on, warn, and off without a restart; the plugin host holds the override and the mechanism reads it at each use (ADR-0078).',
+  }
 }
 
 const schemas = new SchemaRegistry()

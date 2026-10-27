@@ -1247,6 +1247,9 @@ importers:
       '@tsuuanmi/system-ledger-core':
         specifier: workspace:*
         version: link:../../ledger-core
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../../libs
       '@tsuuanmi/system-plugin-host-core':
         specifier: workspace:*
         version: link:../../plugin-host-core
@@ -1260,9 +1263,6 @@ importers:
       '@tsuuanmi/system-artifacts':
         specifier: workspace:*
         version: link:../artifacts
-      '@tsuuanmi/system-libs':
-        specifier: workspace:*
-        version: link:../../libs
       '@tsuuanmi/system-store':
         specifier: workspace:*
         version: link:../store

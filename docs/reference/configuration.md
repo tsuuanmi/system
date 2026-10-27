@@ -402,6 +402,8 @@ No options.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `allowWithoutManifest` | string[] | `[]` | Packages a row may load with no plugin-manifest.json (the DSH rows the bundle composes); anything else that ships none is a finding of the manifest check |
+| `optionalWithoutManifest` | string[] | `[]` | Packages with no plugin-manifest.json whose rows the operator may turn off at runtime (system plugin off); any other row with no manifest is required |
+| `quiesceSeconds` | number (1…3600) | `60` | Seconds a turned row's plugin has to finish or hand back its in-flight work and stop, or to start; past it the row is put back as it was and nothing is recorded or written |
 
 ## `profile-scientific-research`
 
@@ -639,6 +641,10 @@ No options.
 | `handbook.enabled` | boolean | `true` | Give every step of a board task's run its handbook slice (layers 1 to 4 by the engine, the gate view and the lessons by its Worker source), recorded in its brief |
 | `handbook.warnTasks` | number (0…1000) | `30` | Distinct board tasks whose slice is built in warn mode: a slice over the 6,000-token bound is sent whole with a handbook.bound decision; past them, such a slice is refused and the step fails config_error |
 | `handbook.root` | string |  | The System repository the handbook's homes are read from: the invariants and the ADR index (layer 1) and the rule inventory, docs/design/handbook.md (layer 4); default, the repository this package sits in. Unread, each version says so |
+| `enforce` | object | `{}` | Each gate-like mechanism's start mode (ADR-0078); the plugin host's live override (system enforce set) wins, read at each use |
+| `enforce.evidenceGate` | "off" \| "warn" \| "on" | `"on"` | The evidence gate at the end of a writing step of a board task's run: on refuses a step that shows no output of its required checks, warn records that refusal and lets the step end, off does not look |
+| `enforce.handbookBound` | "warn" \| "on" | `"on"` | The handbook slice's bound: on refuses a slice over it once the warn period (handbook.warnTasks) is over, warn always sends it whole and records it; handbook.enabled false gives no slice |
+| `enforce.reviewGuides` | "off" \| "on" | `"on"` | The selection of the REVIEW.md guides of the areas a review's change touches: off gives a review none |
 | `maxReviewCycles` | number (1…5) | `3` | Reviews of one change, the first included, before remediation stops |
 | `fixSessionWaitMinutes` | number (0…1440) | `60` | Minutes a review's fix that continues its author's session waits for that session's Worker while it cannot take the fix now (out of quota, signed out, not listed), from the fix's first wait, spending no attempt; past it, the session is handed off to another Worker with its earlier turns, recorded (INV-9); 0 hands off at once |
 | `tieTimeoutHours` | number (0.0001…720) | `24` | Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9) |

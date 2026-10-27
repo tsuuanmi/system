@@ -130,12 +130,36 @@ export async function bootBundle(off: string | undefined, on: string[] = []): Pr
   const ctx = new Context()
   // The plugin host reads the composition from the DSH loader and resolves each row's package from the bundle.
   ;(ctx as unknown as { baseUrl: string }).baseUrl = pathToFileURL(`${BUNDLE}/`).href
+  const failed = new Map<string, string>()
+  /** Each row as the DSH loader's `Entry` holds it: turned by `update`, which disposes the running fiber (not awaited) or applies the row again (ADR-0078). */
+  const entries = rows.map((row) => {
+    const entry = {
+      options: { id: row.id, name: row.name, ...(row.config ? { config: row.config } : {}) },
+      disabled: row.disabled,
+      fiber: undefined as Fiber | undefined,
+      update: async ({ disabled }: { disabled: boolean }): Promise<void> => {
+        entry.disabled = disabled
+        if (disabled) void entry.fiber?.dispose()
+        else await mount(entry, row)
+      },
+    }
+    return entry
+  })
+  type Entry = (typeof entries)[number]
+  const mount = async (entry: Entry, row: Row): Promise<void> => {
+    const module = DSH[row.name] ?? await import(row.name) as { default?: unknown }
+    const loaded = (module as { default?: unknown }).default ?? module
+    const fiber = ctx.plugin(loaded as never, { ...row.config, ...overrides[row.id] } as never)
+    entry.fiber = fiber
+    // A row that cannot start is a finding, never an unhandled rejection; one that waits on a seam that is absent never settles.
+    void Promise.resolve(fiber).catch((error: unknown) => { failed.set(row.id, (error as Error).message) })
+  }
   class Loader extends Service {
     constructor(c: Context) {
       super(c, 'loader')
     }
-    *entries(): Generator<{ options: { id: string; name: string }; disabled: boolean }> {
-      for (const row of rows) yield { options: { id: row.id, name: row.name }, disabled: row.disabled }
+    *entries(): Generator<Entry> {
+      yield* entries
     }
   }
   const overrides: Record<string, Record<string, unknown>> = {
@@ -146,19 +170,13 @@ export async function bootBundle(off: string | undefined, on: string[] = []): Pr
     approvals: { sweepSeconds: 3600 },
     board: { sweepSeconds: 0 },
   }
-  const failed = new Map<string, string>()
   const fibers: Fiber[] = [ctx.plugin(Loader)]
-  for (const row of rows.filter((r) => !r.disabled)) {
-    const module = DSH[row.name] ?? await import(row.name) as { default?: unknown }
-    const loaded = (module as { default?: unknown }).default ?? module
-    const fiber = ctx.plugin(loaded as never, { ...row.config, ...overrides[row.id] } as never)
-    // A row that cannot start is a finding, never an unhandled rejection; one that waits on a seam that is absent never settles.
-    fibers.push(fiber)
-    void Promise.resolve(fiber).catch((error: unknown) => { failed.set(row.id, (error as Error).message) })
-  }
+  for (const [i, row] of rows.entries()) if (!row.disabled) await mount(entries[i]!, row)
   const scriptedWorkers = scripted()
-  fibers.push(ctx.plugin({ name: 'removability-worker', inject: ['workers', 'artifacts'], apply: (c: Context) => void c.workers.register(scriptedWorkers.source(c)) } as never, {} as never))
+  const worker = ctx.plugin({ name: 'removability-worker', inject: ['workers', 'artifacts'], apply: (c: Context) => void c.workers.register(scriptedWorkers.source(c)) } as never, {} as never)
   const dispose = async (): Promise<void> => {
+    await worker.dispose()
+    for (const entry of [...entries].reverse()) await entry.fiber?.dispose()
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
     vi.unstubAllEnvs()
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
@@ -179,6 +197,51 @@ export async function bootBundle(off: string | undefined, on: string[] = []): Pr
     await dispose()
     throw error
   }
+}
+
+/** The plugin host's runtime switch (contract 1.2, ADR-0078), through its loosely typed surface: the matrix names no plugin's types. */
+interface Switches {
+  turn(row: string, on: boolean, reason?: string): Promise<{ row: { id: string; on: boolean; required: boolean; turned?: { reason?: string } } }>
+  rows(): Array<{ id: string; on: boolean; required: boolean }>
+}
+export const switches = (booted: Booted): Switches => (booted.ctx as unknown as { pluginHost: Switches }).pluginHost
+
+/**
+ * Turn row `id` off or on in the running bundle through the plugin host, no restart. A turn that
+ * fails is named by the row and the step. `mcp-server`, which serves the switches, is never turned
+ * off at runtime (ADR-0078).
+ */
+export async function turnRow(booted: Booted, id: string, on: boolean): Promise<Booted> {
+  const step = on ? 'turn on' : 'turn off'
+  try {
+    const turned = await within(switches(booted).turn(id, on, 'the removability matrix'), 120_000, `row ${id} to ${step}`)
+    if (turned.row.on !== on) throw new Error(`the row is ${turned.row.on ? 'on' : 'off'} after it`)
+  } catch (error) {
+    throw new StepFailure(id, step, (error as Error).message)
+  }
+  return booted
+}
+
+/**
+ * A row that ships off and provides a seam another row provides: only one provider runs at a time
+ * (INV-1, plugin rule 4), so the other is turned off before it is turned on, and back on after.
+ */
+export const SWAPS: Readonly<Record<string, string>> = { 'digest-extractive': 'digest' }
+
+/**
+ * The runtime cycle of an optional row that ships off, in the running bundle with no restart: its
+ * swap (if any) off, the row on, smoke; the row off, its swap on again, smoke with the tools of the
+ * baseline. A failure is named by the row and the step.
+ */
+export async function cycleShippedOff(booted: Booted, id: string, baseline: readonly string[]): Promise<void> {
+  const swap = SWAPS[id]
+  if (swap) await turnRow(booted, swap, false)
+  await turnRow(booted, id, true)
+  await smoke(booted, swap)
+  await turnRow(booted, id, false)
+  if (swap) await turnRow(booted, swap, true)
+  const { tools } = await smoke(booted, undefined, baseline)
+  if (booted.mcp && [...tools].sort().join() !== [...baseline].sort().join()) throw new StepFailure(id, 'tools after', `the tools differ from the baseline's: ${tools.filter((t) => !baseline.includes(t)).join(', ')} added, ${baseline.filter((t) => !tools.includes(t)).join(', ')} gone`)
 }
 
 type Step = { name: string; run: () => Promise<void> }

@@ -40,7 +40,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md) | orchestration | — | `profile-scientific-research` | `workflow`, `workers`, `artifacts`, `eventLog` | `ledger-core`, `libs` |
 | [profile-software-development](../../packages/plugins/profile-software-development/README.md) | orchestration | — | `profile-software-development` | `workflow` | `workers-core`, `workflow` |
 | [worker-sessions](../../packages/plugins/worker-sessions/README.md) | orchestration | `workerSessions` | `worker-sessions` | `store`, `artifacts`, `mcp` (optional), `workflow` (optional) | `gateway-core`, `ledger-core`, `libs` |
-| [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `agentWorkers` (optional), `approvals` (optional), `board` (optional), `digests` (optional), `dispatchAdvisor` (optional), `landing` (optional), `mcp` (optional), `resources` (optional) | `approvals-core`, `board-core`, `decision-core`, `digest-core`, `gateway-core`, `landing-core`, `ledger-core`, `libs`, `provider-core`, `resources-core`, `worker-sessions`, `workers-core` |
+| [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `agentWorkers` (optional), `approvals` (optional), `board` (optional), `digests` (optional), `dispatchAdvisor` (optional), `landing` (optional), `mcp` (optional), `pluginHost` (optional), `resources` (optional) | `approvals-core`, `board-core`, `decision-core`, `digest-core`, `gateway-core`, `landing-core`, `ledger-core`, `libs`, `provider-core`, `resources-core`, `worker-sessions`, `workers-core` |
 | [approvals](../../packages/plugins/approvals/README.md) | routing | `approvals` | `approvals` | `store`, `artifacts`, `board` (optional), `eventLog` (optional), `mcp` (optional), `workflow` (optional) | `approvals-core`, `gateway-core`, `ledger-core`, `libs` |
 | [approvals-core](../../packages/approvals-core/README.md) | routing | defines `approvals` | — | — | `libs` |
 | [egress](../../packages/plugins/egress/README.md) | routing | `egress` | `egress` | `artifacts` | `ledger-core`, `libs`, `provider-core`, `workers-core` |
@@ -74,7 +74,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [event-log](../../packages/plugins/event-log/README.md) | kernel | `eventLog` | `event-log` | `store` | `ledger-core`, `libs` |
 | [leases](../../packages/plugins/leases/README.md) | kernel | `leases` | `leases` | `store` | `board-core`, `ledger-core`, `libs` |
 | [ledger-core](../../packages/ledger-core/README.md) | kernel | defines `artifacts`, defines `eventLog`, defines `store` | — | — | `libs` |
-| [plugin-host](../../packages/plugins/plugin-host/README.md) | kernel | `pluginHost` | `plugin-host` | `store`, `artifacts`, `loader`, `profileContext` (optional) | `ledger-core`, `plugin-host-core` |
+| [plugin-host](../../packages/plugins/plugin-host/README.md) | kernel | `pluginHost` | `plugin-host` | `store`, `artifacts`, `loader`, `profileContext` (optional) | `ledger-core`, `libs`, `plugin-host-core` |
 | [plugin-host-core](../../packages/plugin-host-core/README.md) | kernel | defines `pluginHost` | — | — | `libs` |
 | [store](../../packages/plugins/store/README.md) | kernel | `store` | `store` | — | `ledger-core`, `libs` |
 | [libs](../../packages/libs/README.md) | host and libraries | — | — | — | — |
@@ -325,6 +325,7 @@ flowchart TB
   workflow -.-> decision_core
   workflow -.-> landing_local
   workflow -.-> mcp_server
+  workflow -.-> plugin_host
   workflow -.-> resources
 ```
 

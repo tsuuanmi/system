@@ -585,7 +585,7 @@ export interface Built {
  * with the slice turned off (`handbook.enabled: false`). A review's `guides`, the pointer its brief
  * already carries (./briefs.ts `guidesFor`), are counted in its layer 4. Records the task among those a slice was
  * built for, which moves the bound to refuse once there are `handbook.warnTasks` of them (that move
- * a decision of its own).
+ * a decision of its own), unless the bound's switch (`handbook-bound`, read here) is in warn.
  */
 export async function buildHandbook(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, guides?: BriefPointer): Promise<Built | undefined> {
   if (e.config.handbook?.enabled === false) return undefined
@@ -596,7 +596,9 @@ export async function buildHandbook(e: Engine, run: RunRow, node: NodeRow, spec:
   const lessons = lessonsFor((await landingTargets(e, run.run_id))[0]?.repository, base.selection)
   const read: Read = { ...base, ...(carried ? { guides: carried } : {}), ...(lessons ? { lessons } : {}) }
   const slice = buildSlice(engineHandbook(run, spec, read, templateVersion(e, run.template)), read.selection)
-  const mode = boundMode(e, run, node, frame.taskId)
+  // The task is counted toward the warn period either way; the bound's switch in warn (ADR-0078) keeps it in warn.
+  const counted = boundMode(e, run, node, frame.taskId)
+  const mode = e.enforce('handbook-bound') === 'warn' ? 'warn' : counted
   return { selection: read.selection, slice, mode, projectId: frame.projectId, taskId: frame.taskId }
 }
 

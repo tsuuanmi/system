@@ -765,6 +765,37 @@ plugin `default` once its row is on and `candidate` once it is off, and `system 
 its lifecycle decision (`system plugins --json`) shows the state it left
 ([plugin host](../design/plugin-host.md)). A start with the same rows records nothing.
 
+## Turn a plugin off
+
+When a row misbehaves (wrong digests, a website driver failing every turn), turn it off while the
+daemon runs; nothing else restarts ([turning a plugin off](../architecture/plugin-model.md#turning-a-plugin-off)).
+
+1. `system plugin list`: each row, `on` or `off`, `required` or `optional`, and its last turn with
+   why. Only an optional row turns off.
+2. `system plugin off <row> <reason…>`, for example `system plugin off digest its digests quote
+   the wrong lines`. It returns once the row's plugin has finished or handed back its work and
+   stopped (within the `plugin-host` row's `quiesceSeconds`, 60 by default), the turn is recorded,
+   and `- id: <row>` / `disabled: true` is in `~/.dsh/profiles/system/cordis.patch.yml`, so a restart
+   keeps it. What needs the row now says it is not mounted; `system health` stays ok.
+3. `system plugin on <row>` turns it on again the same way, `disabled: false` in the patch.
+
+What it refuses, and what to do:
+
+| Refusal | Why | Do |
+|---|---|---|
+| `required: row … is required` | the row provides a guarantee seam, or ships no manifest the host may call optional | fix it, or restart without it by your patch at your own risk ([turn an off row back on](#turn-an-off-row-back-on) for the patch) |
+| `control: row mcp-server is never turned off at runtime` | it serves `system plugin` and `system enforce`: off, nothing could turn it on again | set its `disabled: true` in your patch and restart ([turn an off row back on](#turn-an-off-row-back-on)) |
+| `quiescence: … did not … within N s` | the plugin did not stop (or start) in time; it is put back as it was | look at the daemon's log, then try again, or raise `quiesceSeconds` |
+| `patch: …` | your patch names the row in a flow mapping (`- { id: … }`) or is a flow list | write the row's entry as a block (`- id: <row>` with `disabled:` under it), then turn it again |
+
+### Turn a mechanism to warn
+
+A gate-like mechanism that refuses good work (the evidence gate, the handbook bound) is moved to
+`warn` the same way, no restart: `system enforce` lists each one and the modes it takes;
+`system enforce set evidence-gate warn <reason…>` records the refusals it would make and lets the work
+through; `system enforce set evidence-gate configured` goes back to the row's `enforce.evidenceGate`.
+The lead-rights check is only `on`: to stop a lead, `system lead-token revoke <project>`.
+
 ## Swap the digest provider
 
 The default composition digests with the `digest` row, whose Worker reads every source whole. The

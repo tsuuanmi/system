@@ -2,7 +2,7 @@
   "name": "@tsuuanmi/system-plugin-host",
   "version": "0.0.0",
   "private": true,
-  "description": "ctx.pluginHost: reads every row of the composition from the DSH loader and the manifest its package declares, and records each plugin's lifecycle state, every change a lifecycle decision first, and checks each plugin a row mounts against the manifests at start, each finding a gate decision; it never mounts, stops, or gates a plugin",
+  "description": "ctx.pluginHost: reads every row of the composition from the DSH loader and the manifest its package declares, and records each plugin's lifecycle state, every change a lifecycle decision first, and checks each plugin a row mounts against the manifests at start, each finding a gate decision; it turns an optional row off or on in the running host on the operator's word, keeping it in the profile's patch, and holds each mechanism's live enforce override",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -11,8 +11,9 @@
   "scripts": { "build": "tsc -p tsconfig.build.json" },
   "dependencies": {
     "@tsuuanmi/system-ledger-core": "workspace:*",
+    "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-plugin-host-core": "workspace:*"
   },
   "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1" },
-  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1", "@tsuuanmi/system-artifacts": "workspace:*", "@tsuuanmi/system-libs": "workspace:*", "@tsuuanmi/system-store": "workspace:*" }
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1", "@tsuuanmi/system-artifacts": "workspace:*", "@tsuuanmi/system-store": "workspace:*" }
 }

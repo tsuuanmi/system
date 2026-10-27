@@ -1,10 +1,11 @@
 /**
  * The removability matrix (docs/engineering/testing.md#removability-matrix): every optional row of the
- * bundle, turned off alone, then smoked. `pnpm test:removability`, and daily in CI.
+ * bundle, turned off alone, then smoked; and each one on in the baseline turned off and on again in the
+ * running bundle, smoked after each turn (T322). `pnpm test:removability`, and daily in CI.
  * A failure is named `row <id>, step <name>`.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { type Booted, bootBundle, bundleRows, classes, smoke } from './matrix.ts'
+import { type Booted, bootBundle, bundleRows, classes, cycleShippedOff, smoke, switches, turnRow } from './matrix.ts'
 
 vi.setConfig({ testTimeout: 180_000 })
 
@@ -40,6 +41,47 @@ describe('every optional row removed, one at a time: System still works', () => 
   for (const id of rows) {
     it(`row ${id} off`, async () => {
       await bootAndSmoke(id, baseline)
+    })
+  }
+})
+
+describe('every optional row turned off and on again at runtime, one at a time, no restart: System still works (T322, ADR-0078)', () => {
+  const { optional } = classes()
+  // The rows on in the matrix's baseline turn off, then on; each that ships off turns on, then off (below).
+  const rows = bundleRows().filter((r) => optional.includes(r.id) && (!r.disabled || WITH.includes(r.id))).map((r) => r.id)
+  const shippedOff = bundleRows().filter((r) => optional.includes(r.id) && r.disabled && !WITH.includes(r.id)).map((r) => r.id)
+  let baseline: string[] = []
+
+  it('baseline', async () => {
+    baseline = await bootAndSmoke(undefined)
+  })
+
+  for (const id of rows) {
+    it(`row ${id}: off, smoke, on, smoke`, async () => {
+      const system = await bootBundle(undefined, WITH)
+      booted.push(system)
+      if (id === 'mcp-server') {
+        // The surface the switches are served on is never turned off at runtime (ADR-0078); its patch turns it off, above.
+        await expect(switches(system).turn(id, false)).rejects.toMatchObject({ failure: 'control' })
+        await smoke(system, undefined, baseline)
+        return
+      }
+      const off = await turnRow(system, id, false)
+      await smoke(off, id, baseline)
+      const on = await turnRow(off, id, true)
+      expect((await smoke(on, undefined, baseline)).tools).toEqual(baseline)
+    })
+  }
+
+  it('has rows that ship off to turn on', () => {
+    expect(shippedOff.length).toBeGreaterThan(0)
+  })
+
+  for (const id of shippedOff) {
+    it(`row ${id}, shipped off: on, smoke, off, smoke`, async () => {
+      const system = await bootBundle(undefined, WITH)
+      booted.push(system)
+      await cycleShippedOff(system, id, baseline)
     })
   }
 })

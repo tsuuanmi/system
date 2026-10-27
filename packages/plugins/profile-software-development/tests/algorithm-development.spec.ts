@@ -216,6 +216,26 @@ describe('the algorithm-development template (PROP-0010 B8, T267)', () => {
     untouched(pilot)
   })
 
+  it('moves the evidence gate from on to warn while the engine runs, with no restart: the step that would be refused twice ends, and the gate records warn, never refuse (T322, ADR-0078)', async () => {
+    // The live override as the plugin host holds it (EnforceSource): the engine reads it at each step.
+    const overrides = new Map<string, string>()
+    const host = { name: 'live-switch', apply: (c: { provide: (key: string, value: unknown) => void }) => c.provide('pluginHost', { enforced: (m: string) => overrides.get(m) }) }
+    const pilot = await boot({ evidence: false }, [host as never])
+    const { ctx, agent } = pilot
+    await charter(ctx, 'p1')
+    const task = await propose(pilot, 'p1', 'make add() add')
+    // The engine started with the gate on (its configured default); the operator turns it to warn now.
+    overrides.set('evidence-gate', 'warn')
+    const run = await attempt(ctx, task.taskId)
+    const done = await reported(ctx, run.runId)
+    expect(done.nodes.find((n) => n.nodeId === 'develop:1')).toMatchObject({ state: 'COMPLETED' })
+    // Developed once, never continued with a refusal: the review ran on.
+    expect(agent.runs.map((r) => r.role).slice(0, 2)).toEqual(['develop', 'selfreview'])
+    const gates = ctx.artifacts.list({ kind: 'decision', decisionType: 'gate', runId: run.runId, limit: 100 })
+      .map((a) => a.body as { decider: { id: string }; outcome: { option: string } }).filter((b) => b.decider.id === 'workflow.evidence')
+    expect(gates.map((g) => g.outcome.option)).toEqual(['warn'])
+  })
+
   it('refuses evidence that shows no checks\' output: an entry that only says it is done ends the step as one with none (T267)', async () => {
     const pilot = await boot({ evidenceText: 'done' })
     const { ctx, agent } = pilot

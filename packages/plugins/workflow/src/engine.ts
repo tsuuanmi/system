@@ -7,7 +7,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { type Board, type Lease, LeaseLost, StaleGeneration, type Subject } from '@tsuuanmi/system-board-core'
-import { type BriefPointer, canonicalJson, SchemaRegistry, sha256, sleep } from '@tsuuanmi/system-libs'
+import { type BriefPointer, canonicalJson, type EnforceMode, enforceMode, type EnforceSource, SchemaRegistry, sha256, sleep } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { acceptPlain } from './acceptance.ts'
@@ -92,6 +92,15 @@ export class Engine {
    * host's for this alone: only its source's `infrastructure` mark says the host's stop ended it.
    */
   readonly inheritedRuns = new Set<string>()
+
+  /**
+   * The mode a gate-like mechanism of the engine runs in now (ADR-0078): the plugin host's live
+   * override, else this row's `enforce.<key>`, else on; read at each use, so it moves without a restart.
+   */
+  enforce(mechanism: 'evidence-gate' | 'handbook-bound' | 'review-guides'): EnforceMode {
+    const key = ({ 'evidence-gate': 'evidenceGate', 'handbook-bound': 'handbookBound', 'review-guides': 'reviewGuides' } as const)[mechanism]
+    return enforceMode(this.ctx.get('pluginHost' as never) as EnforceSource | undefined, mechanism, this.config.enforce?.[key])
+  }
 
   constructor(readonly ctx: Context, readonly config: Config) {
     // A dispatch setting out of its range refuses the row, with its path (INV-2).

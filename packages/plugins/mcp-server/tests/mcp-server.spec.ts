@@ -74,7 +74,7 @@ describe('system MCP server on ctx.webServer', () => {
     expect(statSync(join(dir, 'mcp.json')).mode & 0o777).toBe(0o600)
     const client = await connect(url, token)
     const { tools } = await client.listTools()
-    expect(tools.map((tool) => tool.name).sort()).toEqual(['artifact', 'ask', 'events', 'evidence', 'research', 'result', 'roster', 'status'])
+    expect(tools.map((tool) => tool.name).sort()).toEqual(['artifact', 'ask', 'enforce', 'events', 'evidence', 'plugin', 'research', 'result', 'roster', 'status'])
     const status = await client.callTool({ name: 'status', arguments: {} })
     expect(status.structuredContent).toMatchObject({ harness: 'system', store: 'ok', artifacts: 0, kernel: ['store', 'artifacts'] })
     // No milestone baked into the code: status reports what is mounted, not a roadmap stage.
@@ -670,7 +670,7 @@ describe('scoped tokens', () => {
     expect((await client.listTools()).tools.map((t) => t.name).sort()).toEqual(['ask', 'cl_tool', 'research', 'result', 'roster', 'status'])
     const operator = await connect(url, tokens.operator)
     const listed = (await operator.listTools()).tools
-    expect(listed.map((t) => t.name).sort()).toEqual(['artifact', 'ask', 'cl_tool', 'events', 'evidence', 'op_only', 'research', 'result', 'roster', 'status'])
+    expect(listed.map((t) => t.name).sort()).toEqual(['artifact', 'ask', 'cl_tool', 'enforce', 'events', 'evidence', 'op_only', 'plugin', 'research', 'result', 'roster', 'status'])
     // The reference page shows each tool's scope from the listing: marked operator, or a client tool too.
     expect(listed.find((t) => t.name === 'op_only')?._meta).toEqual({ 'system/scope': 'operator' })
     expect(listed.find((t) => t.name === 'cl_tool')).not.toHaveProperty('_meta')
@@ -711,7 +711,7 @@ describe('scoped tokens', () => {
       expect(JSON.stringify(expected)).toContain('"type":"integer","minimum":1}')
       expect(text).not.toContain(String(Number.MAX_SAFE_INTEGER))
       // Only the operator token sees a tool the client token may not call, and only it is marked.
-      expect(tools.filter((t) => t._meta !== undefined).map((t) => t.name).sort()).toEqual(scope === 'operator' ? ['artifact', 'events', 'evidence', 'op_when'] : [])
+      expect(tools.filter((t) => t._meta !== undefined).map((t) => t.name).sort()).toEqual(scope === 'operator' ? ['artifact', 'enforce', 'events', 'evidence', 'op_when', 'plugin'] : [])
     }
     // The server still checks every date-time, pattern, and safe integer with zod, as before.
     const client = await connect(url, tokens.client)

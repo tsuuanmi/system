@@ -4,7 +4,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import type { UnreleasedHold } from '@tsuuanmi/system-board-core'
-import type { BriefHandbook, ContentId, DrawFigure } from '@tsuuanmi/system-libs'
+import type { BriefHandbook, ContentId, DrawFigure, EnforceMode } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, Classification, RunLiveness, Tier, WorkRequirement } from '@tsuuanmi/system-workers-core'
 import type { AdvisorConfig } from './advisor.ts'
 import type { CallerOptions, NodeTemplate } from './spec.ts'
@@ -678,6 +678,13 @@ export interface Config {
    * repository the homes of layers 1 and 4 are read from (default: the one this package sits in).
    */
   handbook?: { enabled?: boolean; warnTasks?: number; root?: string }
+  /**
+   * The start mode of the engine's gate-like mechanisms (ADR-0078, `MECHANISMS` in the libs): the
+   * evidence gate (`off`, `warn`, `on`), the handbook bound (`warn`, `on`), and the review-guide
+   * selection (`off`, `on`); each `on` by default. The plugin host's live override (`system enforce
+   * set`) wins over it, and each is read at its use.
+   */
+  enforce?: { evidenceGate?: EnforceMode; handbookBound?: EnforceMode; reviewGuides?: EnforceMode }
   /** Reviews of one change, the first included, before remediation stops (default 3). */
   maxReviewCycles?: number
   /**

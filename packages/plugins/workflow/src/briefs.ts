@@ -111,6 +111,8 @@ export function draftOf(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNod
  */
 export async function guidesFor(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode): Promise<BriefPointer | undefined> {
   if (roleOf(spec, node) !== 'review') return undefined
+  // Its switch (`review-guides`, ADR-0078), read at each review: off gives none.
+  if (e.enforce('review-guides') === 'off') return undefined
   const targets = await landingTargets(e, run.run_id)
   const root = targets[0]?.repository
   if (!root) return undefined

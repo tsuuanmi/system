@@ -57,7 +57,7 @@ describe('the manifests the workspace ships (REQ-HOST-7)', () => {
   })
 
   it('derives each plugin\'s configuration keys from its Config, and holds no secret in any (INV-8)', () => {
-    expect(of('plugin-host').manifest.config).toEqual([{ key: 'allowWithoutManifest', sensitive: false }])
+    expect(of('plugin-host').manifest.config).toEqual([{ key: 'allowWithoutManifest', sensitive: false }, { key: 'optionalWithoutManifest', sensitive: false }, { key: 'quiesceSeconds', sensitive: false }])
     expect(of('store').manifest.config?.map((c) => c.key)).toEqual(['path', 'busyTimeoutMs', 'synchronous'])
     expect(of('report').manifest.config).toBeUndefined()
     expect(derived.filter((d) => d.manifest.config).length).toBe(37)

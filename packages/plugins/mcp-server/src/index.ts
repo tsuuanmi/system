@@ -20,7 +20,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { countedWhole, dshHome, ensurePrivateDir, registerSecretPath, SchemaRegistry, USAGE_UNKNOWN_EVENT, writeFileDurable } from '@tsuuanmi/system-libs'
-import type { PluginRecord } from '@tsuuanmi/system-plugin-host-core'
+import { type PluginRecord, SwitchError } from '@tsuuanmi/system-plugin-host-core'
 import type {} from '@tsuuanmi/system-resources-core'
 import { type AvailabilityLog, recordAvailability } from './availability.ts'
 import { type HealthReport, healthReport, type LivenessRead } from './health.ts'
@@ -431,6 +431,70 @@ export class McpEndpoint extends McpTools {
             : `${read.id}: ${read.state}`)
         } catch (error) {
           return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }
+        }
+      },
+    })
+    // The operator's runtime switches (ADR-0078): a row turned off or on in the running host, and a mechanism's enforce mode.
+    const switched = (error: unknown) => {
+      if (error instanceof SwitchError) return { isError: true, content: [{ type: 'text' as const, text: `${error.failure}: ${error.message}` }] }
+      throw error
+    }
+    const noHost = (what: string) => ({ isError: true, content: [{ type: 'text' as const, text: `the plugin host in this composition cannot ${what} (plugin host contract 1.2): it is not mounted, or an older one` }] })
+    this.tools.set('plugin', {
+      placeholder: false,
+      spec: {
+        scope: 'operator',
+        description: 'The rows of the composition, each on or off, required or optional, with its last runtime turn; or turn an optional row off or on in the running host, with no restart: its plugin finishes or hands back its work and stops (or starts), the turn is recorded as a lifecycle decision and kept in the profile\'s patch. A required row is refused with why.',
+        inputSchema: {
+          action: zod.enum(['list', 'off', 'on']).optional().describe('list (default), off, or on'),
+          row: zod.string().min(1).max(200).optional().describe('The row id to turn (off, on)'),
+          reason: zod.string().max(500).optional().describe('Why, recorded with the turn'),
+        },
+      },
+      handler: async (args) => {
+        const host = this.ctx.get('pluginHost')
+        const action = (args.action as 'list' | 'off' | 'on' | undefined) ?? 'list'
+        if (action === 'list') {
+          if (!host?.rows) return noHost('list its rows')
+          const rows = host.rows()
+          return reply({ rows }, `${rows.length} rows: ${rows.filter((r) => !r.on).length} off (${rows.filter((r) => !r.on).map((r) => r.id).join(', ') || 'none'})`)
+        }
+        if (!host?.turn) return noHost('turn a row while it runs')
+        if (typeof args.row !== 'string') return { isError: true, content: [{ type: 'text', text: `${action} needs the row to turn` }] }
+        try {
+          const turned = await host.turn(args.row, action === 'on', typeof args.reason === 'string' ? args.reason : undefined)
+          const kept = turned.patch ? `kept in ${turned.patch}` : 'in no profile patch: a restart does not keep it'
+          return reply(turned, turned.changed ? `row ${turned.row.id} is ${action}; ${kept}` : `row ${turned.row.id} was already ${action}; nothing changed`)
+        } catch (error) {
+          return switched(error)
+        }
+      },
+    })
+    this.tools.set('enforce', {
+      placeholder: false,
+      spec: {
+        scope: 'operator',
+        description: 'Each gate-like mechanism\'s enforce mode (on, warn, off) and the modes it takes; or set one live, with no restart (mode configured clears the override). Recorded as a gate decision; a mode the mechanism does not take is refused with why.',
+        inputSchema: {
+          mechanism: zod.string().min(1).max(100).optional().describe('The mechanism to set; none lists every one'),
+          mode: zod.enum(['off', 'warn', 'on', 'configured']).optional().describe('Its new mode; configured clears the live override'),
+          reason: zod.string().max(500).optional().describe('Why, recorded with the change'),
+        },
+      },
+      handler: async (args) => {
+        const host = this.ctx.get('pluginHost')
+        if (args.mechanism === undefined) {
+          if (!host?.enforcement) return noHost('list the mechanisms\' modes')
+          const mechanisms = host.enforcement()
+          return reply({ mechanisms }, mechanisms.map((m) => `${m.mechanism} ${m.mode}${m.override ? ' (set live)' : ''}`).join(', '))
+        }
+        if (!host?.setEnforce) return noHost('set a mechanism\'s mode')
+        if (args.mode === undefined) return { isError: true, content: [{ type: 'text', text: 'setting a mechanism needs its mode' }] }
+        try {
+          const state = host.setEnforce(String(args.mechanism), args.mode as 'off' | 'warn' | 'on' | 'configured', typeof args.reason === 'string' ? args.reason : undefined)
+          return reply(state, `${state.mechanism} is ${state.mode}${state.override ? ' (set live)' : ' (as configured)'}`)
+        } catch (error) {
+          return switched(error)
         }
       },
     })

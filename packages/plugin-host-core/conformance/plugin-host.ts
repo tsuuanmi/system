@@ -7,7 +7,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-ledger-core'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { MECHANISMS, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { expect } from 'vitest'
 import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import {
@@ -83,7 +83,7 @@ const checked = (body: ManifestCheckDecision & { schema: string }): ManifestChec
   return body
 }
 
-const scenario = (id: string, title: string, run: (start: (composition: Composition) => Promise<Context>) => Promise<void>, since: '1.0' | '1.1' = '1.0'): Scenario<Boot> => ({
+const scenario = (id: string, title: string, run: (start: (composition: Composition) => Promise<Context>) => Promise<void>, since: '1.0' | '1.1' | '1.2' = '1.0'): Scenario<Boot> => ({
   id: `pluginHost.${id}`, since, title,
   run: async (boot) => {
     const { start, dispose } = await boot()
@@ -97,7 +97,7 @@ const scenario = (id: string, title: string, run: (start: (composition: Composit
 
 export const pluginHostSuite = defineSuite<Boot>({
   seam: 'pluginHost',
-  contract: '1.1',
+  contract: '1.2',
   scenarios: [
     scenario('lists-the-composition', 'lists every plugin of the composition once, in the order of its first row, mounted or not, each valid manifest with the host\'s lifecycle in _meta, and a package that ships none as absent with no lifecycle (REQ-HOST-7, INV-14)', async (start) => {
       const ctx = await start(base())
@@ -316,6 +316,25 @@ export const pluginHostSuite = defineSuite<Boot>({
       ctx = await start(composition('1.0.0', false))
       expect(checks(ctx)).toHaveLength(5)
     }, '1.1'),
+
+    scenario('refuses-a-required-row', 'lists every row on or off, required (a core class, or no manifest it read) or optional (a plugin family), and refuses to turn off a required row or an unknown one with why, changing nothing; lists each mechanism\'s enforce mode and refuses a mode it does not take (ADR-0078, INV-2, INV-6)', async (start) => {
+      const K = '@conformance/core'
+      const composition = base()
+      composition.rows.push(row('k', K))
+      composition.packages[K] = manifestText(K, { class: { kind: 'core', component: 'gate' } })
+      const ctx = await start(composition)
+      const host = ctx.pluginHost
+      expect(host.rows!().map((r) => [r.id, r.on, r.required])).toEqual([['a', true, false], ['b', false, false], ['a-2', false, false], ['dsh', true, true], ['k', true, true]])
+      const before = decisions(ctx).length
+      await expect(host.turn!('k', false)).rejects.toMatchObject({ name: 'SwitchError', failure: 'required', message: expect.stringMatching(/guarantee seam/) })
+      await expect(host.turn!('dsh', false)).rejects.toMatchObject({ failure: 'required' })
+      await expect(host.turn!('no-such-row', false)).rejects.toMatchObject({ failure: 'unknown' })
+      expect(host.rows!().find((r) => r.id === 'k')).toMatchObject({ on: true })
+      expect(decisions(ctx)).toHaveLength(before)
+      expect(host.enforcement!().map((s) => s.mechanism)).toEqual(MECHANISMS.map((m) => m.id))
+      expect(() => host.setEnforce!('lead-rights', 'warn')).toThrow(expect.objectContaining({ failure: 'unsupported' }))
+      expect(host.enforced!('lead-rights')).toBeUndefined()
+    }, '1.2'),
   ],
 })
 

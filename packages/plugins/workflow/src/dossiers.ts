@@ -561,13 +561,31 @@ export class TaskDossiers {
    * the step is refused, with a `gate` decision (INV-13) that says what is missing and how to show
    * it. A run that serves no board task has no dossier, so it asks nothing. A Worker with no dossier
    * tool never gets here: the step requires the `dossier` capability at admission ({@link DOSSIER_CAPABILITY}).
+   * Its enforce switch (`evidence-gate`, ADR-0078), read here at each step: `off` does not look, `warn`
+   * records the refusal it would make (outcome `warn`) and lets the step end.
    */
   evidenceGate(run: RunRow, node: NodeRow): { message: string; decision: ArtifactRef } | undefined {
     const frame = this.e.tasks.frame(run.run_id)
     if (!frame) return undefined
+    const mode = this.e.enforce('evidence-gate')
     const checks = [...new Set(frame.acceptance.map((a) => a.check).filter((c): c is BriefCheck => c !== undefined))]
-    const why = evidenceProblem(this.evidenceOf(node), checks, this.commandsOf(node))
+    const why = mode === 'off' ? undefined : evidenceProblem(this.evidenceOf(node), checks, this.commandsOf(node))
     if (!why) {
+      this.settleCommands(run, node)
+      return undefined
+    }
+    if (mode === 'warn') {
+      this.e.ctx.artifacts.recordDecision({
+        decisionType: 'gate',
+        question: `May step ${node.node_id} of run ${run.run_id} end, with the output of its author's checks in the task's dossier?`,
+        inputs: [],
+        candidates: [
+          { option: 'warn', selected: true, reasons: [why, 'the evidence gate is in warn mode (system enforce): the refusal is recorded, and the step ends'] },
+          { option: 'refuse', selected: false, reasons: ['not refuse: the evidence gate is in warn mode'] },
+        ],
+        decider: { type: 'rule', id: 'workflow.evidence', version: '3' }, outcome: { option: 'warn', detail: { checks, mode } }, deterministic: true,
+      }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id })
+      this.e.ctx.logger.warn(`workflow: step ${node.node_id} of run ${run.run_id} would be refused by the evidence gate (${why}); it is in warn mode, so the step ends`)
       this.settleCommands(run, node)
       return undefined
     }
