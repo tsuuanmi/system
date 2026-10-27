@@ -392,6 +392,8 @@ export interface LivenessQuery {
  *   resolution once no conflict marker is left; `abandon` puts the branch and the worktree back at
  *   `head`. Only while the worktree is intact and no agent run of the workflow run can still write it
  *   (INV-15). The pre-rebase head is kept under a ref of the repository's own; never a push.
+ *   `stacked` (the landing queue's batch): `base.sha` is the rebased head of the result before it in the
+ *   stack, not the base branch's own head; it is accepted while it holds the base branch's head.
  * - `record` (board T232): keep the worktree's tree, while it is still exactly `subject`, as a commit
  *   with `message` on the run's own history ref ({@link reviewRef}), on top of the last one recorded
  *   there (else the worktree's HEAD): what each review read, and each fix's result, one commit each.
@@ -402,7 +404,7 @@ export type LandStep =
   | { step: 'commit'; runId: string; workspace: string; subject: { ref: string; version: string }; message: string }
   | { step: 'record'; runId: string; workspace: string; subject: { ref: string; version: string }; message: string }
   | { step: 'merge'; runId: string; workspace: string; head: string; base: { branch: string; sha: string }; message: string }
-  | { step: 'rebase'; runId: string; workspace: string; phase: RebasePhase; head: string; base: { branch: string; sha: string }; message: string }
+  | { step: 'rebase'; runId: string; workspace: string; phase: RebasePhase; head: string; base: { branch: string; sha: string }; message: string; stacked?: true }
 
 /** The ref that keeps a workflow run's review history (a {@link LandStep} `record`): never its branch, never checked out. */
 export const reviewRef = (runId: string): string => `refs/system/reviews/${runId}`

@@ -1486,8 +1486,30 @@ rebased onto it before the merge is asked:
 
 - **A target that only moved spends nothing**: a rebase with no conflict and checks that pass again
   goes straight on to the merge request; the task stays done on its attempt.
-- **Bounded** (INV-9): one landing rebases at most 3 times (`MAX_REBASES`); a base that keeps moving
-  past them is refused for the operator to merge by hand.
+- **Bounded** (INV-9, [ADR-0077](../decisions/adr/0077-landings-queue-per-target-branch-one-at-a-time.md)):
+  the landing queue keeps other landings from moving the target, so only a push the queue did not make
+  moves it under a landing; one landing follows at most 8 such moves (`MAX_OUTSIDE_MOVES`), then is
+  refused for the operator to merge by hand.
+- **The landing queue**: one per repository and target branch, on the landings' rows
+  (`landing.queue`: key `<repository>#<branch>`, `seq`, `turn`). A committed result takes the turn
+  when no open landing of the key holds it, else waits `queued` in commit order; one landing at a
+  time rebases, runs the full suite, asks, and merges, and when it ends the first waiting one is
+  promoted and reads the target again through the commit step. With `landingBatch` N above 1 the
+  promoted head takes the next N-1 as a `stacked` batch: each rebased onto the one before (the
+  `rebase` step's `stacked`), the tip's suite run once, one merge request for the stack, the ones
+  under the tip merged with it. That request names every task and run it lands, in order, whole and
+  first within its 2000-character bound (a title dropped before a name is cut), then each one's own
+  change in the room left (together the stack's whole change), and says one approval lands all or
+  none; a stack it cannot name whole is refused, never asked. The tip records the runs it named
+  (`batch.lands`), read back from the request as stored, and refuses the merge if one is missing; the merge commit carries each one's trailers, and
+  each result under the tip records, in its `merge` decision and its dossier, that the tip's request
+  named it (`batch.tip`). A failing stack is bisected over the results' own trees: the first
+  to fail on top of those before it goes back alone (`bisect` decision), those before it land, those
+  after it return to the queue with their branches put back. `explain` (`landing`) and `/ui` show a
+  result's place, who holds the turn, and its stack. A lead's or operator's push to the target
+  (a salvage) is a `git push` System cannot fence: that it waits for the queue is the playbook's
+  advice (check: none), not enforced; a push that lands anyway only makes the holder's rebase or
+  merge be refused as a moved base and read again.
 - **Restart** (INV-4): each step's state is on the row, and each phase is read from what git or the
   row keeps, never from the worktree's files alone. The source finds a rebase begun (the branch at
   the base, the head kept), replayed (`refs/system/rebase-replayed/<runId>/<head>` at the base, set

@@ -1317,6 +1317,17 @@ interface Explained {
   stalledChecks?: Array<{ check: string; command: string; since: string; quietSince: string; stallSeconds: number }>
   /** A research role's web calls (T262): how many, unasked, asked, and denied in their session, and each query or URL with its verdict and egress outcome. */
   webCalls?: { count: number; auto: number; asked: number; denied?: number; calls: Array<{ at: string; nodeId?: string; tool: string; target: string; verdict: string; egress: string; reason?: string; decision: string }> }
+  /** Where the run's accepted result stands in its target's landing queue (PROP-0016 I3). */
+  landing?: { key: string; state: string; position?: number; length: number; holder?: { runId: string; taskId: string }; batch?: { size: number; limit: number; index: number } }
+}
+
+/** A run's place in its target's landing queue as `system explain` prints it. */
+export function formatLandingQueue(q: NonNullable<Explained['landing']>): string[] {
+  const place = q.position ? `position ${q.position} of ${q.length}` : `${q.length} in it`
+  return [
+    `landing queue  ${q.key}  ${q.state}  ${place}${q.holder ? `  behind task ${q.holder.taskId} (run ${q.holder.runId}), which holds the target` : q.state === 'queued' ? '' : '  holds the target'}`,
+    ...(q.batch ? [`  stack  result ${q.batch.index} of ${q.batch.size}  (batch size ${q.batch.limit})`] : []),
+  ]
 }
 
 /** A run's web calls as `system explain` prints them (T262): the counts, then one line per call. */
@@ -1371,6 +1382,7 @@ export function formatExplanation(explained: Explained): string[] {
     ...liveness,
     ...stalled,
     ...(explained.webCalls?.count ? formatWebCalls(explained.webCalls) : []),
+    ...(explained.landing ? formatLandingQueue(explained.landing) : []),
   ]
 }
 

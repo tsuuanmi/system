@@ -1022,6 +1022,8 @@ export const APP_JS = `'use strict'
                 : l.state === 'resolving' ? el('div', {}, 'Accepted — its rebase onto ' + (l.base || 'its base') + ' conflicts; its Worker is resolving it')
                   : l.state === 'recheck' ? el('div', {}, 'Accepted; its required checks run in full on the tree to merge into ' + (l.base || 'its base') + ' before the merge is asked')
                     : l.state === 'returning' || l.state === 'returned' ?el('div', {}, 'Accepted, but it cannot land on ' + (l.base || 'its base') + ' as it is now: sent back as another attempt' + (l.reason ? ' — ' + l.reason : ''))
+                      // PROP-0016 I3: one result lands at a time on each base, so the base never moves under it.
+                      : l.state === 'queued' || l.state === 'stacked' ? el('div', {}, 'Accepted — waiting its turn to land on ' + (l.base || 'its base') + (l.state === 'stacked' ? ', stacked with the results next to it' : ', behind the result landing now') + ': one result lands at a time')
                       : el('div', {}, 'Accepted — being committed on ' + (l.branch || 'its run\\'s branch') + ' to be merged')
 
   // Where a task's run started its work (ADR-0061), in words: from the change its previous attempt left, or over from the code.
@@ -1982,6 +1984,11 @@ export const APP_JS = `'use strict'
         explain.stalledChecks.map((c) => el('div', {}, chip('Check stalled', 'warn'), ' ' + c.check + ': no output since ', ago(c.quietSince),
           el('span', { class: 'muted' }, ' · it goes on until its deadline'),
           fold('Details', el('div', {}, 'command ', el('code', {}, c.command)), el('div', {}, 'stalled at ' + absolute(c.since) + ', after ' + c.stallSeconds + ' s with no output'))))) : null,
+      // Where its accepted result stands in its target's landing queue (PROP-0016 I3): its place, who holds the target, its stack.
+      explain && explain.landing ? el('section', { class: 'panel', 'aria-label': 'Landing queue' }, el('h3', {}, 'Landing queue'),
+        el('p', {}, explain.landing.position ? 'Place ' + explain.landing.position + ' of ' + explain.landing.length + ' waiting to land on ' + explain.landing.key.slice(explain.landing.key.lastIndexOf('#') + 1) : explain.landing.length + ' in the queue'),
+        explain.landing.holder ? el('p', { class: 'muted' }, 'Behind task ' + explain.landing.holder.taskId + ', which lands now') : null,
+        explain.landing.batch ? el('p', { class: 'muted' }, 'Result ' + explain.landing.batch.index + ' of a stack of ' + explain.landing.batch.size + ' (up to ' + explain.landing.batch.limit + '): rebased in order, checked once, merged together') : null) : null,
       // A research Worker's web calls (T262): how many, unasked, asked, or denied, and each query or URL with its egress verdict.
       explain && explain.webCalls && explain.webCalls.count ? el('section', { class: 'panel', 'aria-label': 'Web calls' },
         el('h3', {}, 'Web calls (' + explain.webCalls.count + ')'),

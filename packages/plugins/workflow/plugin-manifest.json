@@ -153,6 +153,10 @@
       "sensitive": false
     },
     {
+      "key": "landingBatch",
+      "sensitive": false
+    },
+    {
       "key": "deferredCommandMinutes",
       "sensitive": false
     },
