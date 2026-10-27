@@ -5,19 +5,16 @@ import { anchor, homeLink, pageLink } from './router.js'
 import { show } from './state.js'
 
 const openTerm = (key: string, open: boolean) => {
-  const definition = document.getElementById('def-' + key)
-  const button = document.querySelector('#term-' + key + ' button.term')
+  const definition = document.getElementById('def-' + key), button = document.querySelector('#term-' + key + ' button.term')
   if (!definition || !button) return
-  definition.hidden = !open
-  button.setAttribute('aria-expanded', String(open))
+  definition.hidden = !open; button.setAttribute('aria-expanded', String(open))
 }
 // The glossary's search: a term shows when its word or its sentence holds what is typed.
 const filterTerms = (query: string) => {
   const q = query.trim().toLowerCase()
   let shown = 0
   for (const [key, [word, sentence]] of Object.entries(GLOSSARY)) {
-    const term = document.getElementById('term-' + key)
-    const definition = document.getElementById('def-' + key)
+    const term = document.getElementById('term-' + key), definition = document.getElementById('def-' + key)
     if (!term || !definition) continue
     const hit = !q || word.toLowerCase().includes(q) || sentence.toLowerCase().includes(q)
     term.hidden = !hit
@@ -36,8 +33,7 @@ const focusTerm = (key: string) => {
   if (search instanceof HTMLInputElement && search.value) { search.value = ''; filterTerms('') }
   openTerm(key, true)
   history.replaceState(null, '', '?view=help#term-' + key)
-  target.scrollIntoView({ block: 'center' })
-  target.focus({ preventScroll: true })
+  target.scrollIntoView({ block: 'center' }); target.focus({ preventScroll: true })
 }
 const termLink = (key: string, text?: string) => anchor('#term-' + key, text ?? termWord(key), () => focusTerm(key))
 
@@ -45,8 +41,7 @@ const section = (id: string, title: string, ...body: Child[]) => el('section', {
 // Each answer is folded under its question or state: the section's navigation stays in sight (T171).
 const item = (summary: string, ...body: Child[]) => el('li', {}, fold(summary, body))
 const term = (key: string, word: string, sentence: string) => {
-  const button = el('button', { type: 'button', class: 'term', 'aria-expanded': 'false', 'aria-controls': 'def-' + key }, word)
-  button.addEventListener('click', () => openTerm(key, button.getAttribute('aria-expanded') !== 'true'))
+  const button = el('button', { type: 'button', class: 'term', 'aria-expanded': 'false', 'aria-controls': 'def-' + key, onclick: () => openTerm(key, button.getAttribute('aria-expanded') !== 'true') }, word)
   return [el('dt', { id: 'term-' + key, tabindex: '-1' }, button), el('dd', { id: 'def-' + key, hidden: '' }, sentence)]
 }
 const CONTENTS = [['help-workers', 'Workers'], ['help-flow', 'Task lifecycle'], ['help-waits', 'Your decisions'], ['help-policy', 'Autonomy'], ['help-stuck', 'Troubleshooting'], ['help-glossary', 'Glossary']] as const
@@ -55,12 +50,9 @@ export function helpView(): void {
   const search = el('input', { id: 'glossary-search', type: 'search', 'aria-label': 'Search terms', placeholder: 'Search terms', oninput: () => filterTerms(search.value) })
   show(pageHead('help'),
     el('nav', { class: 'help-contents', 'aria-label': 'On this page' }, el('ul', {}, CONTENTS.map(([id, text]) => el('li', {}, anchor('#' + id, text, () => {
-      const target = document.getElementById(id)
-      const heading = target?.querySelector('h3')
+      const target = document.getElementById(id), heading = target?.querySelector('h3')
       if (!target || !heading) return
-      target.scrollIntoView({ block: 'start' })
-      heading.setAttribute('tabindex', '-1')
-      heading.focus({ preventScroll: true })
+      target.scrollIntoView({ block: 'start' }); heading.setAttribute('tabindex', '-1'); heading.focus({ preventScroll: true })
     }))))),
     section('help-workers', 'Workers',
       el('p', {}, termLink('worker', 'Workers'), ' develop, review, and test tasks. Workers on one ', termLink('account', 'account'), ' share its ', termLink('quota', 'quota'), '.'),

@@ -60,11 +60,9 @@ const openTerms = new Set<string>()
 let explained = 0
 /** A "?" after a word: it opens the word's sentence in place (and closes it), reachable by keyboard and touch. */
 export const whatIs = (key: string): HTMLElement => {
-  const [word, sentence] = GLOSSARY[key] ?? [key, '']
-  const id = 'explain-' + key + '-' + (++explained)
+  const [word, sentence] = GLOSSARY[key] ?? [key, ''], id = 'explain-' + key + '-' + (++explained)
   const more = el('a', { href: '/ui/?view=help#term-' + key, onclick: (e) => { e.preventDefault(); openHelp(key) } }, 'more in Help')
-  const note = el('span', { id, class: 'explain-note', role: 'note' }, sentence + ' ', more)
-  const open = openTerms.has(key)
+  const note = el('span', { id, class: 'explain-note', role: 'note' }, sentence + ' ', more), open = openTerms.has(key)
   note.hidden = !open
   const button = el('button', { type: 'button', class: 'why', 'aria-expanded': String(open), 'aria-controls': id, 'aria-label': 'What is ' + word + '?', title: sentence }, el('span', { class: 'q', 'aria-hidden': 'true' }, '?'))
   button.addEventListener('click', () => {

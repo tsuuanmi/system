@@ -4,8 +4,7 @@ import { copyId, el, shortId } from './dom.js'
 
 /** A line diff of two texts (longest common subsequence). Bounded by the policy body (128 KiB). */
 const lineDiff = (before: string, after: string): Array<['same' | 'del' | 'add', string]> => {
-  const a = before.split('\n'), b = after.split('\n')
-  const n = a.length, m = b.length
+  const a = before.split('\n'), b = after.split('\n'), n = a.length, m = b.length
   const lcs = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1))
   const at = (i: number, j: number) => lcs[i]?.[j] ?? 0
   for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) (lcs[i] as Uint16Array)[j] = a[i] === b[j] ? at(i + 1, j + 1) + 1 : Math.max(at(i + 1, j), at(i, j + 1))
