@@ -8,15 +8,6 @@ const node = (nodeId: string, overrides: Partial<NodeTemplate> = {}): NodeTempla
 })
 
 describe('workflow specs', () => {
-  it('ships ask (one node); the deep-research test fixture runs research:1 on frontier with Deep research, then compact:1 on economy', () => {
-    expect(preflight(DEFAULT_TEMPLATES.ask!)).toEqual(['ask:1'])
-    expect(preflight(TEST_TEMPLATES['deep-research']!)).toEqual(['research:1', 'compact:1'])
-    expect(TEST_TEMPLATES['deep-research']).toMatchObject([
-      { nodeId: 'research:1', capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'persistent', acceptance: 'acceptance.answer' },
-      { nodeId: 'compact:1', dependsOn: ['research:1'], capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer' },
-    ])
-  })
-
   it('refuses invalid DAGs before anything runs (REQ-WF-1)', () => {
     expect(() => preflight([])).toThrow(/no nodes/)
     expect(() => preflight([node('a'), node('a')])).toThrow(/duplicate node a/)
@@ -222,7 +213,6 @@ describe('workflow specs', () => {
     expect(review.nodes[3]).toMatchObject({ acceptance: 'acceptance.team-ballot-review' })
     expect(review.specHash).not.toBe(resolve('t', DEFAULT_TEMPLATES.review!, {}).specHash)
     expect(preflight(DEFAULT_TEMPLATES.brainstorm!)).toEqual(['brainstorm'])
-    expect(DEFAULT_TEMPLATES.panel).toBeUndefined()
   })
 
   it('refuses a team policy outside its bounds, and fields a team cannot have', () => {

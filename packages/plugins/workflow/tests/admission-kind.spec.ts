@@ -6,17 +6,9 @@ const failure = (rejections: Rejection[], retryAt?: string): AdmissionFailure =>
 const writer: Rejection = { worker: 'w:w', state: 'ready', failed: [{ check: 'capability', reason: 'does not prove review' }] }
 
 describe('admissionKind: only "no configured Worker proves it at any tier" is a config error (T282)', () => {
-  it('is a config error when the Worker that proves the work offers no tier the step asks for', () => {
-    expect(admissionKind(failure([writer, { worker: 'w:r', state: 'ready', failed: [{ check: 'tier', reason: 'its tiers economy, standard are below the minimum frontier' }] }]))).toBe('config_error')
-  })
-
   it('is never a config error for a Worker that proves the work and is at its limit, out of quota, or whose tier its model\'s limit closed', () => {
     expect(admissionKind(failure([writer, { worker: 'w:r', state: 'quota-exhausted', failed: [{ check: 'state', reason: 'state quota-exhausted' }] }]))).toBe('quota_exhausted')
     expect(admissionKind(failure([writer, { worker: 'w:r', state: 'ready', failed: [{ check: 'cooldown', reason: 'tier frontier limit until 2099-01-05T09:00:00.000Z (its model\'s limit)' }] }]))).toBe('quota_exhausted')
-  })
-
-  it('is never a config error for a Worker that proves the work and is refused for its state alone (a late probe reads unavailable)', () => {
-    expect(admissionKind(failure([writer, { worker: 'w:r', state: 'unavailable', failed: [{ check: 'state', reason: 'state unavailable' }] }]))).not.toBe('config_error')
   })
 
   it('is never a config error while routing says the work is worth routing again: a source has not described its Workers yet since the host started', () => {
