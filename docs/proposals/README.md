@@ -160,6 +160,15 @@ accepted/implemented -> superseded
   through the egress check. Local landing stays as the second provider of one landing seam, for
   private repositories.
 
+- [PROP-0018: Lean code](0018-lean-code.md), **draft** (T298, from the operator's request of
+  2026-10-27). A read of the whole source for what can go with the same behaviour, from line counts and
+  searches: sizes by package, duplicated logic (five glob matchers, two digest providers that
+  repeat one request engine, helpers copied across 14 packages), legacy paths and what a store still
+  needs of them, dead exports, one removal that needs the operator's decision (the hand-named agent
+  Worker rows), plugin boundaries (two parts worth a plugin, the rest engine parts that stay), 17
+  ranked tasks each under about 1,500 changed lines with their guards and order, and what stays.
+  It changes no code.
+
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
 a reviewed proposal.
