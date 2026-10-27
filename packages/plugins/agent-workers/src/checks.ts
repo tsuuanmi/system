@@ -84,13 +84,13 @@ export const CHECK_WORKERS_ENV = 'SYSTEM_CHECK_MAX_WORKERS'
  * the files the result changed) or `landing` (the whole suite, on the rebased tree), the
  * {@link CheckStep}'s `scope`. The repository's `test:affected` reads it (scripts/test-groups.ts).
  */
-export const CHECK_SCOPE_ENV = 'SYSTEM_CHECK_SCOPE'
+const CHECK_SCOPE_ENV = 'SYSTEM_CHECK_SCOPE'
 /**
  * The environment an acceptance check's command reads the run's own starting commit from (T299): the
  * commit its worktree was cut at, so the files the result changed are read from there. Unset when the
  * worktree recorded none: the repository's `test:affected` then runs the whole suite.
  */
-export const CHECK_BASE_ENV = 'SYSTEM_CHECK_BASE'
+const CHECK_BASE_ENV = 'SYSTEM_CHECK_BASE'
 /** Set to `1` for a check run again alone after failing only on timeouts (T292). */
 export const CHECK_ALONE_ENV = 'SYSTEM_CHECK_ALONE'
 
