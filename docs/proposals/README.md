@@ -169,6 +169,15 @@ accepted/implemented -> superseded
   ranked tasks each under about 1,500 changed lines with their guards and order, and what stays.
   It changes no code.
 
+- [PROP-0019: The lead is a session; its logic lives in System](0019-lead-logic-in-system.md),
+  **draft** (T324, from the operator's words of 2026-10-27, D109). About 1,400 lines of scripts and
+  state files in the lead's coordination directory do eleven jobs System should do. For each:
+  what System has (command rules, the lead inbox, the lead principal, auto-accept, the report), what
+  is missing, the design at its seam, and its switch (off or warn, D108) and test profile case;
+  `system lead brief`, the page a new lead session takes over from, with a handover note; the end
+  state of a coordination directory that holds `LEAD.md` alone; and 13 ranked tasks that start
+  after the core loop runs clean. It changes no code.
+
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
 a reviewed proposal.
