@@ -1015,7 +1015,7 @@ export class Worktrees {
    * is intact, no agent run of its workflow run is unfinished or not known to be gone (INV-15), and
    * it is exactly `subject` now (INV-5); else why not. Read only.
    */
-  async checkable(runId: string, workspace: string, subject: { ref: string; version: string }): Promise<undefined | { repository: string; path: string; setupHash: string | null } | { cause: 'moved' | 'gone' | 'busy' | 'failed'; reason: string }> {
+  async checkable(runId: string, workspace: string, subject: { ref: string; version: string }): Promise<undefined | { repository: string; path: string; setupHash: string | null; forkedAt: string | null } | { cause: 'moved' | 'gone' | 'busy' | 'failed'; reason: string }> {
     const row = this.ctx.store.db.prepare('SELECT * FROM agent_worktrees WHERE workflow_run_id = ? AND path = ?').get(runId, workspace) as (WorktreeRow & { setup_hash?: string | null }) | undefined
     if (!row) return undefined
     const tree = subjectId({ type: 'git-head', ...subject })
@@ -1031,7 +1031,8 @@ export class Worktrees {
     const current = captureGitSubject(row.path)
     if (!current) return { cause: 'failed', reason: `${row.path} is no longer a git working tree` }
     if (current.subject.ref !== subject.ref || current.subject.version !== subject.version) return { cause: 'moved', reason: `the worktree ${row.path} is now ${subjectId(current.subject)}, not ${tree}, the tree the result is on` }
-    return { repository: row.repository, path: row.path, setupHash: row.setup_hash ?? null }
+    // The commit the worktree was cut at: the run's own change is read from it (T299).
+    return { repository: row.repository, path: row.path, setupHash: row.setup_hash ?? null, forkedAt: row.forked_at }
   }
 
   /**
@@ -1512,7 +1513,10 @@ export class Worktrees {
     const stat = contained ? '' : await this.statOf(row.repository, base.sha, head)
     // Where the result forked from the base: the base moved since its work started when that is not the base's head (ADR-0068).
     const fork = contained ? '' : (await git(row.repository, ['merge-base', head, base.sha]).catch(() => '')).trim()
-    return { outcome: 'committed', repository: row.repository, branch: row.branch, head, committed, base, contained, stat, ...(fork ? { fork } : {}) }
+    // The tree the worktree holds now, as committed: a landing whose base did not move runs its full suite on it (T299).
+    const after = captureGitSubject(row.path)?.subject
+    const subject = after?.ref === head && after.version ? { subject: { ref: after.ref, version: after.version } } : {}
+    return { outcome: 'committed', repository: row.repository, branch: row.branch, head, committed, base, contained, stat, ...(fork ? { fork } : {}), ...subject }
   }
 
   /** The change of `head` against `base` (`git diff --stat`, from where they forked), bounded. */

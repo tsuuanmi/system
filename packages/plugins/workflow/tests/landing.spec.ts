@@ -73,7 +73,7 @@ class Lander {
     : { outcome: 'rebased', repository: '/repo', branch: `system/run/${step.runId}`, head: REBASED, from: step.head, base: step.base, subject: { ref: REBASED, version: 'v-rebased' }, stat: ' a.c | 3 ++-', already: false }
 
   answer: (step: LandStep) => Landed | undefined = (step) => step.step === 'commit'
-    ? { outcome: 'committed', repository: '/repo', branch: `system/run/${step.runId}`, head: HEAD, committed: true, base: BASE, contained: false, stat: ' a.c | 2 +-', ...(this.fork ? { fork: this.fork } : {}) }
+    ? { outcome: 'committed', repository: '/repo', branch: `system/run/${step.runId}`, head: HEAD, committed: true, base: BASE, contained: false, stat: ' a.c | 2 +-', subject: { ref: HEAD, version: 'v-committed' }, ...(this.fork ? { fork: this.fork } : {}) }
     : step.step === 'rebase' ? this.rebaseAnswer(step)
       : step.step === 'record' ? undefined
       : { outcome: 'merged', repository: '/repo', branch: `system/run/${step.runId}`, head: step.head, base: step.base, commit: 'd'.repeat(40), already: false }
@@ -372,6 +372,9 @@ describe('ctx.workflow rebases an accepted result onto its landing target when t
     // The checks: at the run's end on its own tree (ADR-0063), then again on the rebased one.
     expect(lander.checked.map((c) => c.subject)).toEqual([{ ref: subject.ref, version: subject.version }, { ref: REBASED, version: 'v-rebased' }])
     expect(lander.checked[1]).toMatchObject({ runId, checks: ['tests'] })
+    // The acceptance's run is the related tests', the landing's is the full suite, once (T299).
+    expect(lander.checked[0]!.scope).toBeUndefined()
+    expect(lander.checked.filter((c) => c.scope === 'landing')).toEqual([lander.checked[1]])
     expect(asked).toMatchObject({ head: REBASED, base: BASE, fork: FORK, stat: ' a.c | 3 ++-', rebase: { from: HEAD, head: REBASED, fork: FORK, count: 0, checks: ['tests'] } })
     expect(optionsOf(ctx, asked)).toEqual(['commit', 'rebase', 'recheck'])
     const rebase = bodyOf(ctx, asked.decisions![1]!)
@@ -505,12 +508,15 @@ describe('ctx.workflow rebases an accepted result onto its landing target when t
     lander.fork = FORK
     lander.checkAnswer = (step) => ({
       outcome: 'checked', results: step.checks.map((check) => step.subject.ref === REBASED
-        ? { check, outcome: 'failed' as const, exitCode: 1, reason: 'exited 1' }
+        ? { check, outcome: 'failed' as const, exitCode: 1, reason: 'exited 1', failures: ['FAIL scripts/other.spec.ts > a test the base gained', 'AssertionError: expected 1 to be 2'] }
         : { check, outcome: 'passed' as const, exitCode: 0, reason: 'exited 0' }),
     })
     const { ctx, runId, taskId } = await boot('ask', lander, ['tests'])
     const returned = await until(ctx, runId, 'returned')
     expect(returned.reason).toMatch(new RegExp(`its required tests check\\(s\\) failed on the result rebased onto main at ${BASE.sha} \\(tests failed \\(exit 1\\)\\)`))
+    // The failing tests are named in what goes back (T270).
+    expect(returned.reason).toContain('failing: tests: FAIL scripts/other.spec.ts > a test the base gained | tests: AssertionError: expected 1 to be 2')
+    expect(lander.checked.at(-1)).toMatchObject({ scope: 'landing' })
     expect(lander.steps.map(stepOf)).toEqual(['commit', 'rebase:start'])
     expect(optionsOf(ctx, returned)).toEqual(['commit', 'rebase', 'return'])
     expect(bodyOf(ctx, returned.decisions!.at(-1)!).outcome.detail).toMatchObject({ step: 'recheck', subject: { ref: REBASED, version: 'v-rebased' }, results: [{ check: 'tests', outcome: 'failed', exitCode: 1 }] })
@@ -518,6 +524,35 @@ describe('ctx.workflow rebases an accepted result onto its landing target when t
     const task = (await ctx.board.task(taskId))!
     expect(task).toMatchObject({ state: 'ready', attempts: { count: 1 } })
     expect(bodyOf(ctx, task.lastDecision!).inputs).toContain(returned.decisions!.at(-1)!)
+  })
+
+  it('runs the full suite once on the committed tree when the base did not move, before the merge is asked; a failure there goes back with its failing tests named (T299)', async () => {
+    for (const fork of [BASE.sha, undefined]) {
+      const lander = new Lander()
+      lander.fork = fork
+      const { ctx, subject, runId } = await boot('ask', lander, ['tests'])
+      const asked = await until(ctx, runId, 'asked')
+      expect(lander.steps.map(stepOf)).toEqual(['commit'])
+      // The acceptance's related tests on the result's tree, then the landing's full suite on the committed tree, once.
+      expect(lander.checked.map((c) => [c.subject, c.scope])).toEqual([[{ ref: subject.ref, version: subject.version }, undefined], [{ ref: HEAD, version: 'v-committed' }, 'landing']])
+      expect(optionsOf(ctx, asked)).toEqual(['commit', 'recheck'])
+      expect(bodyOf(ctx, asked.decisions![1]!).outcome.detail).toMatchObject({ step: 'recheck', scope: 'landing', subject: { ref: HEAD, version: 'v-committed' }, results: [{ check: 'tests', outcome: 'passed' }] })
+      expect(asked).toMatchObject({ head: HEAD, base: BASE })
+      expect(await merges(ctx)).toHaveLength(1)
+    }
+    const lander = new Lander()
+    lander.checkAnswer = (step) => ({
+      outcome: 'checked', results: step.checks.map((check) => step.scope === 'landing'
+        ? { check, outcome: 'failed' as const, exitCode: 1, reason: 'exited 1', failures: ['FAIL packages/other/tests/x.spec.ts > a test the related set left out'] }
+        : { check, outcome: 'passed' as const, exitCode: 0, reason: 'exited 0' }),
+    })
+    const { ctx, runId, taskId } = await boot('ask', lander, ['tests'])
+    const returned = await until(ctx, runId, 'returned')
+    expect(returned.reason).toContain(`failed on the result committed on system/run/${runId} at ${HEAD}`)
+    expect(returned.reason).toContain('failing: tests: FAIL packages/other/tests/x.spec.ts > a test the related set left out')
+    expect(optionsOf(ctx, returned)).toEqual(['commit', 'return'])
+    expect(await merges(ctx)).toEqual([])
+    expect((await ctx.board.task(taskId))!).toMatchObject({ state: 'ready', attempts: { count: 1 } })
   })
 
   it('runs again, on the rebased tree, the checks the run\'s own acceptance ran or left pending, when the operator accepted the result on the board: one that fails there does not land (ADR-0063, INV-2, INV-5)', async () => {

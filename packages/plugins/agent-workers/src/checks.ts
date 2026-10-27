@@ -27,7 +27,9 @@
  * Checks run under a bounded load (T292): at most `checks.maxConcurrent` at once on the host, the rest
  * queued in order (./check-queue.ts), each told its test worker count (`SYSTEM_CHECK_MAX_WORKERS`); one
  * that failed only on tests that timed out runs once more alone, on a recorded decision, and that
- * second result counts.
+ * second result counts. A check is told its scope ({@link CHECK_SCOPE_ENV}, T299): the acceptance's
+ * `tests` run the tests related to the result's changed files, the landing's recheck on the rebased
+ * tree runs the whole suite, once per landing, in this same queue.
  * @module @tsuuanmi/system-agent-workers/checks
  */
 import { randomUUID } from 'node:crypto'
@@ -77,6 +79,18 @@ export const DEFAULT_MAX_CONCURRENT_CHECKS = 2
 
 /** The environment a check's command reads its test worker count from (the repository's vitest config, T292). */
 export const CHECK_WORKERS_ENV = 'SYSTEM_CHECK_MAX_WORKERS'
+/**
+ * The environment a check's command reads its scope from (T299): `acceptance` (the tests related to
+ * the files the result changed) or `landing` (the whole suite, on the rebased tree), the
+ * {@link CheckStep}'s `scope`. The repository's `test:affected` reads it (scripts/test-groups.ts).
+ */
+export const CHECK_SCOPE_ENV = 'SYSTEM_CHECK_SCOPE'
+/**
+ * The environment an acceptance check's command reads the run's own starting commit from (T299): the
+ * commit its worktree was cut at, so the files the result changed are read from there. Unset when the
+ * worktree recorded none: the repository's `test:affected` then runs the whole suite.
+ */
+export const CHECK_BASE_ENV = 'SYSTEM_CHECK_BASE'
 /** Set to `1` for a check run again alone after failing only on timeouts (T292). */
 export const CHECK_ALONE_ENV = 'SYSTEM_CHECK_ALONE'
 
@@ -341,7 +355,8 @@ export class RunChecks {
 
   /** The key a check's stored outcome is bound to: the run, its worktree, the subject, the check, its argv, and the setup. */
   private keyOf(step: CheckStep, workspace: string, setup: Setup, a: Allowed): [string, string, string, string, string, string] {
-    return [step.runId, workspace, subjectId({ type: 'git-head', ...step.subject }), a.check, JSON.stringify(a.argv), setup.hash]
+    // A landing's result is its own: the same tree at the acceptance's scope never stands for it (T299). The acceptance's key is as it was.
+    return [step.runId, workspace, subjectId({ type: 'git-head', ...step.subject }), a.check, step.scope === 'landing' ? `${JSON.stringify(a.argv)}#landing` : JSON.stringify(a.argv), setup.hash]
   }
 
   /** Whether a check ran (or started) on this key before: its stored outcome stands, and nothing of it runs again. */
@@ -420,7 +435,7 @@ export class RunChecks {
    * run of the rest. A check stored on this key is not run again: its stored outcome stands; but one
    * the host cut runs again (T269). Returns the decisions of those re-runs.
    */
-  private async execute(found: { repository: string; path: string }, setup: Setup, step: CheckStep, allowed: Allowed[], records: Map<RunCheck, CheckRecord>, signal: AbortSignal | undefined): Promise<ArtifactRef[]> {
+  private async execute(found: { repository: string; path: string; forkedAt?: string | null }, setup: Setup, step: CheckStep, allowed: Allowed[], records: Map<RunCheck, CheckRecord>, signal: AbortSignal | undefined): Promise<ArtifactRef[]> {
     const todo: Allowed[] = []
     const reruns: ArtifactRef[] = []
     /** The cuts each check to run again had so far, carried into its started mark. */
@@ -449,7 +464,10 @@ export class RunChecks {
     const worktree = real(found.path)
     const tree = subjectId({ type: 'git-head', ...step.subject })
     const stopped = (): unknown => signal?.reason ?? new ProviderError('aborted', 'stopped')
-    const env = noInstallEnvironment()
+    // The acceptance's tests are those of the run's own change: read from the commit its worktree was cut at, never from a branch
+    // the run did not start on (T299). A worktree with none recorded gets none, and its command runs the whole suite (INV-2).
+    const scope = step.scope ?? 'acceptance'
+    const env = { ...noInstallEnvironment(), [CHECK_SCOPE_ENV]: scope, ...(scope === 'acceptance' && found.forkedAt ? { [CHECK_BASE_ENV]: found.forkedAt } : {}) }
     let moved: string | undefined
     for (const a of todo) {
       const base = { check: a.check, argv: a.argv, autonomy: a.autonomy }

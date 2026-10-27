@@ -450,7 +450,8 @@ export type LandRefusal = 'moved' | 'gone' | 'busy' | 'base-moved' | 'head-moved
  * held that tree; then `commit` is that one).
  */
 export type Landed =
-  | { outcome: 'committed'; repository: string; branch: string; head: string; committed: boolean; base: { branch: string; sha: string }; contained: boolean; stat: string; fork?: string }
+  /** `subject`: the tree the worktree holds once committed, where a landing whose base did not move runs its full suite (T299). */
+  | { outcome: 'committed'; repository: string; branch: string; head: string; committed: boolean; base: { branch: string; sha: string }; contained: boolean; stat: string; fork?: string; subject?: { ref: string; version: string } }
   | { outcome: 'merged'; repository: string; branch: string; head: string; base: { branch: string; sha: string }; commit: string; already: boolean; regenerated?: Regenerated }
   | { outcome: 'rebased'; repository: string; branch: string; head: string; from: string; base: { branch: string; sha: string }; subject: { ref: string; version: string }; stat: string; already: boolean; regenerated?: Regenerated }
   | { outcome: 'conflicted'; repository: string; branch: string; from: string; base: { branch: string; sha: string }; fork: string; files: string[]; more: number; moved: string[] }
@@ -584,6 +585,13 @@ export interface CheckStep {
   subject: { ref: string; version: string }
   checks: RunCheck[]
   classification: 'public' | 'operator-shared' | 'local-private'
+  /**
+   * What the checks are for (T299): `acceptance` (the default), the result's own tree, where a
+   * `tests` command runs the tests related to the files the result changed; `landing`, the tree
+   * rebased onto its base, where it runs the whole suite, once per landing. A result of one scope is
+   * never taken for the other's.
+   */
+  scope?: 'acceptance' | 'landing'
 }
 
 /**

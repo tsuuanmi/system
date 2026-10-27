@@ -1020,7 +1020,7 @@ export const APP_JS = `'use strict'
               // ADR-0068: the base moved since the result's work started, so it is made again on top of it and checked again first.
               : l.state === 'rebase' ? el('div', {}, 'Accepted — ' + (l.base || 'its base') + ' moved on: rebasing onto it before the merge is asked')
                 : l.state === 'resolving' ? el('div', {}, 'Accepted — its rebase onto ' + (l.base || 'its base') + ' conflicts; its Worker is resolving it')
-                  : l.state === 'recheck' ? el('div', {}, 'Accepted and rebased onto ' + (l.base || 'its base') + '; its required checks run again')
+                  : l.state === 'recheck' ? el('div', {}, 'Accepted; its required checks run in full on the tree to merge into ' + (l.base || 'its base') + ' before the merge is asked')
                     : l.state === 'returning' || l.state === 'returned' ?el('div', {}, 'Accepted, but it cannot land on ' + (l.base || 'its base') + ' as it is now: sent back as another attempt' + (l.reason ? ' — ' + l.reason : ''))
                       : el('div', {}, 'Accepted — being committed on ' + (l.branch || 'its run\\'s branch') + ' to be merged')
 

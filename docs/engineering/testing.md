@@ -332,9 +332,42 @@ a test file is in no group, or in two.
   a root configuration file, CI, or a path the script cannot place runs every group (fail
   closed).
 
+### Tests scale with the change
+
+With up to nine tasks at once, a full run per check (3,309 tests in 283 files, 240 s) was the
+bottleneck: tests with a 5 s bound failed under the load (T299). The full suite now runs once per
+task, at the landing; everything before it runs what the change relates to.
+
+- `pnpm test:related <file>…` (`--dry-run` to print the selection only) runs the test files related
+  to the files given: each given test file; and, for any other file, the tests of its package and of
+  every package that depends on it, through the same graph as `test:affected` (code, test helpers,
+  and the packages that locate its data files). The scripts' tests, which check the whole repository
+  (architecture, docs, manifests), run for any change but a test file's. A `package.json` (in any
+  directory), the lockfile, `pnpm-workspace.yaml`, `tsconfig*.json`, `vitest*.ts`, CI, or a path the
+  script cannot place widens to the whole suite (fail closed). Arguments after `--` go to vitest.
+- **A writing Worker** runs `pnpm test:related` on the files it changed, while it develops and in its
+  evidence, never the full suite. In its sandbox the command is admitted unasked when every path is
+  absolute and inside the worktree (the gate's `workspace-write`; it only runs tests there).
+- **The acceptance `tests` check** runs `pnpm test:affected` as before, told its scope
+  (`SYSTEM_CHECK_SCOPE=acceptance`) and the commit its run's worktree was cut at
+  (`SYSTEM_CHECK_BASE`): it runs the tests related to the files the result itself changed since that
+  commit, never what its branch gained before it, and the whole suite when the result changed shared
+  configuration, or when no such commit is recorded.
+- **The landing** runs the same command with `SYSTEM_CHECK_SCOPE=landing` on the tree it is to merge:
+  the rebased tree when the base moved, the committed tree when it did not. That is the whole suite,
+  once per landing, before the merge is asked, in the check queue like any check
+  ([T292](#running-the-suite-inside-a-runs-check)). A failure sends the result back as another
+  attempt, with its failing tests named in the reason and in the task's dossier.
+- Run by hand without a scope, `pnpm test:affected` still runs the affected groups.
+
+The related set is wider than a file-level import graph (a package's whole test suite for one source
+file), so it never skips a test that imports a changed file; what it skips is the packages that
+cannot import the change.
+
 The rule:
 
-- **A change** runs its groups (`pnpm test:affected`) and `pnpm check`.
+- **A change** runs the tests related to its files (`pnpm test:related`) and `pnpm check`; the
+  landing runs the full suite.
 - **A big update** runs the full gate: `pnpm check`, `pnpm test`, `pnpm test:e2e`, and
   `pnpm test:crash`. A contract, seam, or schema change, a batch integration, and a release are
   big updates.
@@ -494,7 +527,8 @@ note anywhere in a schema admits a change anywhere in it, so the note must say w
 ## Running the suite inside a run's check
 
 A workflow run's `tests` check ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md))
-runs `pnpm test:affected` inside the run's confinement: bubblewrap, the host read-only but the
+runs `pnpm test:affected` inside the run's confinement (its scope, `acceptance` or `landing`, decides
+what runs: [tests scale with the change](#tests-scale-with-the-change)): bubblewrap, the host read-only but the
 check's scratch paths, the worktree read-only too, a private `/tmp`, no network but loopback, its
 own PID namespace and `/dev`, and the daemon's umask (077 when
 [`scripts/live-update.sh`](../../scripts/live-update.sh) started it). The suite gives the verdict

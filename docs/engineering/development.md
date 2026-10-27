@@ -67,6 +67,7 @@ pnpm gen:traceability   # regenerate docs/validation/traceability.md from test t
 pnpm test               # every *.spec.ts: unit, contract, driver, concurrency, and architecture tests: the whole suite
 pnpm test:group <name>  # one functional group of it (testing.md#test-groups); no name lists them
 pnpm test:affected      # the groups the change since origin/main affects (--base <ref>, --dry-run)
+pnpm test:related <files…>  # the tests related to those files (testing.md#tests-scale-with-the-change); a Worker runs this, never the full suite
 pnpm test:e2e           # build, then boot the real profile through dsh (packages/cli/tests)
 pnpm test:crash         # build, then SIGKILL the engine at each crash point and restart it (testing.md)
 pnpm changeset          # record a user-visible change for the next release (releasing.md)
@@ -146,6 +147,8 @@ serves per attempt. The [board](../design/board.md), the
    worktree are `workspace-write`. A command runs unasked only when its exact argv is in the
    studio policy's `commands`; for this repository list `corepack pnpm check`,
    `corepack pnpm test:affected`, and each `corepack pnpm gen:*` generator by its full name
+   (`corepack pnpm test:related <absolute paths inside the worktree>` is admitted by the gate itself,
+   as a write of the worktree, and needs no line)
    ([change the autonomy policy](../operations/runbooks.md#change-the-autonomy-policy)). Any
    other command waits on the approval queue in `develop:1`, and is denied, reported not run, in
    `validate:1`, which has no session. A fixed read-only inspection command (`cat`, `rg`, `ls`,

@@ -767,6 +767,7 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
       'stuck.mjs': script(timeoutOutput(1), 'false'),
       'assertion.mjs': script(' FAIL  packages/x/tests/a.spec.ts > suite > test\nAssertionError: expected 1 to be 2\n Tests  1 failed | 90 passed (91)', 'alone'),
       'workers.mjs': 'console.log(`workers ${process.env.SYSTEM_CHECK_MAX_WORKERS}`)\n',
+      'scope.mjs': 'console.log(`scope ${process.env.SYSTEM_CHECK_SCOPE} base ${/^[0-9a-f]{40}$/.test(process.env.SYSTEM_CHECK_BASE ?? "") ? "the fork" : "none"}`)\n',
     })
     const step = (runId: string, at: { workspace: string; subject: { ref: string; version: string } }, checks: RunCheck[] = ['tests']) =>
       ({ runId, workspace: at.workspace, subject: at.subject, checks, classification: 'operator-shared' as const })
@@ -811,6 +812,22 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
       const at = await write('run_w1')
       const checked = await checksWith({ maxConcurrent: 2, maxWorkers: 3, queue: new CheckQueue() }).check(step('run_w1', at))
       expect(evidenceOf(ctx, checked).checks[0]!.output!.tail).toBe('workers 3\n')
+    })
+
+    it('tells each check its scope: the acceptance\'s by default, the landing\'s on the same tree run again and stored apart (T299)', async () => {
+      const repo = repository()
+      commit(repo, files())
+      const { write, checksWith, ctx } = await boot(repo, { checks: { tests: 'node scope.mjs' } }, [...SETUP, 'node scope.mjs'])
+      const at = await write('run_scope')
+      const checks = checksWith({ queue: new CheckQueue() })
+      const acceptance = await checks.check(step('run_scope', at))
+      // The acceptance is given the commit its worktree was cut at, to read the run's own change from (T299).
+      expect(evidenceOf(ctx, acceptance).checks[0]!.output!.tail).toBe('scope acceptance base the fork\n')
+      // The same tree at the landing's scope is its own run, never the acceptance's stored result.
+      const landing = await checks.check({ ...step('run_scope', at), scope: 'landing' })
+      expect(evidenceOf(ctx, landing).checks[0]!.output!.tail).toBe('scope landing base none\n')
+      // And each is stored, so neither runs again.
+      expect(await checks.check({ ...step('run_scope', at), scope: 'landing' })).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed' }] })
     })
 
     it('runs a check that failed only on timeouts once more alone, on a recorded decision, and its second result counts', async () => {

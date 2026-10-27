@@ -1088,7 +1088,7 @@ export function parseVotes(answer: string, subject: string, ids: readonly string
  * tree earlier in this conversation, and fixes it on top of its own work.
  */
 /** What a fix of a `showsEvidence` step is told to end with (T267): the checks run again on the fixed tree, their output in the dossier. */
-export const FIX_VERIFY = 'Before you end, run the checks the task requires again on the fixed tree, and append their real output, verbatim, to the task\'s dossier as an evidence entry (dossier_append, kind evidence: each command as `$ <command>`, the lines that hold the result, and its exit code when your tool reports one; a required check you could not run, named, with why). The fix is refused at its end without it: the evidence for the tree before the fix does not hold for this one.'
+export const FIX_VERIFY = 'Before you end, run the checks the task requires again on the fixed tree, and append their real output, verbatim, to the task\'s dossier as an evidence entry (dossier_append, kind evidence: each command as `$ <command>`, the lines that hold the result, and its exit code when your tool reports one; a required check you could not run, named, with why). For the tests check run `corepack pnpm test:related <the absolute paths of the files you changed>`, never the full suite. The fix is refused at its end without it: the evidence for the tree before the fix does not hold for this one.'
 
 export function remediationPrompt(request: string, subject: string, findings: Assessment['findings'], review = 'the review', continues = false, notes: readonly Finding[] = [], showsEvidence = false): string {
   const place = (f: Finding): string => (f.file ? ` (${f.file}${f.line ? `:${f.line}` : ''})` : '')

@@ -3472,6 +3472,9 @@ every such result waits for you in **Reviews** with `tests, lint` pending.
    tree, offline and confined, before its checks: its commands must be on the policy's `commands`
    list too, since nothing is asked then
    ([a result that changes its dependencies](../design/workflow-engine.md#a-result-that-changes-its-dependencies), T235).
+   `corepack pnpm test:affected` is told its scope (`SYSTEM_CHECK_SCOPE`): at acceptance it runs the
+   tests related to the files the result changed since its worktree was cut (`SYSTEM_CHECK_BASE`),
+   and at the landing, on the rebased or the committed tree, the whole suite, once per landing ([tests scale with the change](../engineering/testing.md#tests-scale-with-the-change), T299).
 3. **The policy.** A check runs only when the policy lets its exact argv run unasked: list each
    line in the studio policy's `commands` ([change the autonomy policy](#change-the-autonomy-policy));
    a line already listed for the validation step is enough. A check whose command would ask is not

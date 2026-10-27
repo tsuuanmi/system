@@ -20,6 +20,7 @@
     "test": "vitest run",
     "test:group": "node --import tsx scripts/test-groups.ts group",
     "test:affected": "node --import tsx scripts/test-groups.ts affected",
+    "test:related": "node --import tsx scripts/test-groups.ts related",
     "build": "\"$npm_execpath\" -r --filter \"./packages/**\" run build",
     "test:e2e": "\"$npm_execpath\" run build && vitest run -c vitest.e2e.config.ts",
     "gen:reference": "node --import tsx scripts/gen-reference.ts",

@@ -259,7 +259,8 @@ export interface TaskCarry {
  * since the result's work started (ADR-0068), `rebase` while it is made again on top of the base,
  * `resolving` while a writing step resolves the rebase's conflict, `returning` while a rebase that
  * cannot go on is abandoned and the result sent back (persisted before either, so a restart finishes
- * both, INV-4), and `recheck` while its required checks run again on the rebased tree; `committed`,
+ * both, INV-4), and `recheck` while its required checks run again on the rebased tree (or, when the
+ * base did not move, on the committed tree: the landing's full suite, T299); `committed`,
  * then `asked` while the `merge` request waits for
  * the operator; `merging` on the approval; then `merged`, or `returned` (it could not land on its
  * target as that is now, and went back to the board as another attempt), `refused` (a step changed
@@ -272,6 +273,11 @@ export interface TaskLanding {
   fork?: string
   /** The landing's rebase onto its target, once the base moved since the result's work started (ADR-0068). */
   rebase?: TaskRebase
+  /**
+   * A landing whose base did not move: the committed tree its required checks run on at the landing's
+   * scope (the full suite, once per landing, T299) in `recheck`, before the merge is asked.
+   */
+  verify?: { subject: { ref: string; version: string }; checks: string[] }
   /** The working tree the result is on, and its exact subject there. */
   workspace?: string
   subject?: { ref: string; version: string }

@@ -47,6 +47,7 @@ import { type Landed as LandedOn, type LandingProvider, type LandingTarget, same
 import { BRIEF_LIMITS, subjectId } from '@tsuuanmi/system-libs'
 import { AdmissionFailure, type Landed, type LandStep, type RebasePhase, RUN_CHECKS, type RunCheck, type WorkerSource, type WorkRequirement } from '@tsuuanmi/system-workers-core'
 import { type Draft, recordBrief, renderedChars } from './briefs.ts'
+import { MAX_FAILURE_LINE_CHARS, MAX_FAILURE_LINES } from './checks.ts'
 import type { Engine } from './engine.ts'
 import { queueOf } from './queue.ts'
 import { writes } from './review.ts'
@@ -239,8 +240,8 @@ export class TaskLandings {
       ...landing, state: 'committed', repository: landed.repository, branch: landed.branch, head: landed.head, base: landed.base, stat: landed.stat,
       decisions: [...(landing.decisions ?? []), decision], at: now(),
     }
-    // Asked again (a base that moved): what the earlier ask left is not this one's.
-    for (const key of ['reason', 'cause', 'requestId', 'expiresAt', 'approval'] as const) delete committed[key]
+    // Asked again (a base that moved): what the earlier ask, or the earlier full suite's tree, left is not this one's.
+    for (const key of ['reason', 'cause', 'requestId', 'expiresAt', 'approval', 'verify'] as const) delete committed[key]
     if (landed.contained) return this.merged(row, committed, { commit: landed.base.sha, already: true, source: landed.source }, [decision], `${landed.base.branch} at ${landed.base.sha} already holds ${landed.head}: nothing is left to merge`)
     if (landed.fork) committed.fork = landed.fork
     // The base moved since the result's work started: it is rebased there before the merge is asked (ADR-0068).
@@ -251,7 +252,12 @@ export class TaskLandings {
       }
       return { ...committed, state: 'rebase', rebase: { from: landed.head, base: landed.base, fork: landed.fork, count } }
     }
-    return committed
+    // The base did not move: the acceptance ran only the tests related to the result's files, so the
+    // landing runs its full suite on the committed tree, once, before the merge is asked (T299).
+    const checks = this.requiredChecks(row, committed)
+    if (!checks.length) return committed
+    if (!landed.subject) return this.refuse(row, committed, 'merge', 'checks', `source ${landed.source} named no tree for ${landed.head}, so the landing's full suite (${checks.join(', ')}) cannot run on it; merge ${landed.branch} by hand once it passes`, [decision])
+    return { ...committed, state: 'recheck', verify: { subject: landed.subject, checks } }
   }
 
   // --- a target that moved (ADR-0068) ---
@@ -425,45 +431,68 @@ export class TaskLandings {
     }
   }
 
-  /** Run the required checks again on the rebased tree: all passed, the merge is asked on it; one failed, the result goes back; one that did not run, the landing stops for the operator. */
+  /**
+   * Run the required checks at the landing's scope (the full suite, once per landing, T299) on the tree
+   * that is to merge: the rebased tree, or the committed one when the base did not move (`verify`). All
+   * passed, the merge is asked on it; one failed, the result goes back with its failing tests named; one
+   * that did not run, the landing stops for the operator.
+   */
   private async recheck(row: TaskRow, board: Board, landing: TaskLanding): Promise<TaskLanding | undefined> {
-    const r = landing.rebase!
+    const v = landing.verify
+    const r = v ? undefined : landing.rebase!
+    const subject = v ? v.subject : r!.subject!
+    const base = v ? landing.base! : r!.base
+    const head = v ? landing.head! : r!.head!
+    const where = v ? 'the committed tree' : 'the rebased tree'
+    const step = v ? 'merge' : 'rebase'
     const checks = this.requiredChecks(row, landing)
     const verified = (inputs: ArtifactRef[]): TaskLanding => {
-      const next: TaskLanding = { ...landing, state: 'committed', head: r.head!, stat: r.stat ?? '', base: r.base, decisions: [...(landing.decisions ?? []), ...inputs], at: now() }
+      const next: TaskLanding = { ...landing, state: 'committed', ...(r ? { head: r.head!, stat: r.stat ?? '', base: r.base } : {}), decisions: [...(landing.decisions ?? []), ...inputs], at: now() }
       delete next.reason
       return next
     }
     if (!checks.length) return verified([])
     const check = this.e.ctx.workers.check
-    if (typeof check !== 'function') return this.refuse(row, landing, 'rebase', 'checks', `the rebased tree's required checks (${checks.join(', ')}) cannot run: the workers seam runs no check; merge ${landing.branch} by hand once they pass`, [landing.acceptance!])
+    if (typeof check !== 'function') return this.refuse(row, landing, step, 'checks', `${where}'s required checks (${checks.join(', ')}) cannot run: the workers seam runs no check; merge ${landing.branch} by hand once they pass`, [landing.acceptance!])
     const checked = await check.call(this.e.ctx.workers, {
-      runId: row.run_id, workspace: landing.workspace!, subject: r.subject!, checks,
+      runId: row.run_id, workspace: landing.workspace!, subject, checks, scope: 'landing',
       classification: this.e.runRow(row.run_id)?.classification ?? this.e.ctx.egress.defaultClassification,
     }, this.e.stopped.signal)
-    if (!checked) return this.refuse(row, landing, 'rebase', 'gone', `no Worker source holds the worktree ${landing.workspace} of run ${row.run_id} to check the rebased tree`, [landing.acceptance!])
+    if (!checked) return this.refuse(row, landing, step, 'gone', `no Worker source holds the worktree ${landing.workspace} of run ${row.run_id} to check ${where}`, [landing.acceptance!])
     if (checked.outcome === 'refused') {
       if (checked.cause === 'busy') return landing.reason === checked.reason ? this.touch(row, landing) : { ...landing, reason: checked.reason, at: now() }
-      return this.refuse(row, landing, 'rebase', 'checks', `the rebased tree's required checks did not run (${checked.cause}): ${checked.reason}`, [landing.acceptance!])
+      return this.refuse(row, landing, step, 'checks', `${where}'s required checks did not run (${checked.cause}): ${checked.reason}`, [landing.acceptance!])
     }
     const failed = checked.results.filter((c) => checks.includes(c.check) && c.outcome === 'failed')
     const pending = checks.filter((c) => !checked.results.some((x) => x.check === c && x.outcome !== 'error'))
     const evidence = checked.evidence ? [checked.evidence as ArtifactRef] : []
-    const tree = subjectId({ type: 'git-head', ...r.subject! })
+    const tree = subjectId({ type: 'git-head', ...subject })
     const said = checked.results.map((c) => `${c.check} ${c.outcome}${c.exitCode !== undefined ? ` (exit ${c.exitCode})` : ''}`).join(', ')
     const option = failed.length ? 'return' : pending.length ? 'hold' : 'pass'
-    const decision = this.decide(row, option === 'pass' ? 'recheck' : option, `Do board task ${row.task_id}'s required checks pass on its rebased tree ${tree}?`, [...(landing.decisions ?? []).slice(-1), ...evidence], [
-      { option: 'recheck', selected: option === 'pass', reasons: option === 'pass' ? [`each of ${checks.join(', ')} passed on the rebased tree: ${said}`, 'the merge is asked on it'] : ['not passed: a merge is asked only on a rebased tree whose required checks all passed (INV-2, INV-5)'] },
-      { option: 'return', selected: option === 'return', reasons: option === 'return' ? [`${failed.map((c) => c.check).join(', ')} failed on the rebased tree: ${said}; the result does not hold on ${r.base.branch} as it is now, so it goes back as another attempt`] : ['not sent back: no check failed on the rebased tree'] },
+    const decision = this.decide(row, option === 'pass' ? 'recheck' : option, `Do board task ${row.task_id}'s required checks pass on its ${v ? 'committed' : 'rebased'} tree ${tree}?`, [...(landing.decisions ?? []).slice(-1), ...evidence], [
+      { option: 'recheck', selected: option === 'pass', reasons: option === 'pass' ? [`each of ${checks.join(', ')} passed on ${where}, the full suite: ${said}`, 'the merge is asked on it'] : [`not passed: a merge is asked only on a tree whose required checks all passed at the landing (INV-2, INV-5)`] },
+      { option: 'return', selected: option === 'return', reasons: option === 'return' ? [`${failed.map((c) => c.check).join(', ')} failed on ${where}: ${said}; the result does not hold on ${base.branch} as it is now, so it goes back as another attempt`] : [`not sent back: no check failed on ${where}`] },
       {
         option: 'hold', selected: option === 'hold', reasons: option === 'hold'
-          ? [`${pending.join(', ')} did not run to an exit code on the rebased tree: neither passed nor failed, so nothing is merged and the operator decides`, line(checked.results.filter((c) => c.outcome === 'error').map((c) => c.reason).join('; '), 290)]
+          ? [`${pending.join(', ')} did not run to an exit code on ${where}: neither passed nor failed, so nothing is merged and the operator decides`, line(checked.results.filter((c) => c.outcome === 'error').map((c) => c.reason).join('; '), 290)]
           : ['not held: every check ran to an exit code'],
       },
-    ], { step: 'recheck', source: checked.source, subject: r.subject, checks, results: checked.results.map((c) => ({ check: c.check, outcome: c.outcome, ...(c.exitCode !== undefined ? { exitCode: c.exitCode } : {}) })), ...(checked.evidence ? { evidence: checked.evidence } : {}) })
+    ], { step: 'recheck', source: checked.source, subject, checks, scope: 'landing', results: checked.results.map((c) => ({ check: c.check, outcome: c.outcome, ...(c.exitCode !== undefined ? { exitCode: c.exitCode } : {}) })), ...(checked.evidence ? { evidence: checked.evidence } : {}) })
     const recorded: TaskLanding = { ...landing, decisions: [...(landing.decisions ?? []), decision] }
-    if (failed.length) return this.sendBack(row, board, recorded, `its required ${failed.map((c) => c.check).join(', ')} check(s) failed on the result rebased onto ${r.base.branch} at ${r.base.sha} (${said}): the change does not hold with what ${r.base.branch} gained since ${r.fork}`, decision)
-    if (pending.length) return this.refuse(row, recorded, 'rebase', 'checks', `the rebased tree's ${pending.join(', ')} check(s) did not run to an exit code: nothing is merged; run them on ${landing.branch} at ${r.head} and merge it by hand once they pass`, [decision])
+    if (failed.length) {
+      const on = r ? `the result rebased onto ${base.branch} at ${base.sha}` : `the result committed on ${landing.branch} at ${head}, ${base.branch} at ${base.sha} not having moved`
+      // What failed, named (T270): in the dossier for the next attempt's Worker, and the first lines in the reason the board keeps.
+      const lines = failed.flatMap((c) => (c.failures ?? []).slice(0, MAX_FAILURE_LINES).map((l) => `${c.check}: ${String(l).slice(0, MAX_FAILURE_LINE_CHARS)}`))
+      if (lines.length) {
+        this.e.tasks.dossiers.safely(`the failures of ${where}`, () => this.e.tasks.dossiers.evidence(row.run_id,
+          `The ${failed.map((c) => c.check).join(', ')} check(s) failed on ${on} (${tree}), where the landing runs the whole suite: ${lines.length} line${lines.length === 1 ? '' : 's'} of the output (at most ${MAX_FAILURE_LINES}), the failing tests' names and assertions, then the summary:\n${lines.join('\n')}`,
+          [decision, ...evidence]))
+      }
+      const named = lines.slice(0, 5).join(' | ')
+      const why = r ? `the change does not hold with what ${base.branch} gained since ${r.fork}` : 'the full suite does not pass with the change'
+      return this.sendBack(row, board, recorded, `its required ${failed.map((c) => c.check).join(', ')} check(s) failed on ${on} (${said}): ${why}${named ? `; failing: ${named}` : ''}`, decision)
+    }
+    if (pending.length) return this.refuse(row, recorded, step, 'checks', `${where}'s ${pending.join(', ')} check(s) did not run to an exit code: nothing is merged; run them on ${landing.branch} at ${head} and merge it by hand once they pass`, [decision])
     return verified([decision])
   }
 
@@ -481,6 +510,7 @@ export class TaskLandings {
    * checks configured) has none run again; the merge request says so.
    */
   private requiredChecks(row: TaskRow, landing: TaskLanding): RunCheck[] {
+    if (landing.verify) return landing.verify.checks as RunCheck[]
     if (landing.rebase?.checks) return landing.rebase.checks as RunCheck[]
     type Detail = { checks?: Record<string, boolean>; checkRun?: { asked?: unknown; outcome?: unknown; evidence?: unknown } }
     const names = (value: unknown): string[] => Array.isArray(value) ? value.filter((c): c is string => typeof c === 'string') : []

@@ -14,8 +14,11 @@ corepack pnpm gen:manifests
 corepack pnpm gen:reference
 corepack pnpm gen:traceability
 corepack pnpm check
-corepack pnpm test:affected
+corepack pnpm test:related <the files you changed>
 ```
+
+A Worker never runs the full suite: the acceptance runs the tests related to the result's files, and
+the landing runs the full suite once on the rebased tree ([testing](docs/engineering/testing.md#tests-scale-with-the-change)).
 
 Record a user-visible change with a changeset ([releasing](docs/engineering/releasing.md)).
 

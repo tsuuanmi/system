@@ -546,6 +546,21 @@ function isOneTestRun(argv: readonly string[]): boolean {
   return argv.length === ONE_TEST_RUN.length + 1 && ONE_TEST_RUN.every((word, i) => argv[i] === word) && TEST_FILE.test(argv[ONE_TEST_RUN.length]!)
 }
 
+/** The words that run the tests related to some files (T299), before their paths: `corepack pnpm test:related <path>…`. */
+const RELATED_TEST_RUN: readonly string[] = ['corepack', 'pnpm', 'test:related']
+/** How many files one related-tests run names at most (INV-9). */
+const RELATED_FILES_MAX = 64
+
+/**
+ * Whether `argv` is exactly `corepack pnpm test:related <path>…`: one to {@link RELATED_FILES_MAX}
+ * words, none an option (T299). It runs only the tests of the worktree that relate to those files;
+ * where each path is is the caller's to judge: inside the workspace, or refused.
+ */
+function isRelatedTestRun(argv: readonly string[]): boolean {
+  const files = argv.slice(RELATED_TEST_RUN.length)
+  return RELATED_TEST_RUN.every((word, i) => argv[i] === word) && files.length >= 1 && files.length <= RELATED_FILES_MAX && files.every((word) => !word.startsWith('-'))
+}
+
 /** Whether `argv` is a read-only inspection command inside the workspace (`READ_COMMANDS`). */
 function readCommand(argv: string[], workspace: string): boolean {
   const [program, ...args] = argv
@@ -917,6 +932,9 @@ function classifyGitView(tool: string, input: Record<string, unknown>, workspace
  *   any runtime, when the path is absolute, with no `..`, and inside the workspace on disk (so it
  *   runs wherever the policy lets a write of the workspace run); refused (`outside-workspace`) when it
  *   is not. Any other word, option, or a second path leaves it a `command`;
+ *   likewise `corepack pnpm test:related <path>…` (T299), one to 64 paths, none an option, each
+ *   absolute and inside the workspace, else refused (`outside-workspace`): the tests related to
+ *   those files, run in the worktree;
  * - `WebFetch`, `WebSearch`: `external-send`;
  * - the host tools its source gave the run (`options.hostTools`, ADR-0070), as `mcp__system__<name>`:
  *   `dossier_read`, a `read`; `dossier_append`, a `workspace-write` (System's own record of the work,
@@ -1026,6 +1044,12 @@ export function classify(call: ToolCall, workspace: string, options: ClassifyOpt
       const file = argv[ONE_TEST_RUN.length]!
       if (!pathWord(workspace, file)) return { refused: `${tool}: ${clamp(file)} is not a test file inside the workspace (an absolute path, with no "..", that stays inside it on disk): one test file runs only inside the run's worktree`, reason: 'outside-workspace' }
       return { class: 'workspace-write', summary: clamp(command), consequences: `Runs the one test file ${file} inside the run's workspace, its output readable; it writes only the test runner's caches there. ${ANSWER}` }
+    }
+    // The tests related to the files a Worker changed (T299): a write of the workspace (the runner's caches), only for files inside it.
+    if (isRelatedTestRun(argv)) {
+      const outside = argv.slice(RELATED_TEST_RUN.length).find((file) => !pathWord(workspace, file))
+      if (outside !== undefined) return { refused: `${tool}: ${clamp(outside)} is not a file inside the workspace (an absolute path, with no "..", that stays inside it on disk): the related tests run only on the run's worktree`, reason: 'outside-workspace' }
+      return { class: 'workspace-write', summary: clamp(command), consequences: `Runs the tests of the run's workspace that relate to the files named, inside it; it writes only the test runner's caches there. ${ANSWER}` }
     }
     // An inspection command the agent has a reading tool for is denied at once, naming it, never asked (T222).
     const inspection = inspectionRefusal(argv, options.readTools)

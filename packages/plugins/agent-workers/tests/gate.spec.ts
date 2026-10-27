@@ -924,6 +924,22 @@ describe('classify: a tool call as the action the policy judges', () => {
     }
   })
 
+  it('admits `corepack pnpm test:related <files>` on files inside the worktree, as a write of it, and refuses it outside (T299)', () => {
+    const bash = (command: string) => ({ tool: 'Bash', input: { command } })
+    const a = join(ws, 'packages', 'x', 'src', 'a.ts')
+    const b = join(ws, 'packages', 'x', 'tests', 'a.spec.ts')
+    for (const options of [{}, { shellReads: true }] as const) {
+      expect(classify(bash(`corepack pnpm test:related ${a} ${b}`), ws, options)).toMatchObject({ class: 'workspace-write', summary: `corepack pnpm test:related ${a} ${b}` })
+    }
+    for (const path of [join(outside, 'a.ts'), `${ws}/../outside/a.ts`, '/etc/passwd', 'packages/x/src/a.ts']) {
+      expect(classify(bash(`corepack pnpm test:related ${a} ${path}`), ws), path).toMatchObject({ refused: expect.stringContaining('not a file inside the workspace'), reason: 'outside-workspace' })
+    }
+    // No file, an option, or another program: the exact-argv command it was, for the policy's list.
+    for (const command of ['corepack pnpm test:related', `corepack pnpm test:related --help ${a}`, `pnpm test:related ${a}`, `corepack pnpm test:related ${a} -- -t x`]) {
+      expect(classify(bash(command), ws), command).toMatchObject({ class: 'command' })
+    }
+  })
+
   it('gives each refusal its stable reason code (T207)', () => {
     const patchOf = (...lines: string[]) => ({ tool: 'apply_patch', input: { command: ['*** Begin Patch', ...lines, '*** End Patch', ''].join('\n') } })
     const cases: Array<[ToolCall, string]> = [

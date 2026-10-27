@@ -8,7 +8,12 @@
  *   no name, list the groups.
  * - `node --import tsx scripts/test-groups.ts affected [--base <ref>] [--dry-run] [-- <vitest args>]`: run the
  *   groups the files changed since `<ref>` (default `origin/main`, else `main`) affect, committed or
- *   not, and nothing more.
+ *   not, and nothing more. Under a check (`SYSTEM_CHECK_SCOPE`, set by agent-workers, T299) it runs
+ *   instead the tests related to those files (`acceptance`) or the whole suite (`landing`).
+ * - `node --import tsx scripts/test-groups.ts related <file>… [--dry-run] [-- <vitest args>]`: run the test
+ *   files related to those files (T299): each given test file, and for any other file the tests of
+ *   its package and of every package that depends on it; the whole suite when a file is shared
+ *   configuration (`package.json`, the lockfile, `tsconfig*.json`, `vitest*.ts`).
  *
  * The graph has two nodes per package: its code (`src/`, and what its `package.json` depends on)
  * and its tests (everything else: tests, conformance suites, fixtures). A node depends on what its
@@ -162,6 +167,90 @@ export function filters(name: string, all: Package[] = packages()): string[] {
   return [...group.packages.map((id) => all.find((p) => p.id === id)?.path ?? `(no package ${id})`), ...(group.paths ?? [])]
 }
 
+/**
+ * The nodes a change to `touched` reaches: every node that depends on a touched one, transitively,
+ * and the nodes that locate a touched package's data file, that far and no further.
+ */
+function reach(touched: ReadonlySet<string>, deps: Graph): Set<string> {
+  const dependents = new Map<string, string[]>()
+  for (const [from, set] of deps.imports) for (const to of set) dependents.set(to, [...(dependents.get(to) ?? []), from])
+  const reached = new Set(touched)
+  const queue = [...touched]
+  while (queue.length) {
+    for (const next of dependents.get(queue.shift()!) ?? []) {
+      if (reached.has(next)) continue
+      reached.add(next)
+      queue.push(next)
+    }
+  }
+  const changedPackages = new Set([...touched].map((node) => node.split(':')[0]!))
+  for (const [from, set] of deps.reads) if ([...set].some((id) => changedPackages.has(id))) reached.add(from)
+  return reached
+}
+
+/** Shared configuration, in any directory: a change to one widens the related tests to the whole suite (T299). */
+const SHARED_CONFIGURATION = /(^|\/)(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig[^/]*\.json|vitest[^/]*\.ts)$/
+
+/** The test files of the main suite (`vitest.config.ts` includes): the scripts' and each package's `tests/`. */
+export function specFiles(): string[] {
+  return [...files(join(root, 'scripts')), ...files(join(root, 'packages'))]
+    .map((file) => relative(root, file).split(sep).join('/'))
+    .filter((path) => path.endsWith('.spec.ts') && (path.startsWith('scripts/') || path.includes('/tests/')))
+    .sort()
+}
+
+export interface Related { tests: string[]; everything?: string; changed: string[] }
+
+/**
+ * The test files related to the changed paths (T299): each changed test file; and, for any other
+ * changed file, the tests of its package and of every package that depends on it, through the graph
+ * (`affected` names the groups of the same reach). The scripts' tests, which check the whole
+ * repository, run for any change but a test file's. Shared configuration (`package.json` anywhere,
+ * the lockfile, `tsconfig*.json`, `vitest*.ts`, CI) and a path no rule places select the whole
+ * suite: `everything` names it, and `tests` is then every test file.
+ */
+export function related(changed: readonly string[], all: Package[] = packages(), deps: Graph = graph(all), suite: readonly string[] = specFiles()): Related {
+  const everything = (why: string): Related => ({ tests: [...suite], everything: why, changed: [] })
+  const touched = new Set<string>()
+  const direct = new Set<string>()
+  let repository = false
+  for (const path of changed) {
+    if (SHARED_CONFIGURATION.test(path) || EVERYTHING.some((re) => re.test(path))) return everything(path)
+    const pkg = packageAt(all, path)
+    if (!pkg) {
+      if (path.startsWith('docs/') || /^[^/]+\.md$/.test(path) || path.startsWith('.changeset/')) repository = true
+      else return everything(path)
+    } else if (suite.includes(path)) direct.add(path)
+    else touched.add(side(pkg, path))
+  }
+  const reached = reach(touched, deps)
+  if (touched.size || repository) reached.add('scripts:test')
+  const tests = suite.filter((path) => direct.has(path) || reached.has(side(packageAt(all, path)!, path)))
+  return { tests, changed: [...touched].sort() }
+}
+
+/** The environment a check's command reads its scope from: `acceptance` or `landing` (set by agent-workers, T299). */
+export const CHECK_SCOPE_ENV = 'SYSTEM_CHECK_SCOPE'
+/** The environment an acceptance check reads the commit its run's worktree was cut at from (set by agent-workers, T299). */
+export const CHECK_BASE_ENV = 'SYSTEM_CHECK_BASE'
+
+/**
+ * What a check's `test:affected` runs, by its environment (T299): none set, the affected groups as by
+ * hand (`{}`); `landing`, the whole suite (`full` says why); `acceptance`, the tests related to the
+ * files changed since the run's own starting commit (`base`), never since a branch the run did not
+ * start on. An acceptance with no starting commit, or a scope it does not know, runs the whole suite
+ * (INV-2).
+ */
+export function checkScope(env: Readonly<Record<string, string | undefined>>): { full?: string; base?: string } {
+  const scope = env[CHECK_SCOPE_ENV]
+  if (scope === undefined || scope === '') return {}
+  if (scope === 'landing') return { full: `${CHECK_SCOPE_ENV}=landing (the landing's tree)` }
+  if (scope !== 'acceptance') return { full: `${CHECK_SCOPE_ENV}=${scope} is no scope this script knows` }
+  const base = env[CHECK_BASE_ENV]
+  if (!base || !/^[0-9a-f]{7,64}$/.test(base)) return { full: `${CHECK_SCOPE_ENV}=acceptance with no commit the run's worktree was cut at (${CHECK_BASE_ENV})` }
+  return { base }
+}
+
 export interface Affected { groups: string[]; everything?: string; changed: string[] }
 
 /** The groups the changed paths affect; `everything` names the path that affects every group, `changed` the nodes changed. */
@@ -177,21 +266,7 @@ export function affected(changed: readonly string[], all: Package[] = packages()
     else if (path.startsWith('docs/') || /^[^/]+\.md$/.test(path) || path.startsWith('.changeset/')) repository = true
     else return { groups: names, everything: path, changed: [] }
   }
-  // Every node that depends on a changed one, transitively.
-  const dependents = new Map<string, string[]>()
-  for (const [from, set] of deps.imports) for (const to of set) dependents.set(to, [...(dependents.get(to) ?? []), from])
-  const reached = new Set(touched)
-  const queue = [...touched]
-  while (queue.length) {
-    for (const next of dependents.get(queue.shift()!) ?? []) {
-      if (reached.has(next)) continue
-      reached.add(next)
-      queue.push(next)
-    }
-  }
-  // A changed package's data files reach what locates them, and no further.
-  const changedPackages = new Set([...touched].map((node) => node.split(':')[0]!))
-  for (const [from, set] of deps.reads) if ([...set].some((id) => changedPackages.has(id))) reached.add(from)
+  const reached = reach(touched, deps)
   // The scripts' tests check the whole repository (architecture rules, manifests, docs, records):
   // any change runs their group.
   if (touched.size || repository) reached.add('scripts:test')
@@ -246,6 +321,17 @@ export function splitArgs(argv: readonly string[]): { command: string | undefine
   return end < 0 ? { command, rest, extra: [] } : { command, rest: rest.slice(0, end), extra: rest.slice(end) }
 }
 
+/** Run the tests related to `changed` (T299): all of the suite when shared configuration changed; nothing when none relates. */
+function runRelated(changed: string[], dryRun: boolean, extra: string[], base?: string): number {
+  const result = related(changed)
+  console.log(`${base ? `changed since ${base}` : 'files given'}: ${changed.length} file(s)${result.changed.length ? `, in ${result.changed.join(', ')}` : ''}`)
+  if (result.everything) console.log(`${result.everything} is shared configuration or has no rule: the full suite runs`)
+  console.log(result.tests.length ? `related tests: ${result.tests.length} file(s) of ${specFiles().length}` : 'no test is related')
+  if (dryRun && !result.everything) console.log(result.tests.join('\n'))
+  if (dryRun || !result.tests.length) return 0
+  return vitest(result.everything ? [] : result.tests, extra)
+}
+
 function main(argv: string[]): number {
   const { command, rest, extra } = splitArgs(argv)
   const all = packages()
@@ -261,7 +347,25 @@ function main(argv: string[]): number {
     }
     return vitest(rest.flatMap((name) => filters(name, all)), extra)
   }
+  if (command === 'related') {
+    const given = rest.filter((arg) => arg !== '--dry-run')
+    const option = given.find((arg) => arg.startsWith('-'))
+    if (!given.length || option) {
+      console.error(option ? `unknown option ${option}` : 'no file given')
+      console.error('usage: test-groups.ts related <file>… [--dry-run] [-- <vitest args>]')
+      return 2
+    }
+    return runRelated(given.map((file) => relative(root, resolve(root, file)).split(sep).join('/')), rest.includes('--dry-run'), extra)
+  }
   if (command === 'affected') {
+    // An acceptance or landing check (agent-workers, T299) sets its scope: the landing's tree runs the
+    // whole suite, once; the acceptance runs the tests related to the files the result itself changed.
+    const scope = checkScope(process.env)
+    if (scope.full) {
+      console.log(`${scope.full}: the full suite runs`)
+      return rest.includes('--dry-run') ? 0 : vitest([], extra)
+    }
+    if (scope.base) return runRelated(changedSince(scope.base), rest.includes('--dry-run'), extra, scope.base)
     const at = rest.indexOf('--base')
     const base = at >= 0 ? rest[at + 1] : defaultBase()
     if (!base) {
@@ -277,7 +381,7 @@ function main(argv: string[]): number {
     if (rest.includes('--dry-run') || !result.groups.length) return 0
     return vitest(result.groups.length === names.length ? [] : result.groups.flatMap((name) => filters(name, all)), extra)
   }
-  console.error('usage: test-groups.ts group [<name>...] [-- <vitest args>] | affected [--base <ref>] [--dry-run] [-- <vitest args>]')
+  console.error('usage: test-groups.ts group [<name>...] [-- <vitest args>] | affected [--base <ref>] [--dry-run] [-- <vitest args>] | related <file>… [--dry-run] [-- <vitest args>]')
   return 2
 }
 

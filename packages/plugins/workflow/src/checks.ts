@@ -22,7 +22,7 @@ export const WRITES = 'workspace-write'
 /** How many failing lines of one failed check the task's dossier tells (T270). */
 export const MAX_FAILURE_LINES = 200
 /** How long each of those lines may be. */
-const MAX_FAILURE_LINE_CHARS = 240
+export const MAX_FAILURE_LINE_CHARS = 240
 
 /** What a run's checks came to, for its acceptance decision. */
 export interface RanChecks {
