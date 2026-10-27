@@ -7,6 +7,7 @@ import { type Browser, chromium, type Page } from 'patchright-core'
 import { describe, expect, it, onTestFinished } from 'vitest'
 import { headlessIt, headlessLaunchOptions } from '../../browser-patchright/tests/support.ts'
 import * as WebUi from '../src/index.ts'
+import { builtClient } from './client-build.ts'
 import { opened, overflow, shoot } from './glance.ts'
 
 // The operator's web UI, round 2 (T256, docs/design/web-ui.md): full width on a responsive grid, each step's run time and
@@ -107,7 +108,7 @@ async function boot(options: { eventLog?: boolean } = {}) {
   const token = Buffer.alloc(32, 7).toString('base64url')
   const ctx = new Context()
   const fibers = [ctx.plugin(StubWorkflow), ...(options.eventLog === false ? [] : [ctx.plugin(StubEventLog)]), ctx.plugin(StubArtifacts),
-    ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir })]
+    ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir, clientDir: builtClient() })]
   await Promise.all(fibers)
   onTestFinished(async () => { for (const f of [...fibers].reverse()) await f.dispose() })
   onTestFinished(() => rmSync(dir, { recursive: true, force: true }))

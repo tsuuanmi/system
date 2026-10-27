@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +12,7 @@ import { headlessIt, headlessLaunchOptions } from '../../browser-patchright/test
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import * as WebUi from '../src/index.ts'
 import { lanWebServer } from '../../../gateway-core/tests/lan.ts'
+import { builtClient, CLIENT_SOURCE } from './client-build.ts'
 import { BEFORE_WORDS, noteWords, opened, shoot, wordsInSight } from './glance.ts'
 import { decisionsIn, descriptionOf } from './wording.ts'
 
@@ -189,7 +191,7 @@ async function boot(options: { approvals?: boolean; roster?: boolean; pools?: bo
   const token = Buffer.alloc(32, 7).toString('base64url')
   const ctx = new Context()
   const fibers = [ctx.plugin(StubWorkflow), ...(options.approvals ? [ctx.plugin(StubApprovals)] : []), ...(options.roster ? [ctx.plugin(StubRouter), ctx.plugin(StubAccounts)] : []),
-    ...(options.pools ? [ctx.plugin(StubResources), ctx.plugin(StubAgentWorkers)] : []), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir })]
+    ...(options.pools ? [ctx.plugin(StubResources), ctx.plugin(StubAgentWorkers)] : []), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir, clientDir: builtClient() })]
   await Promise.all(fibers)
   onTestFinished(async () => { for (const f of [...fibers].reverse()) await f.dispose() })
   onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
@@ -208,7 +210,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await ctx.plugin(StubWorkflow)
     await ctx.plugin(LanWebServer)
     try {
-      await ctx.plugin(WebUi, { tokenDir: dir })
+      await ctx.plugin(WebUi, { tokenDir: dir, clientDir: builtClient() })
     } catch {
       // the refusal itself is the point
     }
@@ -225,6 +227,27 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(html).toContain('<script src="/ui/app.js"></script>')
     expect(html).not.toContain('run_abc')
     expect((await fetch(`${origin}/ui/app.js`)).headers.get('content-type')).toContain('javascript')
+  })
+
+  it('serves the client\'s own files byte for byte, each with its content hash, and refuses to start without one', async () => {
+    const { origin } = await boot()
+    const files = [['', join(CLIENT_SOURCE, 'index.html'), 'text/html'], ['app.css', join(CLIENT_SOURCE, 'app.css'), 'text/css'], ['app.js', join(builtClient(), 'app.js'), 'javascript']] as const
+    for (const [path, file, type] of files) {
+      const served = await fetch(`${origin}/ui/${path}`)
+      const bytes = readFileSync(file)
+      expect(served.status).toBe(200)
+      expect(served.headers.get('content-type')).toContain(type)
+      expect(served.headers.get('cache-control')).toBe('no-store')
+      expect(served.headers.get('content-security-policy')).toContain("script-src 'self'")
+      expect(served.headers.get('etag')).toBe(`"sha256-${createHash('sha256').update(bytes).digest('hex')}"`)
+      expect(Buffer.from(await served.arrayBuffer()).equals(bytes)).toBe(true)
+    }
+    const empty = mkdtempSync(join(tmpdir(), 'system-ui-noclient-'))
+    onTestFinished(() => rmSync(empty, { recursive: true, force: true }))
+    const ctx = new Context()
+    await ctx.plugin(StubWorkflow)
+    await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    await expect(ctx.plugin(WebUi, { tokenDir: empty, clientDir: empty })).rejects.toThrow(/client file index\.html is not in/)
   })
 
   it('guards the API: token, own origin, and loopback host only', async () => {

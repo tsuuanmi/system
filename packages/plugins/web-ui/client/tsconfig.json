@@ -1,0 +1,18 @@
+{
+  // The page's own code: the DOM, not Node, and strict. `tsc -p` here writes lib/client/; the root typecheck runs it with --noEmit.
+  // app.ts is still the old script: where a type is not yet known it says `any` or `!`, each a TODO(T304) (see its first lines).
+  "extends": "../../../../tsconfig.build.base.json",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "types": [],
+    "declaration": false,
+    "sourceMap": false,
+    "rewriteRelativeImportExtensions": false,
+    "rootDir": ".",
+    "outDir": "../lib/client"
+  },
+  "include": ["*.ts"]
+}

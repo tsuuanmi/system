@@ -219,6 +219,15 @@ The routes are in the [web UI API](../../../docs/reference/web-ui.md).
 operator token in the fragment. Open it on
 the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
 
+## The client
+
+The page is `client/index.html`, `client/app.css`, and `client/app.ts` (TypeScript, the DOM lib;
+`client/tsconfig.json`). `pnpm build` compiles it with `tsc` to `lib/client/` and copies the HTML and
+CSS beside it; the plugin reads that directory (config `clientDir`, default `lib/client/`) at start and
+serves each file's bytes with its sha256 as the `ETag`. `pnpm typecheck` and `pnpm lint` cover it. Tests
+build it into a temporary directory ([`tests/client-build.ts`](tests/client-build.ts)); none writes into
+the package. See [the page's files](../../../docs/design/web-ui.md#the-pages-files).
+
 ## Security
 
 - **Shell:** the page, script, and styles carry no data. They are served
