@@ -209,6 +209,14 @@ export interface Verdict {
   note?: string
 }
 
+/**
+ * The subject version of the board's `remediation` request for a lost run whose lease lapsed while
+ * the host was stopped (still live at the board's recorded clean stop, expired by its next start): the
+ * structured host-stopped mark a lead's rights read (ADR-0076, amended by T302). A lost run without it
+ * is `reconciliation-failed`.
+ */
+export const HOST_STOPPED_RECONCILIATION = 'reconciliation-failed:host-stopped'
+
 /** The subject ref of a `policy-change` request; its version is the proposed set's hash (INV-5). */
 export const POLICY_SET_REF = 'autonomy-policy-set'
 

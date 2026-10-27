@@ -23,7 +23,7 @@ export {
   type Ability, abilityOf, type AvailabilityEvent, availabilityChanges, EXCLUDED_REASONS, type RecordedAbility, recordedAbility, UNAVAILABLE_REASONS, type UnavailableReason, WORKER_AVAILABLE_EVENT, WORKER_UNAVAILABLE_EVENT,
 } from './availability-events.ts'
 export { assertSafeBind, endpointUrl, type GuardOptions, type GuardResult, guardRequest, hostName, LOOPBACK_HOSTS, readJsonBody, type Scope, SCOPES, scopeToken, scopeTokens, tokenFile, tokenMatches } from './guard.ts'
-export { issueLeadToken, LEAD_PROJECT, LEAD_QUEUE_CLASSES, LEAD_RIGHTS, type LeadDecision, leadId, leadMayDecide, leadTokenFile, leadTokens, listLeads, revokeLeadToken } from './lead.ts'
+export { issueLeadToken, LEAD_PROJECT, LEAD_QUEUE_CLASSES, LEAD_RIGHTS, type LeadDecision, leadId, type LeadRemediation, leadMayDecide, leadTokenFile, leadTokens, listLeads, revokeLeadToken } from './lead.ts'
 export { outline, reply } from './reply.ts'
 
 declare module '@deepseek-ai/cordis' {

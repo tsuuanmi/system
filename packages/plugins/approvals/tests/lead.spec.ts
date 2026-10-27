@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import { type Action, type ApprovalRequest, ApprovalsError, type AutonomyPolicy, type NewRequest, type Subject } from '@tsuuanmi/system-approvals-core'
+import { type Action, type ApprovalRequest, ApprovalsError, type AutonomyPolicy, HOST_STOPPED_RECONCILIATION, type NewRequest, type Subject } from '@tsuuanmi/system-approvals-core'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import Store from '@tsuuanmi/system-store'
@@ -111,6 +111,90 @@ describe('a project lead in the approval queue', () => {
       await expect(booted.approvals.decideAsLead('system', [verdictOn(request)], after(5))).rejects.toThrow(new RegExp(`lead:system may not decide ${actionClass}`))
       expect((await booted.ctx.approvals.get(request.requestId))!.state).not.toBe('approved')
     }
+  })
+
+  /**
+   * The plan a review grows for a fix of its blocking findings, as the workflow records it: a
+   * `workflow.remediation` decision (`append`) of the run, and a `plan` of that run whose one step
+   * depends on the gate. `grownBy` overrides that decision's outcome, to show a plan not grown by one.
+   */
+  const fixPlan = (booted: Booted, runId: string, gate: string, grownBy: 'append' | 'refuse' = 'append') => {
+    const producer = { type: 'system' as const, ref: 'workflow' }
+    const decision = booted.ctx.artifacts.recordDecision({
+      decisionType: 'graph-growth', question: `Does run ${runId} remediate the blocking findings of review review:1?`, inputs: [],
+      candidates: [{ option: 'append', selected: grownBy === 'append', reasons: ['1 confirmed important finding'] }, { option: 'refuse', selected: grownBy === 'refuse', reasons: ['not refuse'] }],
+      decider: { type: 'policy', id: 'workflow.remediation', version: '1' }, outcome: { option: grownBy }, deterministic: true,
+    }, { producer, runId, nodeId: 'review:1' }).id
+    return booted.ctx.artifacts.put({
+      kind: 'plan', bodySchema: 'plan@1.0', classification: 'operator-shared', producer: { type: 'node', ref: 'review:1' }, inputs: [decision], runId, nodeId: 'review:1',
+      body: { schema: 'plan@1.0', runId, planner: 'review:1', confidence: 'medium', nodes: [{ nodeId: 'review:1:fix:1', objective: 'Fix the blocking findings of review cycle 1', prompt: 'fix', capabilities: ['code'], tier: 'standard', dependsOn: [gate] }] },
+    }).id as string
+  }
+  /** The workflow's gate for a fix of a review's blocking findings: the plan artifact is the subject and the one ref. */
+  const reviewFix = (booted: Booted, ref: string, projectId: string, plan = fixPlan(booted, `run-${ref}`, 'review:1:approve:1')) => ask(booted, { class: 'remediation', projectId }, ref, projectId, {
+    subject: { type: 'artifact', ref: plan, version: 'v1' },
+    action: { class: 'remediation', summary: 'let review:1:fix:1 write a fix of the blocking findings its review found', refs: [plan as never] },
+    requester: { component: 'workflow', runId: `run-${ref}`, nodeId: 'review:1:approve:1', projectId },
+  })
+  /** The board's request for a lost run, at `version`: the host-stopped mark, or a bare `reconciliation-failed`. */
+  const lostRun = (booted: Booted, ref: string, projectId: string, taskId: string, version: string = HOST_STOPPED_RECONCILIATION) => ask(booted, { class: 'remediation', projectId }, ref, projectId, {
+    subject: { type: 'content', ref: `board-task:${taskId}:attempt:1`, version },
+    action: { class: 'remediation', summary: 'reconciliation-failed: a task' },
+    requester: { component: 'board', projectId, taskId },
+  })
+
+  it('approves a fix of its own review\'s blocking findings on a run of its project (T302)', async () => {
+    const booted = await boot()
+    const fix = await reviewFix(booted, 'fix-own', 'system')
+    const [done] = await booted.approvals.decideAsLead('system', [verdictOn(fix)], after(5))
+    expect(done).toMatchObject({ state: 'approved' })
+    expect(decisionOf(booted, (await booted.ctx.approvals.get(fix.requestId))!.resolution!.decision).decider.id).toBe('lead:system')
+  })
+
+  it('approves a retry of a step its host stopped (T302)', async () => {
+    const booted = await boot()
+    const retry = await lostRun(booted, 'lost-own', 'system', 't-system')
+    const [done] = await booted.approvals.decideAsLead('system', [verdictOn(retry)], after(5))
+    expect(done).toMatchObject({ state: 'approved' })
+  })
+
+  it('refuses a lost run without the host-stopped mark, and a fix whose plan no review grew (T302)', async () => {
+    const booted = await boot()
+    // A lease that lapsed while the host ran (a hung holder), or a holder that blocked itself: no mark, the operator's.
+    const unmarked = await lostRun(booted, 'lost-unmarked', 'system', 't-system', 'reconciliation-failed')
+    await expect(booted.approvals.decideAsLead('system', [verdictOn(unmarked)], after(5))).rejects.toThrow(/neither, so it stays the operator's/)
+    // A plan the queue cannot read, one of another run, one not after the gate, and one a refused growth names.
+    const unknown = await reviewFix(booted, 'fix-unknown', 'system', `sha256:${'b'.repeat(64)}`)
+    const otherRun = await reviewFix(booted, 'fix-other-run', 'system', fixPlan(booted, 'run-elsewhere', 'review:1:approve:1'))
+    const otherGate = await reviewFix(booted, 'fix-other-gate', 'system', fixPlan(booted, 'run-fix-other-gate', 'review:2:approve:1'))
+    const refused = await reviewFix(booted, 'fix-refused', 'system', fixPlan(booted, 'run-fix-refused', 'review:1:approve:1', 'refuse'))
+    for (const request of [unknown, otherRun, otherGate, refused]) {
+      await expect(booted.approvals.decideAsLead('system', [verdictOn(request)], after(5)), request.requester.runId).rejects.toThrow(/neither, so it stays the operator's/)
+    }
+    for (const request of [unmarked, unknown, otherRun, otherGate, refused]) expect((await booted.ctx.approvals.get(request.requestId))!.state).not.toBe('approved')
+    // The operator still decides them.
+    expect((await booted.ctx.approvals.decide([verdictOn(unmarked)], after(6)))[0]).toMatchObject({ state: 'approved' })
+  })
+
+  it('refuses a budget remediation, any other remediation, and another project\'s fix (T302)', async () => {
+    const booted = await boot()
+    // A budget raise is a funding request of the board, a run that failed on its own is a remediation the lead may not read as either kind.
+    const funding = await ask(booted, { class: 'funding', projectId: 'system' }, 'budget', 'system')
+    await expect(booted.approvals.decideAsLead('system', [verdictOn(funding)], after(5))).rejects.toThrow(/lead:system may not decide funding/)
+    const plain = await ask(booted, { class: 'remediation', projectId: 'system' }, 'plain', 'system')
+    await expect(booted.approvals.decideAsLead('system', [verdictOn(plain)], after(5))).rejects.toThrow(/neither, so it stays the operator's/)
+    // The board's request with a budget version is not a host-stopped retry, whatever its summary says.
+    const budget = await ask(booted, { class: 'remediation', projectId: 'system' }, 'budget-r', 'system', {
+      subject: { type: 'content', ref: 'board-task:t-system:attempt:1', version: 'budget-spent' },
+      action: { class: 'remediation', summary: 'reconciliation-failed: host-stopped' },
+      requester: { component: 'board', projectId: 'system', taskId: 't-system' },
+    })
+    await expect(booted.approvals.decideAsLead('system', [verdictOn(budget)], after(5))).rejects.toThrow(/neither/)
+    const theirs = await reviewFix(booted, 'fix-other', 'other')
+    await expect(booted.approvals.decideAsLead('system', [verdictOn(theirs)], after(5))).rejects.toThrow(/belongs to project other/)
+    const lostTheirs = await lostRun(booted, 'lost-other', 'other', 't-other')
+    await expect(booted.approvals.decideAsLead('system', [verdictOn(lostTheirs)], after(5))).rejects.toThrow(/belongs to project other/)
+    for (const request of [plain, budget, theirs, lostTheirs]) expect((await booted.ctx.approvals.get(request.requestId))!.state).not.toBe('approved')
   })
 
   it('refuses a merge into a branch that is not a listed dev branch, or whose branch cannot be read', async () => {

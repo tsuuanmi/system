@@ -108,10 +108,18 @@ describe('the lead\'s closed rights', () => {
     }
   })
 
+  it('allows the two routine remediations of its own project, and every other remediation, or another project\'s, is refused', () => {
+    for (const remediation of ['review-fix', 'host-stopped-retry'] as const) {
+      expect(may({ action: 'remediation', remediation })).toEqual({ ok: true })
+      expect(may({ action: 'remediation', remediation, of: 'other' })).toMatchObject({ ok: false, reason: expect.stringMatching(/belongs to project other/) })
+    }
+    expect(may({ action: 'remediation' })).toMatchObject({ ok: false, reason: expect.stringMatching(/neither, so it stays the operator's/) })
+  })
+
   it('refuses another project\'s decision, and every action class off the list, with a reason', () => {
     expect(may({ of: 'other' })).toMatchObject({ ok: false, reason: expect.stringMatching(/decides only for project system; this belongs to project other/) })
     expect(may({ of: undefined })).toMatchObject({ ok: false, reason: expect.stringMatching(/belongs to no project/) })
-    for (const action of ['policy-change', 'charter', 'funding', 'deploy', 'external-send', 'delete-data', 'spend', 'remediation', 'promotion', 'workspace-write', 'read', 'token-issue']) {
+    for (const action of ['policy-change', 'charter', 'funding', 'deploy', 'external-send', 'delete-data', 'spend', 'promotion', 'workspace-write', 'read', 'token-issue']) {
       expect(may({ action, branch: 'dev' }), action).toMatchObject({ ok: false, reason: expect.stringContaining(`lead:system may not decide ${action}`) })
     }
   })

@@ -17,12 +17,12 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type Action, type ActionClass, ALWAYS_ASK, type ApprovalRequest, Approvals, ApprovalsError, type ArtifactRef, type AutonomyPolicy, type AutonomyVerdict, type ContentHash, MODES,
+  type Action, type ActionClass, ALWAYS_ASK, type ApprovalRequest, Approvals, ApprovalsError, type ArtifactRef, type AutonomyPolicy, type AutonomyVerdict, type ContentHash, HOST_STOPPED_RECONCILIATION, MODES,
   type NewRequest, POLICY_SET_REF, type PolicyChange, type PolicyChangeOrigin, type PolicySetInForce, type RequestState, type Subject, type Verdict, type VerdictResult,
 } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
-import { LEAD_PROJECT, leadId, leadMayDecide } from '@tsuuanmi/system-gateway-core'
+import { LEAD_PROJECT, leadId, type LeadRemediation, leadMayDecide } from '@tsuuanmi/system-gateway-core'
 import { isRecord, SchemaRegistry } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
 import { ACTION_CLASSES, commandProblems, effectOf, PolicySet, policyProblems, proposedSet, rank, webAccessEffect } from './policy.ts'
@@ -123,6 +123,43 @@ export interface ListFilter { states?: RequestState[]; batchId?: string; project
 export interface RequestPage { requests: ApprovalRequest[]; next?: string }
 
 const REQUEST_STATES: readonly RequestState[] = ['open', 'batched', 'approved', 'rejected']
+/** An artifact as the queue reads it for a lead's rights: its kind, run, inputs, and body. */
+type ReadArtifact = (ref: string) => { kind: string; runId?: string; inputs: readonly string[]; body?: unknown } | undefined
+
+/**
+ * Which routine remediation a request is, read from its own fields and the records they name, never
+ * its summary (ADR-0076, amended by T302). Fails closed: any other remediation is undefined.
+ * - `review-fix`: requester `workflow` with a run and a gate node; the subject is a `plan` artifact of
+ *   that run, which the action's one ref names, grown by a review's `workflow.remediation` decision
+ *   (`graph-growth`, `append`) of the same run, and holding one step, the fix, after that gate.
+ * - `host-stopped-retry`: requester `board` with a task; subject `board-task:<id>:attempt:<n>` at
+ *   version {@link HOST_STOPPED_RECONCILIATION}, the board's mark that the run's lease lapsed while the
+ *   host was stopped. A lost run without the mark (a holder that hung while the host ran, or blocked
+ *   itself) stays the operator's.
+ */
+function leadRemediationOf(request: ApprovalRequest, read: ReadArtifact): LeadRemediation | undefined {
+  const { requester, subject, action } = request
+  if (action.class !== 'remediation') return undefined
+  if (requester.component === 'board') {
+    return requester.taskId !== undefined && subject.type === 'content' && subject.version === HOST_STOPPED_RECONCILIATION
+      && subject.ref.startsWith(`board-task:${requester.taskId}:attempt:`) ? 'host-stopped-retry' : undefined
+  }
+  if (requester.component !== 'workflow' || requester.runId === undefined || requester.nodeId === undefined) return undefined
+  if (subject.type !== 'artifact' || action.refs?.length !== 1 || action.refs[0] !== subject.ref) return undefined
+  const plan = read(subject.ref)
+  if (plan?.kind !== 'plan' || plan.runId !== requester.runId) return undefined
+  const body = plan.body as { runId?: unknown; nodes?: Array<{ dependsOn?: unknown }> } | undefined
+  const fix = body?.nodes?.length === 1 ? body.nodes[0] : undefined
+  if (body?.runId !== requester.runId || !Array.isArray(fix?.dependsOn) || fix.dependsOn.length !== 1 || fix.dependsOn[0] !== requester.nodeId) return undefined
+  const grown = plan.inputs.some((ref) => {
+    const decision = read(ref)
+    const d = decision?.body as { decisionType?: unknown; decider?: { id?: unknown }; outcome?: { option?: unknown } } | undefined
+    return decision?.kind === 'decision' && decision.runId === requester.runId
+      && d?.decisionType === 'graph-growth' && d.decider?.id === 'workflow.remediation' && d.outcome?.option === 'append'
+  })
+  return grown ? 'review-fix' : undefined
+}
+
 /** Requests one `approvals_list` page holds unless asked otherwise, and at most (`mcp-approvals@1`). */
 const DEFAULT_PAGE = 20
 const MAX_PAGE = 100
@@ -483,6 +520,7 @@ export class StoreApprovals extends Approvals {
       const may = leadMayDecide({
         project, of: await this.projectOfRequest(request), action: request.action.class,
         branch: request.action.class === 'merge' ? this.baseBranchOf(request) : undefined, devBranches: this.devBranches(project),
+        remediation: request.action.class === 'remediation' ? leadRemediationOf(request, (ref) => this.ctx.artifacts.get(ref as never)) : undefined,
       })
       if (!may.ok) refused.push(`${v.requestId} (${request.action.class}): ${may.reason}`)
     }

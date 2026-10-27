@@ -61,7 +61,25 @@ What constrains the answer:
      the project's listed **dev branches** (`devBranches` of the `approvals` row, by project; the branch is
      `outcome.detail.landing.branch`, which System wrote, never the lead's word);
   3. approve a **merge** into a listed dev branch (the base branch of the request's landing);
-  4. the board moves and answers to Workers its token already reaches as a client.
+  4. the board moves and answers to Workers its token already reaches as a client;
+  5. **amended (T302)** approve or deny a fix of the blocking findings its own review found: the
+     workflow's `remediation` request on a run of its project (requester `workflow` with a run and a gate
+     node; the subject is a `plan` artifact of that run, which the action's one ref names, grown by the
+     review's `workflow.remediation` decision (`append`) of the same run, with one step, the fix, after
+     that gate); the fix writes on the run's worktree and lands only through review and merge;
+  6. **amended (T302)** approve or deny a retry of a step its host stopped: the board's `remediation`
+     request for a lost run of its project (requester `board` with a task; subject `board-task:<id>:attempt:<n>`
+     at version `reconciliation-failed:host-stopped`). The board writes the mark only when the run's lease
+     was still live at the previous board's recorded clean stop, had expired by the next start, and no
+     other holder took it: it lapsed while the host was stopped. The board records its stop as it stops
+     cleanly (`board_host_stop`, board migration 5) and removes it as the next one starts. A lost run whose
+     lease lapsed while the host ran (a hung holder), even one the host restarted before a sweep found,
+     a lost run after a crash (no clean stop recorded), and one its holder blocked itself, are
+     `reconciliation-failed` with no mark, and stay the operator's.
+
+  Items 5 and 6 are recognised by the request's own fields, never its summary. Every other
+  remediation (a budget raise, which is `funding`; a run that failed on its own; anything outside the
+  project) stays the operator's.
 
   Everything else is refused for the lead token with the reason, and stays the operator's: policy and
   charter changes, a merge or push to a protected branch (`main` and `master` cannot be listed as dev

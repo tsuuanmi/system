@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
-import type { Action, ApprovalRequest, NewRequest } from '@tsuuanmi/system-approvals-core'
+import { type Action, type ApprovalRequest, HOST_STOPPED_RECONCILIATION, type NewRequest } from '@tsuuanmi/system-approvals-core'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import { type ArtifactRef, BoardError, type BoardTask, type BudgetLine, freeRetriesOf, type Subject, type TaskInput } from '@tsuuanmi/system-board-core'
 import EventLog from '@tsuuanmi/system-event-log'
@@ -61,8 +61,8 @@ interface Booted {
   board: () => StoreBoard
   approvals: () => FlakyApprovals
   mcp: () => RecordingMcp
-  /** Dispose the board and plug a new one into the same context: the same store, leases, and approvals. */
-  restartBoard: (config?: Config) => Promise<void>
+  /** Dispose the board and plug a new one into the same context: the same store, leases, and approvals; `whileDown` runs between the two. */
+  restartBoard: (config?: Config, whileDown?: () => void) => Promise<void>
   stop: () => Promise<void>
 }
 
@@ -87,8 +87,9 @@ async function boot(options: { dir?: string; board?: Config; eventLog?: boolean 
     board: () => ctx.board as StoreBoard,
     approvals: () => ctx.approvals as FlakyApprovals,
     mcp: () => ctx.mcp as RecordingMcp,
-    restartBoard: async (config?: Config) => {
+    restartBoard: async (config?: Config, whileDown?: () => void) => {
       await fiber.dispose()
+      whileDown?.()
       fiber = ctx.plugin(StoreBoard, { sweepSeconds: 0, ...options.board, ...config })
       await fiber
     },
@@ -1210,6 +1211,48 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
     expect(await ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: HEAD }, acceptance: acceptance(ctx, 'reject', t.taskId, r) }, at(11)))
       .toMatchObject({ state: 'ready', attempts: { count: 1 } })
     expect(ctx.leases.current(`board-task:${t.taskId}`)).toBeUndefined()
+  })
+
+  it('marks a lost run host-stopped only when its lease expired between the board\'s recorded clean stop and its next start, never one that lapsed while the host ran (T302)', async () => {
+    // The board reads its start and its stop from the clock: only Date is faked, to fixed instants.
+    vi.useFakeTimers({ toFake: ['Date'], now: at(0) })
+    onTestFinished(() => {
+      vi.useRealTimers()
+    })
+    const { ctx, restartBoard } = await boot()
+    await active(ctx)
+    const versionOf = async (taskId: string) => (await ctx.approvals.get((await ctx.board.task(taskId))!.waiting!.approvalRequest!))!.subject.version
+    const running = async (title: string, ttlMs: number, from: number) => {
+      const t = await ready(ctx, task('p2', title))
+      const { generation } = await ctx.board.claim(t.taskId, 'lead', ttlMs, at(from))
+      await ctx.board.start(t.taskId, generation, { runId: `run-${title}` }, at(from))
+      return t
+    }
+    // Its lease lapses at minute 4 while the host runs, and a sweep finds it: unmarked, the operator's.
+    const hung = await running('hung', 60_000, 3)
+    await ctx.board.sweep(at(10))
+    expect(await versionOf(hung.taskId)).toBe('reconciliation-failed')
+    // Its lease lapses at minute 12 while the host still runs, and the host restarts before any sweep finds it: unmarked.
+    const lapsedFirst = await running('lapsed-first', 60_000, 11)
+    // Its lease is live when the board stops cleanly at minute 15, and lapses at 18, before the start at 20: marked.
+    const stopped = await running('stopped', 300_000, 13)
+    vi.setSystemTime(at(15))
+    await restartBoard(undefined, () => vi.setSystemTime(at(20)))
+    await ctx.board.sweep(at(25))
+    expect(await ctx.board.task(lapsedFirst.taskId)).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'reconciliation-failed' } })
+    expect(await versionOf(lapsedFirst.taskId)).toBe('reconciliation-failed')
+    expect(await ctx.board.task(stopped.taskId)).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'reconciliation-failed' } })
+    expect(await versionOf(stopped.taskId)).toBe(HOST_STOPPED_RECONCILIATION)
+    expect(await versionOf(hung.taskId)).toBe('reconciliation-failed')
+    // A crash records no clean stop: a lease that lapsed while the host was down is not marked, as nothing shows when it stopped.
+    const crashed = await running('crashed', 300_000, 26)
+    vi.setSystemTime(at(28))
+    await restartBoard(undefined, () => {
+      ctx.store.db.prepare('DELETE FROM board_host_stop').run()
+      vi.setSystemTime(at(40))
+    })
+    await ctx.board.sweep(at(41))
+    expect(await versionOf(crashed.taskId)).toBe('reconciliation-failed')
   })
 
   it('starts nothing in a paused project, not even a task claimed before the pause (fail-closed rule 1)', async () => {

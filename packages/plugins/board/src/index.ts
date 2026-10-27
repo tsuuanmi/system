@@ -11,7 +11,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { type ApprovalRequest, type AutonomyVerdict, type Check, type Mode, type NewRequest, riskTierMaps, waitSeconds } from '@tsuuanmi/system-approvals-core'
+import { type ApprovalRequest, type AutonomyVerdict, type Check, HOST_STOPPED_RECONCILIATION, type Mode, type NewRequest, riskTierMaps, waitSeconds } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import {
@@ -170,6 +170,12 @@ const MIGRATIONS = [{
   // read, then cleared, by the next start, which then does not count another attempt. Beside the record, never in it.
   version: 5,
   sql: 'ALTER TABLE board_tasks ADD COLUMN continues INTEGER NOT NULL DEFAULT 0;',
+}, {
+  // When the board's process last stopped cleanly (T302): one row, written as the board stops and
+  // removed as the next one starts, so a lease that expired between the two lapsed while the host was
+  // stopped. A crash writes none, and then no lost run is marked host-stopped (INV-2).
+  version: 6,
+  sql: 'CREATE TABLE board_host_stop (id INTEGER PRIMARY KEY CHECK (id = 1), stopped_ms INTEGER NOT NULL);',
 }]
 
 type Changes<T> = { [K in keyof T]?: T[K] | undefined }
@@ -332,14 +338,37 @@ export class StoreBoard extends Board {
   private readonly autoAccept: AutoAccept | undefined
   /** `config.maxFreeRetries`, validated: infrastructure failures a task is not charged for, at most (ADR-0069, INV-9). */
   private readonly freeRetries: number
+  /**
+   * The host's downtime before this board started (T302): from the previous board's recorded clean
+   * stop to this start. Undefined when no clean stop was recorded (a crash, or a first start): then no
+   * lost run is marked host-stopped, as nothing shows when the host stopped (INV-2).
+   */
+  private readonly downtime: { stoppedMs: number; startedMs: number } | undefined
 
   constructor(ctx: Context, private readonly config: Config = {}) {
     super(ctx)
+    const startedMs = Date.now()
     // Refused before anything starts: a malformed setting never accepts anything (INV-2).
     this.autoAccept = autoAcceptOf(config.autoAccept)
     // A malformed bound on free retries never starts a board (INV-2, INV-9).
     this.freeRetries = freeRetriesOf(config.maxFreeRetries)
     ctx.store.migrate('board', MIGRATIONS)
+    // The previous board's clean stop, read once and removed, so a crash of this one never reuses it.
+    this.downtime = ctx.store.transaction(() => {
+      const row = ctx.store.db.prepare('SELECT stopped_ms FROM board_host_stop WHERE id = 1').get() as { stopped_ms: number } | undefined
+      ctx.store.db.prepare('DELETE FROM board_host_stop').run()
+      const stoppedMs = row === undefined ? undefined : Number(row.stopped_ms)
+      return stoppedMs !== undefined && Number.isFinite(stoppedMs) && stoppedMs <= startedMs ? { stoppedMs, startedMs } : undefined
+    })
+    // Recorded as the board stops cleanly; one that cannot be written leaves none, which marks nothing.
+    ctx.effect(() => () => {
+      try {
+        ctx.store.db.prepare('INSERT OR REPLACE INTO board_host_stop (id, stopped_ms) VALUES (1, ?)').run(Date.now())
+      } catch (error) {
+        ctx.logger.warn('board: could not record its stop; no lost run will be marked host-stopped at the next start')
+        ctx.logger.warn(error)
+      }
+    })
     ctx.effect(() => {
       const seconds = config.sweepSeconds ?? 60
       if (!seconds) return () => {}
@@ -1443,7 +1472,9 @@ export class StoreBoard extends Board {
       case 'running':
         // The run's outcome is unknown here; its owner may still report it (reconcileRun), which withdraws the request (INV-4).
         if (!this.lost(current, at)) return undefined
-        return this.gate(task, 'remediation', 'reconciliation-failed', at)
+        // Marked host-stopped only when its lease expired between the previous board's recorded clean
+        // stop and this start; one that lapsed while the host ran (a hung holder) is not (T302, INV-2).
+        return this.gate(task, 'remediation', 'reconciliation-failed', at, undefined, undefined, undefined, this.lapsedWhileStopped(current))
       case 'review':
         // A review held for the operator is bounded by its wait, the policy's for the class (INV-9).
         if (task.waiting?.reason === 'operator-review') {
@@ -1591,9 +1622,9 @@ export class StoreBoard extends Board {
    * again when the move commits. A spent budget's `funding` ask goes into the request's subject;
    * the reservations its holder could not release (`unreleased`, 1.3) into its consequences.
    */
-  private async gate(task: BoardTask, actionClass: ActionClass, reason: 'budget-spent' | 'reconciliation-failed', at: Date, generation?: number, funding?: BudgetLine[], unreleased?: UnreleasedHold[]): Promise<BoardTask> {
+  private async gate(task: BoardTask, actionClass: ActionClass, reason: 'budget-spent' | 'reconciliation-failed', at: Date, generation?: number, funding?: BudgetLine[], unreleased?: UnreleasedHold[], hostStopped = false): Promise<BoardTask> {
     const verdict = await this.ctx.approvals.check({ class: actionClass, projectId: task.projectId })
-    if (verdict.mode === 'ask') return this.waitForApproval(task, actionClass, reason, verdict, at, generation, funding, unreleased)
+    if (verdict.mode === 'ask') return this.waitForApproval(task, actionClass, reason, verdict, at, generation, funding, unreleased, hostStopped)
     return this.commitLater(task, at, generation, (c) => ({
       changes: {
         state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('rejected', at),
@@ -1632,8 +1663,10 @@ export class StoreBoard extends Board {
     const verdict = await this.ctx.approvals.check({ class: actionClass, projectId: task.projectId })
     // A spent budget's funding ask is asked again as it was: the same lines, the same subject. So is an
     // answered question's gate: on the wait it answered, so no other gate of the same attempt adopts its approval (INV-2, T291).
+    // A lost run keeps its host-stopped mark.
     const answered = reason === 'approval-needed' ? answeredWaitOf(task, withdrawn.subject.ref) : undefined
-    const request = verdict.mode === 'ask' ? await this.ask(this.taskRequest(task, actionClass, reason, verdict, task.waiting!.funding, undefined, answered), at) : undefined
+    const hostStopped = withdrawn.subject.version === HOST_STOPPED_RECONCILIATION
+    const request = verdict.mode === 'ask' ? await this.ask(this.taskRequest(task, actionClass, reason, verdict, task.waiting!.funding, undefined, answered, hostStopped), at) : undefined
     try {
       return this.commitLater(task, at, undefined, (c) => this.regateMove(c.task, reason, actionClass, verdict, request, withdrawn, at))
     } catch (error) {
@@ -1750,7 +1783,7 @@ export class StoreBoard extends Board {
    * spent budget's `funding` ask is its subject's version ({@link fundingVersion}), so the verdict
    * binds to exactly those lines (INV-5), and its summary and consequences name them.
    */
-  private taskRequest(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, funding?: BudgetLine[], unreleased?: UnreleasedHold[], answeredWait?: string): NewRequest {
+  private taskRequest(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, funding?: BudgetLine[], unreleased?: UnreleasedHold[], answeredWait?: string, hostStopped = false): NewRequest {
     const { project } = this.projectOf(task.projectId)
     const asked = reason === 'budget-spent' ? funding : undefined
     // The reservations the holder could not release still count: named, so the operator sees why the step was refused (1.3).
@@ -1758,7 +1791,8 @@ export class StoreBoard extends Board {
     const consequences = [asked ? this.fundingConsequences(task, asked) : undefined, held].filter((c): c is string => c !== undefined).join(' ')
     return {
       // An answered question continues its attempt, so its request names the wait it answers: no earlier approval of that attempt covers a later gate (INV-2, T291).
-      subject: { type: 'content', ref: `board-task:${task.taskId}:attempt:${task.attempts.count}${answeredWait ? `:answered:${answeredWait}` : ''}`, version: asked ? fundingVersion(contentId(asked)) : reason },
+      // A lost run whose lease lapsed while the host was stopped carries the structured mark in its version (T302).
+      subject: { type: 'content', ref: `board-task:${task.taskId}:attempt:${task.attempts.count}${answeredWait ? `:answered:${answeredWait}` : ''}`, version: asked ? fundingVersion(contentId(asked)) : reason === 'reconciliation-failed' && hostStopped ? HOST_STOPPED_RECONCILIATION : reason },
       action: {
         class: actionClass,
         summary: clampText(`${reason}: ${task.title}${asked ? `; raise its budget by ${linesText(asked, '+')}` : ''}${held ? `; ${unreleased!.length} reservation(s) not released still count` : ''}`, 500),
@@ -1829,8 +1863,8 @@ export class StoreBoard extends Board {
   }
 
   /** Put the task to the operator: one request on `board-task:<id>:attempt:<n>`, which its wait follows, keeping a spent budget's funding ask. */
-  private async waitForApproval(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, at: Date, generation?: number, funding?: BudgetLine[], unreleased?: UnreleasedHold[]): Promise<BoardTask> {
-    const request = await this.ask(this.taskRequest(task, actionClass, reason, verdict, funding, unreleased), at)
+  private async waitForApproval(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, at: Date, generation?: number, funding?: BudgetLine[], unreleased?: UnreleasedHold[], hostStopped = false): Promise<BoardTask> {
+    const request = await this.ask(this.taskRequest(task, actionClass, reason, verdict, funding, unreleased, undefined, hostStopped), at)
     try {
       return this.commitLater(task, at, generation, () => ({
         changes: {
@@ -2381,6 +2415,20 @@ export class StoreBoard extends Board {
   }
 
   /** Whether the holder's lease is gone at `at`: lapsed, or no longer the lease on the task's resource. */
+  /**
+   * Whether the task's lease lapsed while the host was stopped (T302): it was still live when the
+   * previous board stopped cleanly (expiry after that recorded stop) and had expired by this start, and
+   * no other holder took it. A lease that lapsed while the host ran (expired before the stop, or after
+   * this start), with no clean stop recorded, or taken over, is not marked (INV-2).
+   */
+  private lapsedWhileStopped(stored: Stored): boolean {
+    const lease = this.leaseOf(stored)
+    if (!this.downtime || !lease || !Number.isFinite(lease.expiresAt)) return false
+    if (lease.expiresAt <= this.downtime.stoppedMs || lease.expiresAt > this.downtime.startedMs) return false
+    const held = this.ctx.leases.current(lease.resource)
+    return !held || (held.token === lease.token && held.generation === lease.generation)
+  }
+
   private lost(stored: Stored, at: Date): boolean {
     const lease = this.leaseOf(stored)
     if (!lease || lease.expiresAt <= at.getTime()) return true
