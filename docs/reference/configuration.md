@@ -589,7 +589,7 @@ No options.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `tokenDir` | string |  | Directory of the scope token files (default <DSH_HOME>/system); the UI takes operator.token |
-| `clientDir` | string |  | Directory of the compiled client: index.html, app.css, app.js (default lib/client/ of the package) |
+| `clientDir` | string |  | Directory of the compiled client script app.js (default lib/client/ of the package) |
 | `allowedHosts` | string[] | `["127.0.0.1","localhost","[::1]"]` | Host names the UI answers |
 
 ## `worker-sessions`

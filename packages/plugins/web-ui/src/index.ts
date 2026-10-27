@@ -29,12 +29,14 @@ import { type ArtifactRef, BoardError, type BoardTask, type Project, type TaskSt
 import { dshHome, isRecord, registerSecretPath } from '@tsuuanmi/system-libs'
 import type { TaskLanding, TemplateStep } from '@tsuuanmi/system-workflow'
 import type { CapabilityDescriptor } from '@tsuuanmi/system-workers-core'
+import { renderShell } from './ui/shell.ts'
+import { APP_CSS } from './ui/styles/index.ts'
 
 export interface Config {
   /** Directory of the scope token files (default `<DSH_HOME>/system`); the UI takes `operator.token` (ADR-0023). */
   tokenDir?: string
   allowedHosts?: string[]
-  /** Directory of the compiled client: `index.html`, `app.css`, and `app.js` (default `lib/client/` of this package, which `pnpm build` writes). */
+  /** Directory of the compiled client script `app.js` (default `lib/client/` of this package, which `pnpm build` writes); the page and the stylesheet are rendered from `src/ui/`. */
   clientDir?: string
 }
 
@@ -42,28 +44,26 @@ export const name = 'web-ui'
 export const inject = ['webServer', 'workflow']
 export const Config: z<Config> = z.object({
   tokenDir: z.string().description('Directory of the scope token files (default <DSH_HOME>/system); the UI takes operator.token'),
-  clientDir: z.string().description('Directory of the compiled client: index.html, app.css, app.js (default lib/client/ of the package)'),
+  clientDir: z.string().description('Directory of the compiled client script app.js (default lib/client/ of the package)'),
   allowedHosts: z.array(z.string()).default([...LOOPBACK_HOSTS]).description('Host names the UI answers'),
 }) as unknown as z<Config>
 
 /** `lib/client/` of this package, from `src/` or from `lib/` alike. */
 const DEFAULT_CLIENT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'client')
-/** The files the page is made of, by the path under `/ui/` that serves each, with its content type. */
-const CLIENT_FILES: ReadonlyArray<readonly [path: string, file: string, type: string]> = [
-  ['', 'index.html', 'text/html; charset=utf-8'],
-  ['app.js', 'app.js', 'text/javascript; charset=utf-8'],
-  ['app.css', 'app.css', 'text/css; charset=utf-8'],
-]
-
-/** The client's files as bytes with their sha256 content hash; a missing file is refused at start (INV-2), never served empty. */
+/**
+ * The page's files as bytes with their sha256 content hash, by the path under `/ui/` that serves each: the shell and the
+ * stylesheet rendered from their TypeScript modules, and the compiled script read from `dir`; a missing script is refused
+ * at start (INV-2), never served empty.
+ */
 function clientAssets(dir: string): ReadonlyMap<string, { body: Buffer; type: string; etag: string }> {
-  const assets = new Map<string, { body: Buffer; type: string; etag: string }>()
-  for (const [path, file, type] of CLIENT_FILES) {
-    let body: Buffer
-    try { body = readFileSync(join(dir, file)) } catch (error) { throw new Error(`the web UI's client file ${file} is not in ${dir} (run the package's build): ${(error as Error).message}`) }
-    assets.set(path, { body, type, etag: `"sha256-${createHash('sha256').update(body).digest('hex')}"` })
-  }
-  return assets
+  let script: Buffer
+  try { script = readFileSync(join(dir, 'app.js')) } catch (error) { throw new Error(`the web UI's client file app.js is not in ${dir} (run the package's build): ${(error as Error).message}`) }
+  const files: ReadonlyArray<readonly [path: string, body: Buffer, type: string]> = [
+    ['', Buffer.from(renderShell({ stylesheets: [{ src: '/ui/app.css' }], scripts: [{ src: '/ui/app.js' }] })), 'text/html; charset=utf-8'],
+    ['app.js', script, 'text/javascript; charset=utf-8'],
+    ['app.css', Buffer.from(APP_CSS), 'text/css; charset=utf-8'],
+  ]
+  return new Map(files.map(([path, body, type]) => [path, { body, type, etag: `"sha256-${createHash('sha256').update(body).digest('hex')}"` }]))
 }
 
 const CSP ="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"

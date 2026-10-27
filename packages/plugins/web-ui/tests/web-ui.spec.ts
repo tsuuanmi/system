@@ -12,7 +12,7 @@ import { headlessIt, headlessLaunchOptions } from '../../browser-patchright/test
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import * as WebUi from '../src/index.ts'
 import { lanWebServer } from '../../../gateway-core/tests/lan.ts'
-import { builtClient, CLIENT_SOURCE } from './client-build.ts'
+import { APP_CSS, builtClient, PAGE_HTML } from './client-build.ts'
 import { BEFORE_WORDS, noteWords, opened, shoot, wordsInSight } from './glance.ts'
 import { decisionsIn, descriptionOf } from './wording.ts'
 
@@ -231,10 +231,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
 
   it('serves the client\'s own files byte for byte, each with its content hash, and refuses to start without one', async () => {
     const { origin } = await boot()
-    const files = [['', join(CLIENT_SOURCE, 'index.html'), 'text/html'], ['app.css', join(CLIENT_SOURCE, 'app.css'), 'text/css'], ['app.js', join(builtClient(), 'app.js'), 'javascript']] as const
-    for (const [path, file, type] of files) {
+    const files = [['', Buffer.from(PAGE_HTML), 'text/html'], ['app.css', Buffer.from(APP_CSS), 'text/css'], ['app.js', readFileSync(join(builtClient(), 'app.js')), 'javascript']] as const
+    for (const [path, bytes, type] of files) {
       const served = await fetch(`${origin}/ui/${path}`)
-      const bytes = readFileSync(file)
       expect(served.status).toBe(200)
       expect(served.headers.get('content-type')).toContain(type)
       expect(served.headers.get('cache-control')).toBe('no-store')
@@ -247,7 +246,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const ctx = new Context()
     await ctx.plugin(StubWorkflow)
     await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
-    await expect(ctx.plugin(WebUi, { tokenDir: empty, clientDir: empty })).rejects.toThrow(/client file index\.html is not in/)
+    await expect(ctx.plugin(WebUi, { tokenDir: empty, clientDir: empty })).rejects.toThrow(/client file app\.js is not in/)
   })
 
   it('guards the API: token, own origin, and loopback host only', async () => {

@@ -221,12 +221,13 @@ the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
 
 ## The client
 
-The page is `client/index.html`, `client/app.css`, and `client/app.ts` (TypeScript, the DOM lib;
-`client/tsconfig.json`). `pnpm build` compiles it with `tsc` to `lib/client/` and copies the HTML and
-CSS beside it; the plugin reads that directory (config `clientDir`, default `lib/client/`) at start and
-serves each file's bytes with its sha256 as the `ETag`. `pnpm typecheck` and `pnpm lint` cover it. Tests
-build it into a temporary directory ([`tests/client-build.ts`](tests/client-build.ts)); none writes into
-the package. See [the page's files](../../../docs/design/web-ui.md#the-pages-files).
+The page is TypeScript only: the shell is `renderShell` in `src/ui/shell.ts` (scripts' hashes and CSP nonces
+as typed inputs), the stylesheet is built by `src/ui/styles/` (typed design tokens, a `css` helper), and the
+script is `client/app.ts` (the DOM lib; `client/tsconfig.json`). `pnpm build` compiles the script with `tsc`
+to `lib/client/`; the plugin renders the shell and the stylesheet at start, reads `app.js` from that
+directory (config `clientDir`, default `lib/client/`), and serves each one's bytes with its sha256 as the
+`ETag`. `pnpm typecheck` and `pnpm lint` cover it. Tests build the script into a temporary directory
+([`tests/client-build.ts`](tests/client-build.ts)); none writes into the package. See [the page's files](../../../docs/design/web-ui.md#the-pages-files).
 
 ## Security
 
