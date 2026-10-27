@@ -25,7 +25,7 @@ async function compose(records: PluginRecord[], waiting: Record<string, string[]
   const host = ctx.plugin(Host)
   await host
   const fibers: Array<{ dispose(): unknown }> = [host]
-  for (const [name, inject] of Object.entries(waiting)) fibers.push(ctx.plugin({ name, inject, apply: () => undefined } as never))
+  for (const [name, inject] of Object.entries(waiting)) fibers.push(ctx.plugin({ name, inject, apply: () => undefined } as never, {} as never))
   onTestFinished(async () => { for (const fiber of fibers.reverse()) await fiber.dispose() })
   return ctx
 }
