@@ -7,7 +7,7 @@
  * An event it cannot read whole means nothing.
  * @module
  */
-import type { SystemEvent } from '@tsuuanmi/system-event-log'
+import type { SystemEvent } from '@tsuuanmi/system-ledger-core'
 
 /** The notice kinds (`lead-notice@1.0` `kind`). */
 export const KINDS = [

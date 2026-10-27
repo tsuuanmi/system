@@ -21,15 +21,13 @@
   },
   "dependencies": {
     "@tsuuanmi/system-accounts": "workspace:*",
-    "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
-    "@tsuuanmi/system-event-log": "workspace:*",
     "@tsuuanmi/system-gateway-core": "workspace:*",
     "@tsuuanmi/system-leases": "workspace:*",
+    "@tsuuanmi/system-ledger-core": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-login": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",
-    "@tsuuanmi/system-store": "workspace:*",
     "@tsuuanmi/system-turn-receipts": "workspace:*",
     "@tsuuanmi/system-workers-core": "workspace:*",
     "zod": "^4.1.0"
@@ -41,12 +39,15 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
     "@deepseek-ai/schemastery": "3.18.5-alpha.1",
+    "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-browser-patchright": "workspace:*",
     "@tsuuanmi/system-credentials-vault": "workspace:*",
     "@tsuuanmi/system-display-virtual": "workspace:*",
+    "@tsuuanmi/system-event-log": "workspace:*",
     "@tsuuanmi/system-provider-chatgpt-web": "workspace:*",
     "@tsuuanmi/system-provider-gemini-web": "workspace:*",
     "@tsuuanmi/system-providers": "workspace:*",
+    "@tsuuanmi/system-store": "workspace:*",
     "@tsuuanmi/system-workers": "workspace:*",
     "patchright-core": "1.63.0"
   }

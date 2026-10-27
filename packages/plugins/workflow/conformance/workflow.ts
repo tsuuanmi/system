@@ -19,7 +19,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import type { BoardTask, BudgetLine, TaskInput } from '@tsuuanmi/system-board-core'
 import { type Advice, type AdvisorFeatures, DispatchAdvisor } from '@tsuuanmi/system-decision-core'
 import { captureGitSubject, SchemaRegistry, sha256, startPrompt } from '@tsuuanmi/system-libs'

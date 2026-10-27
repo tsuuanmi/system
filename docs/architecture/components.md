@@ -34,7 +34,8 @@ contract needs an ADR ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capab
   `artifacts.put / get / list / read / recordDecision / explain`; `eventLog.append / query`;
   `leases.acquire / renew / release / fence / current`; DSH `credentials.resolve / set`;
   `pluginHost.list / get`.
-- **Packages:** [store](../../packages/plugins/store/README.md),
+- **Packages:** [ledger-core](../../packages/ledger-core/README.md) (the `store`,
+  `artifacts` and `eventLog` definitions), [store](../../packages/plugins/store/README.md),
   [artifacts](../../packages/plugins/artifacts/README.md),
   [event-log](../../packages/plugins/event-log/README.md),
   [leases](../../packages/plugins/leases/README.md),

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { runSuite } from '../../../libs/conformance/runner.ts'
-import { storeSuite } from '../conformance/store.ts'
+import { storeSuite } from '../../../ledger-core/conformance/store.ts'
 import Store from '../src/index.ts'
 
 // The node:sqlite store against the suite every `ctx.store` provider must pass (ADR-0036).

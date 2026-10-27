@@ -4,8 +4,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type {} from '@tsuuanmi/system-artifacts'
-import type {} from '@tsuuanmi/system-event-log'
+import type {} from '@tsuuanmi/system-ledger-core'
 import type { ProviderMode } from '@tsuuanmi/system-provider-core'
 import { driftData, evidenceData } from '@tsuuanmi/system-ui-ops'
 import { GeminiWebDriver } from './driver.ts'

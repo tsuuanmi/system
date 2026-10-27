@@ -1,5 +1,5 @@
 /** What callers see of runs: views (never the input text), the usage report, and the decision chain. */
-import type { Decision } from '@tsuuanmi/system-artifacts'
+import type { Decision } from '@tsuuanmi/system-ledger-core'
 import { type ContentId, drawFigures, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDrawOf, USAGE_UNKNOWN_EVENT, type UsageUnknownKind, usageUnknownOf } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import { waitsOnCall } from './continuations.ts'

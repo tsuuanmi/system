@@ -9,10 +9,9 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { ApprovalRequest } from '@tsuuanmi/system-approvals-core'
-import type { Envelope } from '@tsuuanmi/system-artifacts'
+import type { Envelope } from '@tsuuanmi/system-ledger-core'
 import type { BoardTask, Project } from '@tsuuanmi/system-board-core'
 import type { Digests } from '@tsuuanmi/system-digest-core'
-import type {} from '@tsuuanmi/system-event-log'
 import { type ToolSpec, WORKER_AVAILABLE_EVENT, WORKER_UNAVAILABLE_EVENT } from '@tsuuanmi/system-gateway-core'
 import { ADVICE_EVENT, ADVICE_OUTCOME_EVENT, countedWhole, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDrawOf, reconciledBy, SchemaRegistry, USAGE_UNKNOWN_EVENT, usageUnknownOf } from '@tsuuanmi/system-libs'
 import { ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'

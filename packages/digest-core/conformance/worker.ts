@@ -7,7 +7,7 @@
  * Worker's own runtime does.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { type Brief, startPrompt } from '@tsuuanmi/system-libs'
 import { type ArtifactRef, type Tier, TIERS, type WorkerExecution, type WorkerSource, type WorkerStart } from '@tsuuanmi/system-workers-core'
 import { worker } from '../../workers-core/conformance/workers.ts'

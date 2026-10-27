@@ -10,10 +10,9 @@
  */
 import type { Context, Fiber } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-approvals-core'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import type { BoardTask } from '@tsuuanmi/system-board-core'
 import { type Advice, type Advisor, type AdvisorFeatures, type AdvisorSignal, DispatchAdvisor } from '@tsuuanmi/system-decision-core'
-import type {} from '@tsuuanmi/system-event-log'
 import type { Dispatched, DispatchHarness, RecordedDecision } from '../../../decision-core/conformance/dispatch-advisor.ts'
 import type {} from '../src/index.ts'
 

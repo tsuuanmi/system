@@ -300,9 +300,9 @@ Consumers depend on definitions only.
 | `pluginHost` | `PluginHost` in `@tsuuanmi/system-plugin-host-core` | `plugin-host-core/conformance/plugin-host.ts` (contract 1.1) | `plugin-host` (over a stub of the DSH loader and installed package directories), the fake `FakePluginHost` |
 | `experiments` | `Experiments` in `@tsuuanmi/system-feedback-core` | `feedback-core/conformance/experiments.ts` (contract 1.0) | the fake `FakeExperiments` |
 | `evaluations` | `Evaluations` in `@tsuuanmi/system-feedback-core` | `feedback-core/conformance/evaluations.ts` (contract 1.0, beside a `ctx.experiments`, over a `World` that stands for the live environment, the suite, and each trial's run) | the fake `FakeEvaluations` (over `FakeExperiments`) |
-| `store` | concrete `Store` in `@tsuuanmi/system-store` | `plugins/store/conformance/store.ts` (contract 1.0) | `store` |
-| `eventLog` | concrete `EventLog` in `@tsuuanmi/system-event-log` | `plugins/event-log/conformance/event-log.ts` (contract 1.1) | `event-log` |
-| `artifacts` | concrete `Artifacts` in `@tsuuanmi/system-artifacts` | `plugins/artifacts/conformance/artifacts.ts` (contract 1.2) | `artifacts` |
+| `store` | `Store` in `@tsuuanmi/system-ledger-core` | `ledger-core/conformance/store.ts` (contract 1.0) | `store` |
+| `eventLog` | `EventLog` in `@tsuuanmi/system-ledger-core` | `ledger-core/conformance/event-log.ts` (contract 1.1) | `event-log` |
+| `artifacts` | `Artifacts` in `@tsuuanmi/system-ledger-core` | `ledger-core/conformance/artifacts.ts` (contract 1.2) | `artifacts` |
 | `turnReceipts` | concrete `TurnReceipts` in `@tsuuanmi/system-turn-receipts` | `plugins/turn-receipts/conformance/turn-receipts.ts` (contract 1.0) | `turn-receipts` |
 | `leases` | concrete `Leases` in `@tsuuanmi/system-leases` | `plugins/leases/conformance/leases.ts` (contract 1.1) | `leases` |
 | `egress` | concrete `Egress` in `@tsuuanmi/system-egress` | `plugins/egress/conformance/egress.ts` (contract 1.0) | `egress` |

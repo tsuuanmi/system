@@ -26,7 +26,11 @@
   `profile-scientific-research` listens to `system/event`.
 - **Injects:** `store`.
 - **Config:** `maxDataBytes`, `retainDays` (default 0: keep every entry).
-- The conformance suite is [`conformance/event-log.ts`](conformance/event-log.ts), contract 1.1:
+- **Implements:** the abstract `EventLog` of
+  [`@tsuuanmi/system-ledger-core`](../../ledger-core/README.md), which owns the seam's
+  types (`SystemEvent`, `NewEvent`, `EventQuery`) and the `system/event` event; consumers
+  import them from there, and this package re-exports none of them.
+- The conformance suite is [`ledger-core/conformance/event-log.ts`](../../ledger-core/conformance/event-log.ts), contract 1.1:
   - `append` assigns the next `seq` and a UTC `at`, and what is read back is the
     `event@1.0` record appended, unchanged by later appends;
   - an invalid record is refused and nothing stored; `data` is accepted up to

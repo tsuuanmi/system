@@ -7,9 +7,8 @@
 import { statSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@tsuuanmi/system-store'
 import { expect } from 'vitest'
-import { defineSuite, type Scenario } from '../../../libs/conformance/runner.ts'
+import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import { RevisionConflict } from '../src/index.ts'
 
 export type Boot = () => Promise<{ ctx: Context; dispose: () => Promise<void> }>

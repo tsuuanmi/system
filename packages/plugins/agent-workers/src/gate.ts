@@ -20,11 +20,9 @@ import { COMMIT_ID, HOST_TOOLS_SERVER, type ToolCall, type ToolGate, type ToolVe
 import {
   type ActionClass, type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, type Check, type CommandPathScope, commandRulesOf, SHELL_METACHARACTER, webAccessOf, type WebTool, withinClassification,
 } from '@tsuuanmi/system-approvals-core'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import type {} from '@tsuuanmi/system-egress'
-import type {} from '@tsuuanmi/system-event-log'
 import { contentId, isRecord } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-store'
 import { matchCommandRule, REF_NAME } from './command-rules.ts'
 import { namesLocalPath, WEB_PROBE_QUERY, webTarget } from './research.ts'
 

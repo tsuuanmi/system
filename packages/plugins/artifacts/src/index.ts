@@ -5,116 +5,16 @@
  * @module @tsuuanmi/system-artifacts
  */
 import type { DatabaseSync } from 'node:sqlite'
-import { type Context, Service } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import {
+  type ArtifactFilter, type ArtifactKind, type ArtifactRead, Artifacts as ArtifactsSeam, type Classification, type Collected, type Decision,
+  type Envelope, type ExplainNode, type NewArtifact, type Producer, READ_DEFAULT_CHARS, READ_MAX_CHARS,
+} from '@tsuuanmi/system-ledger-core'
 import { type ContentId, SchemaRegistry, contentId } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-store'
-
-declare module '@deepseek-ai/cordis' {
-  interface Context {
-    artifacts: Artifacts
-  }
-}
-
-export type ArtifactKind =
-  | 'objective' | 'criteria' | 'plan' | 'finding' | 'evidence' | 'assessment' | 'report'
-  | 'handoff' | 'delivery' | 'message' | 'decision' | 'receipt' | 'approval'
-export type Classification = 'public' | 'operator-shared' | 'local-private'
-export interface Producer { type: 'node' | 'worker' | 'policy' | 'operator' | 'system'; ref: string }
-export interface Subject { type: 'content' | 'git-head' | 'pull-request' | 'artifact' | 'external'; ref: string; version?: string }
-
-/** The stored envelope (schemas/artifact-envelope.v1.json). */
-export interface Envelope {
-  schema: 'artifact-envelope@1.0'
-  id: ContentId
-  kind: ArtifactKind
-  bodySchema: string
-  body?: unknown
-  blob?: { ref: ContentId; bytes: number; mediaType: string }
-  classification: Classification
-  producer: Producer
-  subject?: Subject
-  inputs: ContentId[]
-  lineage: { supersedes?: ContentId[]; invalidates?: ContentId[] }
-  runId?: string
-  nodeId?: string
-  createdAt: string
-}
-
-export type NewArtifact = Omit<Envelope, 'schema' | 'id' | 'createdAt' | 'inputs' | 'lineage'> &
-  Partial<Pick<Envelope, 'inputs' | 'lineage'>>
-
-/** Body of a decision artifact (schemas/decision.v1.json). */
-export interface Decision {
-  /**
-   * `@1.1` once it records a team vote or a client's decision; otherwise `@1.0`, so earlier decisions
-   * keep their ids. A recorder that uses a later minor's fields names it (`@1.2`: a review's quote checks;
-   * `@1.3`: a `retention` decision; `@1.4`: an `autonomy`, `approval`, `board`, or `budget` decision;
-   * `@1.5`: a `lifecycle` decision; `@1.6`: a `policy-change` decision; `@1.7`: a `registration` or `verdict` decision;
-   * `@1.8`: an `enrollment` decision, or a `recovery` decision whose outcome is `wait`; `@1.9`: a
-   * `recovery` decision whose outcome is `resend`; `@1.10`: a project's lead's approval or acceptance, a
-   * `client` decider that is no vote, ADR-0076).
-   */
-  schema: 'decision@1.0' | 'decision@1.1' | 'decision@1.2' | 'decision@1.3' | 'decision@1.4' | 'decision@1.5' | 'decision@1.6' | 'decision@1.7' | 'decision@1.8' | 'decision@1.9' | 'decision@1.10'
-  decisionType: string
-  question: string
-  inputs: ContentId[]
-  candidates: { option: string; selected: boolean; reasons: string[] }[]
-  decider: { type: 'rule' | 'policy' | 'model' | 'operator' | 'client'; id: string; version: string; hash?: ContentId }
-  modelAnswers?: unknown[]
-  outcome: { option: string; detail?: Record<string, unknown> }
-  deterministic: boolean
-  rationale?: string
-  /** A team's vote (decision type `vote`; decision@1.1), shaped by the schema. */
-  vote?: Record<string, unknown>
-}
 
 const CLASSIFICATION_RANK: Record<Classification, number> = { public: 0, 'operator-shared': 1, 'local-private': 2 }
 
-export interface ExplainNode {
-  id: ContentId
-  /** `expired`: the artifact was collected by retention; only its id remains (REQ-ART-3). */
-  kind: ArtifactKind | 'expired'
-  summary: string
-  inputs: ExplainNode[]
-}
-
-/**
- * An artifact as the operator reads it (`system artifact`): its envelope's header and a window of
- * its body, or why there is none.
- */
-export type ArtifactRead =
-  | {
-    id: ContentId
-    state: 'stored'
-    kind: ArtifactKind
-    bodySchema: string
-    classification: Classification
-    producer: Producer
-    runId?: string
-    nodeId?: string
-    createdAt: string
-    inputs: ContentId[]
-    /** What the window is of: the body's `text`, else the body as JSON; `blob` when the body is in a blob store (none is read here). */
-    content: 'text' | 'json' | 'blob'
-    /** Characters (code points) of the whole content, the window's first one, and whether more follow it. */
-    chars: number
-    offset: number
-    truncated: boolean
-    text: string
-  }
-  | {
-    id: ContentId
-    /** `expired`: a stored artifact still names it, so it was stored and collected by retention; `unknown`: nothing here names it. */
-    state: 'expired' | 'unknown'
-    /** A stored artifact that names it, and when that one was recorded (collection records no time of its own). */
-    referencedBy?: { id: ContentId; kind: ArtifactKind; createdAt: string }
-    note: string
-  }
-
-/** Bounds of a read window, in characters (INV-9). */
-export const READ_DEFAULT_CHARS = 20_000
-export const READ_MAX_CHARS = 200_000
 const CONTENT_ID_EXACT = /^sha256:[0-9a-f]{64}$/
 
 /**
@@ -130,14 +30,6 @@ function advance(text: string, from: number, count: number): { index: number; pa
     passed++
   }
   return { index, passed }
-}
-
-/** What one collection did. */
-export interface Collected {
-  /** Artifacts deleted. */
-  removed: number
-  /** Artifacts kept: referenced, inside the grace period, or of a run that still exists. */
-  kept: number
 }
 
 /** Tables a collection never reads references from: this plugin's own, and the event log (else events and artifacts would keep each other). */
@@ -186,7 +78,7 @@ export interface Config {
   collectBatch?: number
 }
 
-export class Artifacts extends Service {
+export class Artifacts extends ArtifactsSeam {
   static inject = ['store']
   static Config: z<Config> = z.object({
     explainDepth: z.natural().min(1).max(64).default(16).description('Maximum depth explain walks'),
@@ -198,7 +90,7 @@ export class Artifacts extends Service {
   private readonly schemas = new SchemaRegistry()
 
   constructor(ctx: Context, private readonly config: Config) {
-    super(ctx, 'artifacts')
+    super(ctx)
     ctx.store.migrate('artifacts', [
       {
         version: 1,
@@ -302,7 +194,7 @@ export class Artifacts extends Service {
    * first, contract 1.1), at most `limit` (100 by default, 1 to 1000). `outcome` (contract 1.2) keeps
    * only decisions whose outcome is that option.
    */
-  list(filter: { kind?: ArtifactKind; runId?: string; nodeId?: string; decisionType?: string; outcome?: string; limit?: number; newest?: boolean } = {}): Envelope[] {
+  list(filter: ArtifactFilter = {}): Envelope[] {
     const clauses: string[] = []
     const params: string[] = []
     for (const [column, value] of [['a.kind', filter.kind], ['a.decision_type', filter.decisionType], ['r.run_id', filter.runId], ['r.node_id', filter.nodeId]] as const) {

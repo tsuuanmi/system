@@ -46,9 +46,8 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { BRIEF_FILE_PATH, captureGitSubject, ensurePrivateDir, sandboxPlaceholder, subjectId } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-store'
 import {
   type Carried, type CarryRefusal, type CarryStep, CHANGE_BOUNDS, type ChangedFile, type Landed, type LandRefusal, type LandStep, REBASE_FILES_MAX, REBASE_MOVED_MAX, type Regenerated, reviewRef, type WorkChange,
 } from '@tsuuanmi/system-workers-core'

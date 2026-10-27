@@ -8,12 +8,10 @@
  */
 import { randomBytes } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@tsuuanmi/system-artifacts'
-import type {} from '@tsuuanmi/system-event-log'
+import type {} from '@tsuuanmi/system-ledger-core'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type Brief, bodyText, clampText, extractJson, NO_LOCAL_SANDBOX, renderBrief, sha256 } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-store'
 import { AdmissionFailure, type Classification, type Tier, type WorkRequirement } from '@tsuuanmi/system-workers-core'
 import { type ArtifactRef, checkedRequest, DIGEST_LIMITS, DigestError, type DigestRequest, type DigestState, type DigestView, type EscalationDecision, escalation, type QuoteCheck, settlement } from './index.ts'
 

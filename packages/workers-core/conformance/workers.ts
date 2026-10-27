@@ -4,7 +4,7 @@
  * source registered and no routing preferences configured.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { describe, expect, it } from 'vitest'
 import { AdmissionFailure, type CapabilityDescriptor, type WorkRequirement, type WorkerSource } from '../src/index.ts'
 

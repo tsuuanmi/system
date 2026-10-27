@@ -20,11 +20,9 @@ import {
   type Action, type ActionClass, ALWAYS_ASK, type ApprovalRequest, Approvals, ApprovalsError, type ArtifactRef, type AutonomyPolicy, type AutonomyVerdict, type ContentHash, HOST_STOPPED_RECONCILIATION, MODES,
   type NewRequest, POLICY_SET_REF, type PolicyChange, type PolicyChangeOrigin, type PolicySetInForce, type RequestState, type Subject, type Verdict, type VerdictResult,
 } from '@tsuuanmi/system-approvals-core'
-import type {} from '@tsuuanmi/system-artifacts'
-import type {} from '@tsuuanmi/system-event-log'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { LEAD_PROJECT, leadId, type LeadRemediation, leadMayDecide } from '@tsuuanmi/system-gateway-core'
 import { isRecord, SchemaRegistry } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-store'
 import { ACTION_CLASSES, commandProblems, effectOf, PolicySet, policyProblems, proposedSet, rank, webAccessEffect } from './policy.ts'
 import { registerTools } from './tools.ts'
 

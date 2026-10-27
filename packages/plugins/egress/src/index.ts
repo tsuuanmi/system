@@ -8,7 +8,7 @@
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
 import { type Finding, type NamedPattern, scanCredentials } from './scan.ts'
 

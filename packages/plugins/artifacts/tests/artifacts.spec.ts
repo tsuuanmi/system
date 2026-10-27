@@ -2,9 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import type { Decision } from '@tsuuanmi/system-ledger-core'
 import Store from '@tsuuanmi/system-store'
 import { describe, expect, it, onTestFinished } from 'vitest'
-import Artifacts, { type Decision } from '../src/index.ts'
+import Artifacts from '../src/index.ts'
 
 async function boot(): Promise<Context> {
   const dir = mkdtempSync(join(tmpdir(), 'system-artifacts-'))

@@ -6,7 +6,7 @@
  * cleans every value it quotes. An event it cannot read whole makes no notice.
  * @module
  */
-import type { SystemEvent } from '@tsuuanmi/system-event-log'
+import type { SystemEvent } from '@tsuuanmi/system-ledger-core'
 
 /** The notice kinds, in the order the design names them (`notification@1.x` `kind`; `review.expiring` since 1.1, `dispatch.started` since 1.2). */
 export const KINDS = ['approval.opened', 'approval.expiring', 'run.user-action', 'run.escalated', 'run.waiting', 'pool.limited', 'worker.quarantined', 'review.expiring', 'dispatch.started'] as const

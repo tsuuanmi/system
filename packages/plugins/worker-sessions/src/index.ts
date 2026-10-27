@@ -9,10 +9,9 @@
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { type ContentId, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { outline, reply } from '@tsuuanmi/system-gateway-core'
-import type {} from '@tsuuanmi/system-store'
 import { z as zod } from 'zod'
 
 declare module '@deepseek-ai/cordis' {

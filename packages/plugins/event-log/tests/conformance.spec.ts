@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import Store from '@tsuuanmi/system-store'
 import { runSuite } from '../../../libs/conformance/runner.ts'
-import { eventLogSuite, RETAIN_DAYS } from '../conformance/event-log.ts'
+import { eventLogSuite, RETAIN_DAYS } from '../../../ledger-core/conformance/event-log.ts'
 import EventLog from '../src/index.ts'
 
 // The store-backed event log against the suite every `ctx.eventLog` provider must pass (ADR-0036).

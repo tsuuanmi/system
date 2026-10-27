@@ -132,6 +132,9 @@
       "@tsuuanmi/system-gateway-core": [
         "packages/gateway-core/src/index.ts"
       ],
+      "@tsuuanmi/system-ledger-core": [
+        "packages/ledger-core/src/index.ts"
+      ],
       "@tsuuanmi/system-approvals-core": [
         "packages/approvals-core/src/index.ts"
       ],

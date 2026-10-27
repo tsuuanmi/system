@@ -5,7 +5,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { canonicalJson, contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { expect } from 'vitest'
 import { type Action, type ApprovalRequest, type AutonomyPolicy, waitSeconds } from '@tsuuanmi/system-approvals-core'

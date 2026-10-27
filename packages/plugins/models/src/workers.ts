@@ -11,13 +11,12 @@
  */
 import { randomBytes } from 'node:crypto'
 import { type Context } from '@deepseek-ai/cordis'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import type { Classification } from '@tsuuanmi/system-egress'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type ContentId, sha256, sleep } from '@tsuuanmi/system-libs'
 import { type ModelCompletion, ModelError, type ModelFailure, type ModelStatus, type ModelTurn } from '@tsuuanmi/system-models-core'
 import { ProviderError, type ProviderErrorKind, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
-import type {} from '@tsuuanmi/system-store'
 import type { ArtifactRef, CapabilityDescriptor, ExecutionStatus, WorkerExecution, WorkerStart } from '@tsuuanmi/system-workers-core'
 
 export interface ModelWorkersConfig {

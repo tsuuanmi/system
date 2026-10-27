@@ -10,10 +10,9 @@
   "files": ["lib", "plugin-manifest.json"],
   "scripts": { "build": "tsc -p tsconfig.build.json" },
   "dependencies": {
-    "@tsuuanmi/system-artifacts": "workspace:*",
-    "@tsuuanmi/system-plugin-host-core": "workspace:*",
-    "@tsuuanmi/system-store": "workspace:*"
+    "@tsuuanmi/system-ledger-core": "workspace:*",
+    "@tsuuanmi/system-plugin-host-core": "workspace:*"
   },
   "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1" },
-  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1", "@tsuuanmi/system-libs": "workspace:*" }
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1", "@tsuuanmi/system-artifacts": "workspace:*", "@tsuuanmi/system-libs": "workspace:*", "@tsuuanmi/system-store": "workspace:*" }
 }

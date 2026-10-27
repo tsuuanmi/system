@@ -8,7 +8,7 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import {
   type AccountQuota, extractJson, HEADROOM_KEYS, type HeadroomKeys, headroomLine, headroomOrderOf, headroomReason, QUOTA_DEFAULTS, QUOTA_SCORE, type QuotaPool, type QuotaSettings,
   quotaSettingsProblems, SchemaRegistry,

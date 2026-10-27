@@ -7,10 +7,9 @@
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { type ContentId, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import { boundaryMissing, ProviderError, promptShown, type Reconciliation, type TurnReceipt, type TurnSnapshot, reconcileTurn, responseHash } from '@tsuuanmi/system-provider-core'
-import type {} from '@tsuuanmi/system-store'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

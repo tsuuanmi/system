@@ -5,30 +5,11 @@
  */
 import { DatabaseSync } from 'node:sqlite'
 import { dirname, join } from 'node:path'
-import { type Context, Service } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { chmodSync, closeSync, existsSync, openSync } from 'node:fs'
+import { Store as StoreSeam, type Migration, RevisionConflict, type TransactionCallback } from '@tsuuanmi/system-ledger-core'
 import { dshHome, ensurePrivateDir, registerSecretPath, sqliteRuntimeProblem } from '@tsuuanmi/system-libs'
-
-declare module '@deepseek-ai/cordis' {
-  interface Context {
-    store: Store
-  }
-}
-
-/** One schema step owned by a plugin; applied once, in version order, inside a transaction. */
-export interface Migration {
-  version: number
-  sql: string
-}
-
-/** Thrown when a revision-guarded write finds a newer revision (docs/design/scheduling-and-leases.md). */
-export class RevisionConflict extends Error {
-  constructor(readonly table: string, readonly key: string, readonly expected: number) {
-    super(`${table}/${key}: expected revision ${expected} is stale`)
-    this.name = 'RevisionConflict'
-  }
-}
 
 export interface Config {
   /** Database file; defaults to `<DSH_HOME>/system/system.db`. */
@@ -39,10 +20,7 @@ export interface Config {
   synchronous?: 'FULL' | 'NORMAL'
 }
 
-/** A transaction callback must be synchronous; a Promise-returning callback does not compile. */
-export type TransactionCallback<T> = (db: DatabaseSync) => T extends PromiseLike<unknown> ? never : T
-
-export class Store extends Service {
+export class Store extends StoreSeam {
   static Config: z<Config> = z.object({
     path: z.string().description('Database file; defaults to <DSH_HOME>/system/system.db'),
     busyTimeoutMs: z.natural().default(5000).description('Writer lock wait in milliseconds'),
@@ -56,7 +34,7 @@ export class Store extends Service {
   private pending: Array<() => void> = []
 
   constructor(ctx: Context, config: Config) {
-    super(ctx, 'store')
+    super(ctx)
     this.path = config.path ?? join(dshHome(), 'system', 'system.db')
     ctx.effect(() => {
       // Refuse a runtime that would silently corrupt stored text (REQ-HOST-2); the CLI checks

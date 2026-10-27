@@ -10,7 +10,7 @@
 import { randomBytes } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { sha256 } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-store'
+import type {} from '@tsuuanmi/system-ledger-core'
 import type { RunView } from '@tsuuanmi/system-workflow'
 import { claimsNoAccess, estimateTokens, NUDGE, parseToolCalls, renderOpening, renderSuffix, type Tier, type ToolCall, type ToolSpec, type Turn } from './protocol.ts'
 

@@ -12,10 +12,10 @@
   "dependencies": {
     "@secretlint/core": "13.0.5",
     "@secretlint/secretlint-rule-preset-recommend": "13.0.5",
-    "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-ledger-core": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*"
   },
   "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1" },
-  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1", "@tsuuanmi/system-store": "workspace:*" }
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1", "@tsuuanmi/system-artifacts": "workspace:*", "@tsuuanmi/system-store": "workspace:*" }
 }

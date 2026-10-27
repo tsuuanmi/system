@@ -12,8 +12,7 @@ import { existsSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { type ApprovalRequest, type AutonomyVerdict, type Check, HOST_STOPPED_RECONCILIATION, type Mode, type NewRequest, riskTierMaps, waitSeconds } from '@tsuuanmi/system-approvals-core'
-import type {} from '@tsuuanmi/system-artifacts'
-import type {} from '@tsuuanmi/system-event-log'
+import type {} from '@tsuuanmi/system-ledger-core'
 import {
   type ActionClass, type ArtifactRef, Board, BoardError, type Breaker, BREAKER_DEFAULT, type BreakerLine, type Escape, type BoardTask, type BudgetLine, type CancelReason, type Charter, type CharterInput, type Claim, DEFECT_SHA, type Defect, type DefectBy, FREE_RETRIES_DEFAULT, FREE_RETRIES_MAX, freeRetriesOf, fundingVersion,
   type InfrastructureFailure, infrastructureProblem, type Project, type ProjectState, REOPEN_REASON_MAX, type Reopening, renderTasks, type RunOutcome, type Subject, type TaskInput, type TaskState, TERMINAL, type Unit, type UnreleasedHold, unreleasedProblem, unreleasedText, type WaitReason,
@@ -21,7 +20,6 @@ import {
 import type {} from '@tsuuanmi/system-gateway-core'
 import { clampText, contentId, isRecord, SchemaError, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
-import type {} from '@tsuuanmi/system-store'
 import { registerTools } from './tools.ts'
 
 export interface Config {

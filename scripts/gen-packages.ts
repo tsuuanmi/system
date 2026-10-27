@@ -27,6 +27,7 @@ export const LAYER_OF: Record<string, Layer> = {
   'libs': 'host and libraries',
   'system-bundle': 'host and libraries',
   // kernel
+  'ledger-core': 'kernel',
   'store': 'kernel',
   'event-log': 'kernel',
   'leases': 'kernel',

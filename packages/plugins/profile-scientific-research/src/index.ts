@@ -14,8 +14,7 @@
  */
 import { readFileSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@tsuuanmi/system-artifacts'
-import type {} from '@tsuuanmi/system-event-log'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { type ContentId, extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import type { NodeTemplate } from '@tsuuanmi/system-workflow'
 import type {} from '@tsuuanmi/system-workers'

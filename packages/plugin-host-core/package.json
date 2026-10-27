@@ -11,5 +11,5 @@
   "scripts": { "build": "tsc -p tsconfig.build.json" },
   "dependencies": { "@tsuuanmi/system-libs": "workspace:*" },
   "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" },
-  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@tsuuanmi/system-artifacts": "workspace:*", "@tsuuanmi/system-store": "workspace:*" }
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@tsuuanmi/system-artifacts": "workspace:*", "@tsuuanmi/system-ledger-core": "workspace:*", "@tsuuanmi/system-store": "workspace:*" }
 }

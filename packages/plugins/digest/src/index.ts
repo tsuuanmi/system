@@ -12,12 +12,10 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { DigestEngine, type DigestRequest, Digests, type DigestView, quoteCheck, registerDigestTools } from '@tsuuanmi/system-digest-core'
-import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { type Brief, type BriefSegment, SchemaRegistry } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-store'
 import { type Tier, TIERS } from '@tsuuanmi/system-workers-core'
 
 export interface Config {

@@ -21,13 +21,11 @@
   },
   "dependencies": {
     "@tsuuanmi/system-approvals-core": "workspace:*",
-    "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-board-core": "workspace:*",
-    "@tsuuanmi/system-event-log": "workspace:*",
     "@tsuuanmi/system-gateway-core": "workspace:*",
     "@tsuuanmi/system-leases": "workspace:*",
-    "@tsuuanmi/system-libs": "workspace:*",
-    "@tsuuanmi/system-store": "workspace:*"
+    "@tsuuanmi/system-ledger-core": "workspace:*",
+    "@tsuuanmi/system-libs": "workspace:*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
@@ -37,6 +35,9 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
     "@deepseek-ai/schemastery": "3.18.5-alpha.1",
+    "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-store": "workspace:*",
     "zod": "^4.1.0"
   }
 }

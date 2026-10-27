@@ -1,0 +1,27 @@
+{
+  "schema": "plugin-manifest@1.1",
+  "name": "@tsuuanmi/system-ledger-core",
+  "version": "0.0.0",
+  "description": "Ledger seam definitions: ctx.store, ctx.artifacts and ctx.eventLog, with their types and conformance suites",
+  "class": {
+    "kind": "core",
+    "component": "ledger-of-record"
+  },
+  "provides": [],
+  "consumes": [],
+  "defines": [
+    {
+      "seam": "artifacts",
+      "version": "1.2.0"
+    },
+    {
+      "seam": "eventLog",
+      "version": "1.1.0"
+    },
+    {
+      "seam": "store",
+      "version": "1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

@@ -206,6 +206,7 @@
         "tier": "heavy",
         "note": "the ledger's guarantees: the store, the artifacts and decisions of record, the event log, and the resource ledger",
         "paths": [
+          "packages/ledger-core/",
           "packages/plugins/store/",
           "packages/plugins/artifacts/",
           "packages/plugins/event-log/",

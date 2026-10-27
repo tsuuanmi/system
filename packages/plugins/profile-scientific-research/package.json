@@ -20,8 +20,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@tsuuanmi/system-artifacts": "workspace:*",
-    "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-ledger-core": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-workers": "workspace:*",
     "@tsuuanmi/system-workflow": "workspace:*"
@@ -30,6 +29,8 @@
     "@deepseek-ai/cordis": "4.0.5-alpha.1"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.5-alpha.1"
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-event-log": "workspace:*"
   }
 }

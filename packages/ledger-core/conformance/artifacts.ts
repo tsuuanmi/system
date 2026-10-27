@@ -9,9 +9,8 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-store'
 import { expect } from 'vitest'
-import { defineSuite, type Scenario } from '../../../libs/conformance/runner.ts'
+import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import type { Classification, Decision, Envelope, ExplainNode, NewArtifact } from '../src/index.ts'
 
 export type Boot = () => Promise<{ ctx: Context; dispose: () => Promise<void> }>

@@ -10,7 +10,7 @@
  * group or session.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { type ContentId, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { expect } from 'vitest'
 import { defineSuite, type Scenario } from '../../../libs/conformance/runner.ts'

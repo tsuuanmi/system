@@ -13,12 +13,10 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { type ArtifactRef, DIGEST_LIMITS, DigestEngine, type DigestRequest, Digests, type DigestView, quoteCheck, registerDigestTools } from '@tsuuanmi/system-digest-core'
-import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-gateway-core'
 import type { Brief, BriefSegment } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-store'
 import { type Tier, TIERS } from '@tsuuanmi/system-workers-core'
 import { type DigestExtract, extractOf, MAX_EXTRACTS, resolveDraft } from './extract.ts'
 

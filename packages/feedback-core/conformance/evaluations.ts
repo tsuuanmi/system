@@ -9,7 +9,7 @@
  * library that is never shipped.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
   type ArtifactRef, type BudgetLine, type Environment, type ExactSubject, type Experiment, type ExperimentDraft, type HypothesisDraft, independenceProblems,

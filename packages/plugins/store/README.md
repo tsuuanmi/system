@@ -34,7 +34,11 @@ the [M0 spike](../../../docs/research/m0-dsh-core-spike.md)).
   registered secret paths while open, wherever `path` puts them ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)).
 - **Lifecycle:** the database opens in a `ctx.effect`. On unload it closes after
   the current dispose pass, so dependents can still write from their own disposers.
-- The conformance suite is [`conformance/store.ts`](conformance/store.ts), at contract 1.0:
+- **Implements:** the abstract `Store` of
+  [`@tsuuanmi/system-ledger-core`](../../ledger-core/README.md), which owns the seam's
+  types (`Migration`, `TransactionCallback`) and `RevisionConflict`; consumers import them
+  from there, and this package re-exports none of them.
+- The conformance suite is [`ledger-core/conformance/store.ts`](../../ledger-core/conformance/store.ts), at contract 1.0:
   - a transaction commits all its writes or none: a throw rolls them back and
     surfaces the error, a failed COMMIT leaves nothing behind or locked, and a
     nested step that fails rolls back only itself when the outer recovers;

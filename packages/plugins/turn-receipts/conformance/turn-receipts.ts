@@ -6,7 +6,7 @@
  * `ctx.store` and `ctx.artifacts` it injects, with no receipt yet.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { type Reconciliation, type TurnReceipt, type TurnSnapshot, responseHash } from '@tsuuanmi/system-provider-core'
 import { expect } from 'vitest'

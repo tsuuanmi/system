@@ -6,9 +6,8 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-store'
 import { expect } from 'vitest'
-import { type ContractVersion, defineSuite, type Scenario } from '../../../libs/conformance/runner.ts'
+import { type ContractVersion, defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import type { NewEvent, SystemEvent } from '../src/index.ts'
 
 export type Boot = () => Promise<{ ctx: Context; dispose: () => Promise<void> }>

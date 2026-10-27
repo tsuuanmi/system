@@ -10,7 +10,7 @@ import { hostname } from 'node:os'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-store'
+import type {} from '@tsuuanmi/system-ledger-core'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

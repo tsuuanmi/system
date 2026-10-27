@@ -4,39 +4,10 @@
  * references instead of private content, and are announced live as `system/event`.
  * @module @tsuuanmi/system-event-log
  */
-import { type Context, Service } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { EventLog as EventLogSeam, type EventQuery, type NewEvent, type SystemEvent } from '@tsuuanmi/system-ledger-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-store'
-
-/** A stored entry (schemas/event.v1.json). */
-export interface SystemEvent {
-  schema: 'event@1.0'
-  seq: number
-  at: string
-  type: string
-  runId?: string
-  nodeId?: string
-  sessionId?: string
-  turnId?: string
-  decision?: string
-  data?: Record<string, unknown>
-}
-
-export type NewEvent = Omit<SystemEvent, 'schema' | 'seq' | 'at'>
-
-declare module '@deepseek-ai/cordis' {
-  interface Context {
-    eventLog: EventLog
-  }
-  interface Events {
-    /**
-     * An entry was committed to the event log. Listeners observe; they cannot veto.
-     * @mode emit
-     */
-    'system/event'(event: SystemEvent): void
-  }
-}
 
 /** An integer page size in [1, 1000]; NaN or fractional input never reaches SQL. */
 function clampLimit(limit: number | undefined): number {
@@ -51,7 +22,7 @@ export interface Config {
   retainDays?: number
 }
 
-export class EventLog extends Service {
+export class EventLog extends EventLogSeam {
   static inject = ['store']
   static Config: z<Config> = z.object({
     maxDataBytes: z.natural().min(256).default(16_384).description('Largest serialized data accepted'),
@@ -63,7 +34,7 @@ export class EventLog extends Service {
   private readonly retainDays: number
 
   constructor(ctx: Context, config: Config) {
-    super(ctx, 'eventLog')
+    super(ctx)
     this.maxDataBytes = config.maxDataBytes ?? 16_384
     this.retainDays = config.retainDays ?? 0
     ctx.store.migrate('event-log', [{
@@ -141,7 +112,7 @@ export class EventLog extends Service {
    * the latest of them and pages back by `beforeSeq` instead of reading everything forward. A value
    * it cannot honour is refused, never ignored (INV-2).
    */
-  query(filter: { afterSeq?: number; beforeSeq?: number; order?: 'asc' | 'desc'; type?: string; runId?: string; nodeId?: string; sessionId?: string; turnId?: string; since?: string; limit?: number } = {}): SystemEvent[] {
+  query(filter: EventQuery = {}): SystemEvent[] {
     if (filter.order !== undefined && filter.order !== 'asc' && filter.order !== 'desc') throw new RangeError(`order is asc or desc, not ${String(filter.order)}`)
     if (filter.beforeSeq !== undefined && !Number.isSafeInteger(filter.beforeSeq)) throw new RangeError(`beforeSeq is not a seq: ${String(filter.beforeSeq)}`)
     const clauses = ['seq > ?']

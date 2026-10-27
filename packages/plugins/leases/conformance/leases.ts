@@ -9,7 +9,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { SchemaRegistry, sleep } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-store'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { expect, vi } from 'vitest'
 import { defineSuite, type Scenario } from '../../../libs/conformance/runner.ts'
 import type { Lease } from '../src/index.ts'

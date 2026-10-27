@@ -21,9 +21,9 @@
   },
   "dependencies": {
     "@tsuuanmi/system-approvals-core": "workspace:*",
-    "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-board-core": "workspace:*",
     "@tsuuanmi/system-gateway-core": "workspace:*",
+    "@tsuuanmi/system-ledger-core": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-workers-core": "workspace:*",
     "@tsuuanmi/system-workflow": "workspace:*"
@@ -38,6 +38,7 @@
     "@deepseek-ai/dsh-host-webserver": "0.2.1-alpha.2",
     "@deepseek-ai/schemastery": "3.18.5-alpha.1",
     "@tsuuanmi/system-approvals": "workspace:*",
+    "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-board": "workspace:*",
     "@tsuuanmi/system-browser-patchright": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",

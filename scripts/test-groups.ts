@@ -49,7 +49,7 @@ export interface Group { about: string; packages: readonly string[]; paths?: rea
 export const GROUPS: Readonly<Record<string, Group>> = {
   kernel: {
     about: 'the ledger of record and the gates beneath every other group: the store, artifacts, the event log, leases, the credentials vault, turn receipts, egress, and the plugin host',
-    packages: ['store', 'artifacts', 'event-log', 'leases', 'credentials-vault', 'turn-receipts', 'egress', 'plugin-host-core', 'plugin-host'],
+    packages: ['ledger-core', 'store', 'artifacts', 'event-log', 'leases', 'credentials-vault', 'turn-receipts', 'egress', 'plugin-host-core', 'plugin-host'],
   },
   workflow: {
     about: 'the workflow engine, the board, approvals, resources, digests, landing, worker sessions, the feedback-loop seams, and the profiles that contribute templates',

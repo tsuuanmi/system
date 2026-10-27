@@ -14,7 +14,7 @@
 import { randomBytes } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AgentRuntimeProvider, RunSpec } from '@tsuuanmi/system-agent-runtime-core'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import type { ContentId } from '@tsuuanmi/system-libs'
 import { runGate } from './gate.ts'
 import { answersWithUrl, WEB_PROBE_PROMPT, WEB_PROBE_QUERY, WEB_PROBE_RETRY_MS, WEB_PROBE_TIMEOUT_MS, WEB_PROBE_TTL_MS } from './research.ts'

@@ -63,6 +63,7 @@ export default defineConfig({
       '@tsuuanmi/system-worker-sessions': src('./packages/plugins/worker-sessions/src/index.ts'),
       '@tsuuanmi/system-workflow': src('./packages/plugins/workflow/src/index.ts'),
       '@tsuuanmi/system-workers-core': src('./packages/workers-core/src/index.ts'),
+      '@tsuuanmi/system-ledger-core': src('./packages/ledger-core/src/index.ts'),
       '@tsuuanmi/system-approvals-core': src('./packages/approvals-core/src/index.ts'),
       '@tsuuanmi/system-approvals': src('./packages/plugins/approvals/src/index.ts'),
       '@tsuuanmi/system-digest-core': src('./packages/digest-core/src/index.ts'),

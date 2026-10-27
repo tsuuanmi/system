@@ -14,12 +14,11 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { type Context, type Exporter, Logger, type Message } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-ledger-core'
 import {
   type ArtifactRef, type CompositionRow, findPlugin, MANIFEST_FILE, MANIFEST_MAX_BYTES, type ManifestFinding, type ManifestRead, PluginHost, type PluginRecord,
   pluginRecords, pluginsOf, readManifest, reconcile, reconcileChecks, type RecordedCheck, type RecordedLifecycle,
 } from '@tsuuanmi/system-plugin-host-core'
-import type {} from '@tsuuanmi/system-store'
 
 /** What the host reads of the DSH loader (`ctx.loader`, `@deepseek-ai/cordis-plugin-loader`): its entries, and the profile it resolves them from. */
 export interface LoaderView {

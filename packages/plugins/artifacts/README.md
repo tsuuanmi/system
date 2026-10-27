@@ -21,7 +21,11 @@ records ([design](../../../docs/design/artifacts.md),
 - **Config:** `explainDepth` (default 16), `explainBudget` (default 1000),
   `collectGraceHours` (default 24), `collectBatch` (default 1000: artifacts
   deleted per write transaction; the scan itself runs outside any).
-- The conformance suite is [`conformance/artifacts.ts`](conformance/artifacts.ts)
+- **Implements:** the abstract `Artifacts` of
+  [`@tsuuanmi/system-ledger-core`](../../ledger-core/README.md), which owns the seam's
+  types (`Envelope`, `Decision`, `ArtifactRead` and the rest); consumers import them from
+  there, and this package re-exports none of them.
+- The conformance suite is [`ledger-core/conformance/artifacts.ts`](../../ledger-core/conformance/artifacts.ts)
   (contract 1.1: `list` takes an optional `newest`; 1.2: an optional `outcome`), run against this plugin over a real store:
   - the id is computed from the canonical content alone (a blob by its ref and
     media type), never from the producer's id or time;

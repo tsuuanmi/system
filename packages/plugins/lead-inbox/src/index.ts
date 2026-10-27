@@ -11,10 +11,10 @@
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { SystemEvent } from '@tsuuanmi/system-event-log'
+import type { SystemEvent } from '@tsuuanmi/system-ledger-core'
 import { readCapacity, reply, type RosterServices, type ToolContext, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-store'
+import type {} from '@tsuuanmi/system-ledger-core'
 import { z as zod } from 'zod'
 import { type Closing, type Draft, KINDS, type Kind, type LeadNotice, makeNotice, readEvent, type Reading } from './notices.ts'
 import { commandSink, DEFAULT_TIMEOUT_SECONDS, fileSink, type Sink, type SinkConfig, sinkProblems, waitSink } from './sinks.ts'
