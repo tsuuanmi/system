@@ -1,6 +1,6 @@
 # ADR-0070: Workers that share no session work through a task's dossier
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-10-27; built in T233, `fd3449de`, in use by every board task's run)
 - **Date:** 2026-10-26
 - **Related:** T233, T230, T232, [PROP-0015](../../proposals/0015-right-worker-right-job.md) E6,
   [ADR-0015](0015-worker-sessions-and-peer-messaging.md),

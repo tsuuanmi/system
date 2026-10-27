@@ -1,6 +1,6 @@
 # ADR-0072: The handbook in five layers, and a bounded slice per Worker
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-10-27; the design built in T249, `88b453a4`; the slice in every brief in T259, `b311a213`; the lead's playbook in T252, `9afeb362`)
 - **Date:** 2026-10-26
 - **Related:** T249, T220, T237, [PROP-0016](../../proposals/0016-operating-model.md) §2 and D83 #3,
   [ADR-0041](0041-policy-changes-through-the-approval-queue.md),

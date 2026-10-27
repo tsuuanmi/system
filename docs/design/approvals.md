@@ -35,6 +35,15 @@
 > has no waiting status, and only the workflow engine waits on the request and continues the
 > session once approved (a board task's step waits in its live run, a plain run fails until then)
 > ([below](#where-a-workers-gate-leaves-room)).
+>
+> Built since 2026-10-25: a shell inspection command is denied at once with the read tool to use
+> (T222, `0ff03a7c`); the policy's risk-tier path map (T237, `7f0baa51`, fixed in T264, `088e42a4`,
+> [ADR-0071](../decisions/adr/0071-a-changes-risk-tier-comes-from-the-policys-path-map.md)); a
+> research role's web calls under a bounded grant (T262, `4c924619`,
+> [ADR-0074](../decisions/adr/0074-a-research-roles-web-calls-run-under-a-bounded-egress-checked-grant.md));
+> the lead principal with a closed list of rights (T273, `ef6a62f3`, its token reaching only its own
+> project in T285, `a2c7516c`, [ADR-0076](../decisions/adr/0076-the-lead-is-a-principal-of-its-own-with-a-closed-list-of-rights.md));
+> read-only git history commands on the gate (T276, `81229660`).
 
 Every action that needs a person goes through one queue, in batches, and nothing else asks the
 operator. The autonomy policy decides which actions those are; an action that is reversible and

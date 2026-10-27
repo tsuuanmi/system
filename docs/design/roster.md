@@ -13,6 +13,9 @@
 > (`capability-descriptor@1.9` `unavailableReason`), so another source's such Worker without an
 > account reason reads `unknown`; a website account's usage has no pool yet, so its windows are
 > not shown.
+>
+> Built since 2026-10-25: every tier a tiered Worker offers (T261, `a89c5bd4`; T275b, `a98662ef`);
+> Worker availability recorded as events the metrics read (T277b, `6e937cd2`).
 
 The roster is the operator's and the lead's one place to see every Worker: who it is and what the
 operator set it up for, which account it runs on and in what state that account is, what role and tier it serves, whether it

@@ -10,6 +10,10 @@
 > Implemented in [`report`](../../packages/plugins/report/README.md); differs from target: quota
 > lost at reset is not reported (the ledger's seam gives each window's latest reading only), and
 > a project's report has no attention budget per milestone.
+>
+> Built since 2026-10-25: the maturity metrics section (T236, `bc1b8015`); the lead's touches
+> recorded (T273, `ef6a62f3`); escaped defects and Worker availability read (T277b, `6e937cd2`);
+> held reviews across a restart (T286, `2d246e4d`); clean-up (T289, `2c1cd4e2`).
 
 The baseline report says what the recorded data says about a period, for one project or every
 one: progress on the board, the attempts and the reviews of their results, what asked for the

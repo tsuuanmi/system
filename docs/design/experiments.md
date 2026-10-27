@@ -14,7 +14,9 @@
 > Defined in [`experiments-core`](../../packages/experiments-core/README.md), contract 1.0, its
 > suite passed by the fake `FakeExperiments`. Differs from target: no store-backed provider, no
 > bundle row, and no MCP `experiments_*` tools yet (F3); nothing registers an experiment yet (the
-> `improve` template is F6).
+> `improve` template is F6). Status audited 2026-10-27: nothing of this seam changed from T236 to
+> T295; the reviewer eval's measured runs (`9df2529c`) are records of
+> [validation](../validation/experiments/README.md), not of this registry.
 
 The experiment registry remembers what was tried. Every experiment is registered with the
 hypothesis it tests; the registry identifies it exactly and fingerprints it semantically, answers

@@ -1,6 +1,6 @@
 # ADR-0074: A research role's web calls run unasked under a bounded, egress-checked grant, and research's second review prefers it
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-10-27; built in T262, `4c924619`)
 - **Date:** 2026-10-26
 - **Related:** T262, the operator's decision D91 of 2026-10-26 (the Gemini web Worker stalled on
   research's second review three times in T229 and three in T248, so the second family is a Claude

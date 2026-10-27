@@ -14,7 +14,8 @@
 > store-backed provider and no bundle row yet (F4); the statistics library
 > ([statistics](statistics.md)) has one method, `sign-flip`, so a protocol naming `bootstrap` or
 > `bayesian` cannot start; no collector (F5); how a trial's run is fixed to its arm's Workers is
-> open ([where the tables leave room](#where-the-tables-leave-room)).
+> open ([where the tables leave room](#where-the-tables-leave-room)). Status audited 2026-10-27:
+> nothing of this seam changed from T236 to T295.
 
 The evaluation engine is the loop's judge. It runs a pre-registered experiment offline, under the
 pins and seals the experiment froze, as paired trials whose order is drawn from the experiment's

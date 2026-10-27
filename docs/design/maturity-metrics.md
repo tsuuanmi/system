@@ -7,8 +7,10 @@
 > Payload: [`mcp-report@1.6`](../reference/schemas.md#mcp-tool-metrics) `$defs/metrics-output`.
 >
 > Implemented in [`report`](../../packages/plugins/report/README.md) (`metrics.ts`): MCP `metrics`,
-> `system metrics`, and the weekly report's last section. Differs from target: three metrics are not
-> measurable yet (below), and a value the records only bound says so.
+> `system metrics`, and the weekly report's last section (T236, `bc1b8015`; escaped defects and
+> Worker availability recorded and read, T277b, `6e937cd2`). Differs from target: three metrics are
+> not measurable yet (traced landings, gate coverage, quota idle; below), and a value the records
+> only bound says so. The 30-day evidence period starts 2026-10-27.
 
 PROP-0016 judges System's level by what its records show over a rolling 30 days, never by the
 features built. This is the code that reads them. Each metric of §1 is computed from recorded data

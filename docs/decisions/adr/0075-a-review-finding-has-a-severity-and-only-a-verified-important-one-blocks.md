@@ -1,6 +1,6 @@
 # ADR-0075: A review finding has a severity and its evidence, and only an important one a second reviewer confirmed blocks
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-10-27; built in T266, `67991500`; with T267, `c524543e`, and T287, `21f1bec1`)
 - **Date:** 2026-10-26
 - **Related:** T266 (operator, D93), T232 (findings to the author's session), T233 /
   [ADR-0070](0070-workers-that-share-no-session-work-through-a-tasks-dossier.md) (the dossier),

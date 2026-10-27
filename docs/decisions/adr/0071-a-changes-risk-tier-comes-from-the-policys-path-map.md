@@ -1,6 +1,6 @@
 # ADR-0071: A change's risk tier comes from the policy's path map, and a heavy one needs a second family and the operator
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-10-27; built in T237, `7f0baa51`, fixed in T264, `088e42a4`; applied to a first review in T288, `d81d8def`)
 - **Date:** 2026-10-26
 - **Related:** T237, [PROP-0016](../../proposals/0016-operating-model.md) §4 and its decision (D83, open
   question 4), [ADR-0027](0027-provider-diversity-in-routing.md),

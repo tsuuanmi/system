@@ -1,6 +1,7 @@
 # Packaging: a project from a template
 
-> Implemented in [`packages/cli`](../../packages/cli/src/project.ts) (`system project new`) with
+> Built in T251 (`4e24a68e`), PROP-0016 I5 part 0; the operator's pages across projects in
+> T253 (`20fe4c45`). Implemented in [`packages/cli`](../../packages/cli/src/project.ts) (`system project new`) with
 > the templates in [`packages/cli/templates`](../../packages/cli/templates/README.md); differs from
 > target: one kind (`software-repository`) of PROP-0016 §6's three; the attention budget, portfolio
 > scheduling, reporting up, and global ids are later parts of I5.

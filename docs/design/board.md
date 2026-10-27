@@ -21,6 +21,15 @@
 > lines ([ADR-0047](../decisions/adr/0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md));
 > only a Worker source with a worktree per run writes `TASKS.md`
 > ([TASKS.md in a run's workspace](workflow-engine.md#tasksmd-in-a-runs-workspace)).
+>
+> Built since 2026-10-25: a heavy result held for the operator (T237, `7f0baa51`,
+> [ADR-0071](../decisions/adr/0071-a-changes-risk-tier-comes-from-the-policys-path-map.md));
+> auto-accept holds a result whose browser tests did not run (T255, `adbfeef1`); an auto-accept
+> circuit breaker on escapes (T268, `006a84e5`); the lead's moves as its own principal (T273,
+> `ef6a62f3`, [ADR-0076](../decisions/adr/0076-the-lead-is-a-principal-of-its-own-with-a-closed-list-of-rights.md));
+> escaped defects recorded (T277b, `6e937cd2`); a review held for the operator survives a restart
+> and an expired one can be re-opened (T286, `2d246e4d`); the verdict read from the last review of
+> the final tree (T287, `21f1bec1`); an attempt not spent on a quota limit or a restart (T272b, `6baddb75`).
 
 The board holds work that outlives a run: projects with charters, and their tasks. A run of the
 [workflow engine](workflow-engine.md) serves one attempt of one task. Only the board moves a

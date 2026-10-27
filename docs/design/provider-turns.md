@@ -11,7 +11,8 @@
 > target: the driver steps (open, mode, submit, binding, extract) run inside `ask`; turns are not
 > bound by provider turn id (the receipt binds the conversation and the response boundary); there
 > is no measured composer budget or multipart transfer for [large inputs](#large-inputs), and no
-> attachments.
+> attachments. Status audited 2026-10-27: nothing of this mechanism changed from T236 to T295
+> (clean-up T244, `c6341b5b`; a deterministic test, T279c, `059637bf`).
 
 ## Driver interface
 

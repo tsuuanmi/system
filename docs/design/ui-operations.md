@@ -1,6 +1,7 @@
 # UI operations: maps, engine, and self-healing
 
 > Target state. Decision: [ADR-0021](../decisions/adr/0021-ui-operations-as-data.md).
+> Status audited 2026-10-27: nothing of this mechanism changed from T236 to T295.
 > Shape: [`ui-map.v1.json`](../../schemas/ui-map.v1.json). Evidence:
 > [research](../research/browser-interaction-and-self-healing.md). Used by the
 > provider drivers on [`ctx.browser`](browser-runtime.md).

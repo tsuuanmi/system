@@ -5,6 +5,12 @@
 > 2026-10-26, D83; I1). The risk tier it selects by is
 > [ADR-0071](../decisions/adr/0071-a-changes-risk-tier-comes-from-the-policys-path-map.md)'s (T237).
 >
+> Built: part 1, this design and the rule inventory (T249, `88b453a4`); the lead's playbook and
+> onboarding, layer 4 (T252, `9afeb362`); part 2 (T259, `b311a213`, below). ADR-0072 is accepted
+> (2026-10-27). Also built: the review guides, the author's own checks, and a fresh-context
+> self-review (T267, `c524543e`), the checks recorded by the System (T284, `905c2f32`); the
+> [scheduled review](#scheduled-review) of existing code (T290, `688ec090`). Not built: part 3 (the lead's file), part 4, probation's trust tiers.
+>
 > Implemented for I1 part 2 (T259). The layers are declared once (workflow `src/handbook.ts`
 > `HANDBOOK_LAYERS`); every step of a board task's run is given its slice, selected by role, class,
 > risk tier, and touched paths: the engine's half as a `handbook-slice@1.0` context pointer, read
