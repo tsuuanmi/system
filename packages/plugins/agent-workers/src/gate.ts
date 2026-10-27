@@ -221,6 +221,12 @@ const FIELDS: Record<string, Record<string, FieldType>> = {
 const EDIT_FIELDS: Record<string, FieldType> = { old_string: 'string', new_string: 'string', replace_all: 'boolean' }
 
 const SUMMARY_MAX = 500
+/**
+ * The characters of a Bash command the gate accepts (T295): a request carries it whole in its
+ * `consequences` (approval-request@1's bound is 2000 characters, the rest of the text fits in the
+ * remaining 500), beside a short summary; a longer command is refused, never cut.
+ */
+export const COMMAND_MAX = 1500
 const clamp = (text: string): string => (text.length > SUMMARY_MAX ? `${text.slice(0, SUMMARY_MAX - 1)}…` : text)
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -748,7 +754,7 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
   ]
   const tail = [
     ...(lines.length || listing.length ? [] : ['- none now: every call asks the operator or is denied.']),
-    `Refused by the gate, never asked: a Bash command is words split on single spaces, never parsed by a shell, so a word with a shell metacharacter (; & | $ < > ( ) quotes * ? ~ and the like) or an empty word (a doubled, leading, or trailing space) is denied. Name every path in a Bash command absolute: the gate does not see the directory a command runs in, so a relative path makes no command a read.${bashReads}`,
+    `Refused by the gate, never asked: a Bash command is words split on single spaces, never parsed by a shell, so a word with a shell metacharacter (; & | $ < > ( ) quotes * ? ~ and the like) or an empty word (a doubled, leading, or trailing space) is denied. Name every path in a Bash command absolute: the gate does not see the directory a command runs in, so a relative path makes no command a read.${bashReads}${readOnly ? '' : ` Tests: one test file runs as corepack pnpm vitest run <its absolute path inside the workspace>, judged as a write of the workspace (a relative path is refused there). Several test files in one command are a command the operator is asked about: name them with paths relative to your worktree (corepack pnpm vitest run packages/plugins/x/tests/a.spec.ts packages/plugins/x/tests/b.spec.ts), so the operator reads it short and whole; a command past ${COMMAND_MAX} characters is refused.`}`,
     otherwise,
   ]
   if (listing.length) {
@@ -997,6 +1003,8 @@ export function classify(call: ToolCall, workspace: string, options: ClassifyOpt
   if (tool === COMMAND) {
     const command = input.command
     if (typeof command !== 'string' || command === '') return { refused: `${tool} names no command`, reason: 'invalid-input' }
+    // A request carries the whole command, so a longer one is refused, never cut (T295).
+    if (command.length > COMMAND_MAX) return { refused: `${tool}: the command is ${command.length} characters, past the ${COMMAND_MAX} an approval request shows whole; run a shorter command: give paths relative to your worktree, and fewer files per command`, reason: 'invalid-input' }
     const argv = command.split(' ')
     // Defence in depth: the policy forbids a metacharacter word too, but the gate never asks it about one.
     const empty = argv.indexOf('')
@@ -1017,12 +1025,12 @@ export function classify(call: ToolCall, workspace: string, options: ClassifyOpt
     if (isOneTestRun(argv)) {
       const file = argv[ONE_TEST_RUN.length]!
       if (!pathWord(workspace, file)) return { refused: `${tool}: ${clamp(file)} is not a test file inside the workspace (an absolute path, with no "..", that stays inside it on disk): one test file runs only inside the run's worktree`, reason: 'outside-workspace' }
-      return { class: 'workspace-write', summary: clamp(command), consequences: `Runs the one test file ${clamp(file)} inside the run's workspace, its output readable; it writes only the test runner's caches there. ${ANSWER}` }
+      return { class: 'workspace-write', summary: clamp(command), consequences: `Runs the one test file ${file} inside the run's workspace, its output readable; it writes only the test runner's caches there. ${ANSWER}` }
     }
     // An inspection command the agent has a reading tool for is denied at once, naming it, never asked (T222).
     const inspection = inspectionRefusal(argv, options.readTools)
     if (inspection) return inspection
-    return { class: 'command', command: argv, summary: clamp(`${tool}: ${command}`), consequences: `Runs this exact command in the run's workspace. ${ANSWER}` }
+    return { class: 'command', command: argv, summary: clamp(`${tool}: ${command}`), consequences: `Runs this exact command in the run's workspace: ${command}\n${ANSWER}` }
   }
   const send = Object.hasOwn(SENDS, tool) ? SENDS[tool] : undefined
   if (send) {
@@ -1303,7 +1311,11 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
       const cause = request.resolution?.cause
       const how = cause === 'verdict' ? 'rejected by the operator' : cause === 'expired' ? 'unanswered when it expired' : 'withdrawn before a verdict (unanswered in time, its work ended, or the policy changed)'
       deniedEvent(call, cause === 'verdict' ? 'request-rejected' : cause === 'expired' ? 'request-expired' : 'request-withdrawn', request.resolution?.decision, { actionClass: action.class, requestId: request.requestId })
-      return { verdict: { decision: 'deny', reason: `approval request ${request.requestId} for exactly this call was ${how}, so it does not run; go on without it` } }
+      // The operator's own note on the verdict (what to run instead) is the tool result's, so the next try can follow it (T295).
+      const approval = request.resolution?.approval
+      const said = cause === 'verdict' && approval ? (ctx.artifacts.get(approval)?.body as { note?: unknown } | undefined)?.note : undefined
+      const note = typeof said === 'string' && said.trim() ? `. The operator's note: ${said.trim().slice(0, 2000)}` : ''
+      return { verdict: { decision: 'deny', reason: `approval request ${request.requestId} for exactly this call was ${how}, so it does not run; go on without it${note}` } }
     }
     const denial = workflowDenial(call, inputHash)
     if (denial) {

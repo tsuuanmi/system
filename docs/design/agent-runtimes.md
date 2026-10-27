@@ -247,8 +247,16 @@ What it does with a hook was established live on the host, and the bridge is bui
   on disk (links followed): it runs unasked wherever the policy lets a write of the workspace run
   (the runner writes only its caches there, under the run's sandbox), with no line on the commands
   list. The same command on a path outside the worktree, or a relative one, is refused
-  (`outside-workspace`); any other word, option, or a second path leaves it a `command`, judged by
-  its exact argv.
+  (`outside-workspace`: the gate does not see the directory a command runs in); any other word,
+  option, or a second path leaves it a `command`, judged by its exact argv. A writing Worker's
+  brief says so, and tells it to name several test files in one command relative to its worktree,
+  so the command it asks about stays short and is read whole (T295).
+- **A command is carried whole (T295).** A Bash command of at most 1,500 characters
+  (`COMMAND_MAX`) is put whole in its approval request's `consequences` (the record's bound is
+  2,000), beside a summary cut at 500, so the approvals API and the /ui show what would run. A
+  longer command is refused at once (`invalid-input`) with a reason asking for a shorter one,
+  never cut. The operator's note on a rejection is the denial's tool result, after the
+  denial's words, so the Worker's next try can follow it.
 - **A tool that ran past the gate.** Codex reports each tool's work as an item (a command, a file
   change, an MCP call, a web search). Every item a tool produces must be accounted for by a call
   the gate allowed; one that is not (a hook that failed and let the tool run) stops the run, which
