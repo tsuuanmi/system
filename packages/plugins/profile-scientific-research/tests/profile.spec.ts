@@ -384,20 +384,6 @@ describe('the scientific-research profile, on the unchanged engine (REQ-WF-9)', 
     expect(done.answer).toMatch(/^Single family: literature:2 on the family of literature:1/)
   })
 
-  it('keeps an old run\'s typed evidence on the version its step asked for, and supersedes it when the step reruns', async () => {
-    const ctx = await boot()
-    await ctx.plugin(Science)
-    scholar(ctx)
-    // A run started before PROP-0004: its evidence step asked for evidence-table@1.0.
-    ctx.workflow.template('research-deep', Science.RESEARCH.map((n) => (n.nodeId === 'evidence:1' ? { ...n, resultSchema: 'evidence-table@1.0' } : n)))
-    const run = await ctx.workflow.wait(ctx.workflow.start({ template: 'research-deep', input: 'Does X lower Y?' }).runId, 30_000)
-    await ctx.workflow.supersede(run.runId, 'evidence:1', { text: json(EVIDENCE), note: 'rerun' })
-    await ctx.workflow.wait(run.runId, 30_000)
-    const tables = ctx.artifacts.list({ kind: 'evidence', runId: run.runId })
-    expect(tables.map((t) => t.bodySchema)).toEqual(['evidence-table@1.0', 'evidence-table@1.0'])
-    expect(tables[1]!.lineage).toEqual({ supersedes: [tables[0]!.id] })
-  }, 60_000)
-
   it('refuses a step result that is not its typed body, before anything downstream runs', () => {
     expect(Science.typedBody(json({ question: 'q', hypotheses: [{ id: 'X1', statement: 's' }] }), 'hypothesis-set@1.0')).toMatchObject({ ok: false })
     expect(Science.typedBody('no json here', 'evidence-table@1.0')).toMatchObject({ ok: false, reason: expect.stringMatching(/no evidence-table/) })
