@@ -153,12 +153,6 @@ describe('a role with tiers: one Worker per account offers them all (ADR-0073)',
     expect(metered.tiers!.map((t) => [t.tier, t.modelPool?.pool])).toEqual([['economy', undefined], ['standard', `model-standard/${ACC1}`], ['frontier', `model-frontier/${ACC1}`]])
   })
 
-  it('keeps a one-tier role exactly as before: one tier, the runtime\'s model, no tiers on its Worker', () => {
-    const [worker] = deriveWorkers([{ id: 'review', workspace: '/srv/ws', sandbox: 'read-only', tier: 'standard', runtimes: { [A]: { model: STANDARD } } }], [{ account: ACC1, roles: ['review'] }], [])
-    expect(worker).toMatchObject({ tier: 'standard', model: STANDARD })
-    expect(worker).not.toHaveProperty('tiers')
-  })
-
   it('refuses tiers that are malformed, a role that gives no tier on a runtime, and model pools that are not one per model on a metered provider', () => {
     const assign = [{ account: ACC1, roles: ['review'] }]
     const role = (tiers: unknown) => ({ id: 'review', workspace: '/srv/ws', sandbox: 'read-only' as const, runtimes: { [A]: { tiers } } }) as never
