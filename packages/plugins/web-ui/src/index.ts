@@ -15,7 +15,7 @@
  * @module @tsuuanmi/system-web-ui
  */
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -29,6 +29,7 @@ import { type ArtifactRef, BoardError, type BoardTask, type Project, type TaskSt
 import { dshHome, isRecord, registerSecretPath } from '@tsuuanmi/system-libs'
 import type { TaskLanding, TemplateStep } from '@tsuuanmi/system-workflow'
 import type { CapabilityDescriptor } from '@tsuuanmi/system-workers-core'
+import type { ActivityResponse, ApprovalsResponse, DailyResponse, DispatchResponse, LeadResponse, Landing, LiveResponse, ProjectCard, ProjectsResponse, RosterResponse, RunsResponse, TaskCard, WaitingResponse } from './api.js'
 import { renderShell } from './ui/shell.ts'
 import { APP_CSS } from './ui/styles/index.ts'
 
@@ -58,9 +59,12 @@ const DEFAULT_CLIENT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '
 function clientAssets(dir: string): ReadonlyMap<string, { body: Buffer; type: string; etag: string }> {
   let script: Buffer
   try { script = readFileSync(join(dir, 'app.js')) } catch (error) { throw new Error(`the web UI's client file app.js is not in ${dir} (run the package's build): ${(error as Error).message}`) }
+  // `app.js` loads the page's other modules (`import('./boot.js')`): every compiled `.js` file beside it is served under its own name.
+  const modules = readdirSync(dir).filter((file) => /^[A-Za-z0-9-]+\.js$/.test(file) && file !== 'app.js').sort()
   const files: ReadonlyArray<readonly [path: string, body: Buffer, type: string]> = [
     ['', Buffer.from(renderShell({ stylesheets: [{ src: '/ui/app.css' }], scripts: [{ src: '/ui/app.js' }] })), 'text/html; charset=utf-8'],
     ['app.js', script, 'text/javascript; charset=utf-8'],
+    ...modules.map((file): readonly [string, Buffer, string] => [file, readFileSync(join(dir, file)), 'text/javascript; charset=utf-8']),
     ['app.css', Buffer.from(APP_CSS), 'text/css; charset=utf-8'],
   ]
   return new Map(files.map(([path, body, type]) => [path, { body, type, etag: `"sha256-${createHash('sha256').update(body).digest('hex')}"` }]))
@@ -312,7 +316,7 @@ export function requiredChecks(policies: readonly AutonomyPolicy[], actionClass:
  * and a pending amendment, its open tasks per state (what a close would cancel, or what refuses
  * it), and its closure.
  */
-export function projectOf(project: Project, open: readonly BoardTask[]): Record<string, unknown> {
+export function projectOf(project: Project, open: readonly BoardTask[]): Omit<ProjectCard, 'tasks' | 'more' | 'autoAcceptBreakers'> & Record<string, unknown> {
   const counts = Object.fromEntries(OPEN_STATES.map((s) => [s, 0])) as Record<TaskState, number>
   for (const task of open) counts[task.state] += 1
   return {
@@ -332,8 +336,8 @@ const ALL_STATES: readonly TaskState[] = [...OPEN_STATES, 'done', 'cancelled']
  * most {@link CARDS_PER_STATE} each (`more` counts the rest): what it is, its run, its lease's
  * holder, and what it waits on (an approval request the page links to its card).
  */
-export function cardsOf(tasks: readonly BoardTask[], landingOf: (runId: string) => TaskLanding | undefined = () => undefined, by?: (ref: string) => Decided | undefined): { tasks: Array<Record<string, unknown>>; more: Partial<Record<TaskState, number>> } {
-  const out: Array<Record<string, unknown>> = []
+export function cardsOf(tasks: readonly BoardTask[], landingOf: (runId: string) => TaskLanding | undefined = () => undefined, by?: (ref: string) => Decided | undefined): { tasks: Array<TaskCard & Record<string, unknown>>; more: Partial<Record<TaskState, number>> } {
+  const out: Array<TaskCard & Record<string, unknown>> = []
   const more: Partial<Record<TaskState, number>> = {}
   const changed = (t: BoardTask): string => t.updatedAt ?? t.createdAt
   for (const state of ALL_STATES) {
@@ -358,7 +362,7 @@ export function cardsOf(tasks: readonly BoardTask[], landingOf: (runId: string) 
  * shows it: the merge request it waits on, the merge commit, or why it was not merged. Nothing when
  * there is nothing to land.
  */
-function landingCard(landing: TaskLanding | undefined, by: (ref: string) => Decided | undefined = () => undefined): Record<string, unknown> {
+function landingCard(landing: TaskLanding | undefined, by: (ref: string) => Decided | undefined = () => undefined): { landing?: Landing & Record<string, unknown> } {
   if (!landing || landing.state === 'none') return {}
   const accepted = landing.acceptance ? by(landing.acceptance) : undefined
   const approved = landing.approval ? by(landing.approval) : undefined
@@ -442,11 +446,11 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (!approvals) return json(res, 503, { error: 'the approval queue is not running' })
     if (path === 'approvals') {
       if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
-      if (lead === undefined) return json(res, 200, { batches: byBatch(await approvals.list()) })
+      if (lead === undefined) return json(res, 200, { batches: byBatch(await approvals.list()) } satisfies ApprovalsResponse)
       // A lead lists its project's requests: those its requester names, and a Worker's command whose board task is the project's (ADR-0076).
       const mine: ApprovalRequest[] = []
       for (const r of await approvals.list()) if ((approvals.projectOfRequest ? await approvals.projectOfRequest(r) : r.requester.projectId) === lead) mine.push(r)
-      return json(res, 200, { batches: byBatch(mine) })
+      return json(res, 200, { batches: byBatch(mine) } satisfies ApprovalsResponse)
     }
     if (path !== 'approvals/decide') return json(res, 404, { error: 'not found' })
     if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
@@ -640,7 +644,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (!board) return json(res, 503, { error: 'the board is not running' })
     if (path === 'projects') {
       if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
-      const listed: Array<Record<string, unknown>> = []
+      const listed: ProjectsResponse['projects'] = []
       for (const project of await board.projects()) {
         const tasks = await board.tasks({ projectId: project.projectId, states: [...ALL_STATES] })
         // Where the auto-accept circuit breaker has turned auto-accept off for the project (D93): shown on Home, turned on by the operator or the lead only.
@@ -652,7 +656,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       }
       // A stable sort: in creation order, the closed ones last.
       listed.sort((a, b) => Number(a.state === 'closed') - Number(b.state === 'closed'))
-      return json(res, 200, { projects: listed })
+      return json(res, 200, { projects: listed } satisfies ProjectsResponse)
     }
     const match = /^projects\/([^/]+)\/(pause|resume|close)$/.exec(path)
     if (!match) return json(res, 404, { error: 'not found' })
@@ -770,7 +774,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (!raw || Number.isNaN(since.getTime())) return json(res, 400, { error: 'since must be an ISO time' })
     const at = since.toISOString()
     const shown = <T>(list: T[], more = false): { value: T[]; more?: true } => ({ value: list.slice(0, ACTIVITY_SHOWN), ...(more || list.length > ACTIVITY_SHOWN ? { more: true as const } : {}) })
-    let runs: Record<string, unknown>
+    let runs: ActivityResponse['runs']
     try {
       // By state and when it changed, not among the latest started: a long run that ended since is found.
       runs = shown(ctx.workflow.usage(ACTIVITY_SHOWN + 1, { status: ['completed', 'failed'], changedSince: at }).map((r) => ({
@@ -782,11 +786,11 @@ export function apply(ctx: Context, config: Config = {}): void {
       runs = { unknown: `the runs could not be read: ${(error as Error).message.slice(0, 200)}` }
     }
     const board = ctx.get('board')
-    let tasks: Record<string, unknown>
+    let tasks: ActivityResponse['tasks']
     if (!board) tasks = { unknown: 'the board is not running' }
     else {
       try {
-        const moved: Array<Record<string, unknown> & { at: string }> = []
+        const moved: Array<Extract<ActivityResponse['tasks'], { value: unknown }>['value'][number]> = []
         for (const project of await board.projects()) {
           for (const task of await board.tasks({ projectId: project.projectId, states: ACTIVITY_STATES })) {
             const landing = task.state === 'done' && task.run ? ctx.workflow.landing(task.run.runId) : undefined
@@ -805,7 +809,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     }
     const eventLog = ctx.get('eventLog' as never) as EventReads | undefined
     const approvals = ctx.get('approvals')
-    let expired: Record<string, unknown>
+    let expired: ActivityResponse['expired']
     if (!eventLog) expired = { unknown: 'the event log (ctx.eventLog) is not mounted' }
     else {
       try {
@@ -833,7 +837,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         expired = { unknown: `the event log could not be read: ${(error as Error).message.slice(0, 200)}` }
       }
     }
-    return json(res, 200, { since: at, asOf: new Date().toISOString(), runs, tasks, expired })
+    return json(res, 200, { since: at, asOf: new Date().toISOString(), runs, tasks, expired } satisfies ActivityResponse)
   }
 
   /**
@@ -860,7 +864,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       // By state, not among the latest started: a run that has been running for hours is still live.
       running = ctx.workflow.usage(LIVE_RUNS + 1, { status: ['running'] })
     } catch (error) {
-      return json(res, 200, { asOf: new Date().toISOString(), runs: { unknown: `the running runs could not be read: ${(error as Error).message.slice(0, 200)}` } })
+      return json(res, 200, { asOf: new Date().toISOString(), runs: { unknown: `the running runs could not be read: ${(error as Error).message.slice(0, 200)}` } } satisfies LiveResponse)
     }
     /** The newest entry a read gives, or why there is none to give. */
     const newest = (filter: Omit<Parameters<EventReads['query']>[0], 'order' | 'limit'>): { entry?: ReturnType<EventReads['query']>[number] } | { unknown: string } => {
@@ -886,7 +890,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         stalled: typeof stalled === 'string' ? { unknown: stalled } : { value: stalled.has(r.runId) ? { since: stalled.get(r.runId)! } : null },
       }
     })
-    return json(res, 200, { asOf: new Date().toISOString(), runs: { value: runs, ...(running.length > LIVE_RUNS ? { more: true } : {}) } })
+    return json(res, 200, { asOf: new Date().toISOString(), runs: { value: runs, ...(running.length > LIVE_RUNS ? { more: true } : {}) } } satisfies LiveResponse)
   }
 
   /**
@@ -910,7 +914,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (since && Number.isNaN(since.getTime())) return json(res, 400, { error: 'since must be an ISO time' })
     const why = (what: string, error: unknown): { unknown: string } => ({ unknown: `${what} could not be read: ${(error as Error).message.slice(0, 200)}` })
     const approvals = ctx.get('approvals')
-    let requests: { value: number } | { unknown: string }
+    let requests: WaitingResponse['requests']
     try {
       // A queue the composition does not mount holds no request (the page shows it as not running).
       requests = { value: approvals ? (await approvals.list()).length : 0 }
@@ -918,7 +922,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       requests = why('the approval queue', error)
     }
     const board = ctx.get('board')
-    let reviews: { value: number; firstExpires?: string } | { unknown: string }
+    let reviews: WaitingResponse['reviews']
     // A board the composition does not mount holds no review.
     if (!board) reviews = { value: 0 }
     else {
@@ -933,7 +937,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         reviews = why('the board', error)
       }
     }
-    let runs: { value: unknown[]; more?: true } | { unknown: string }
+    let runs: WaitingResponse['runs']
     try {
       const running = ctx.workflow.usage(WAITING_READ, { status: ['running'] })
       const failed = ctx.workflow.usage(WAITING_READ, { status: ['failed'], ...(since ? { changedSince: since.toISOString() } : {}) })
@@ -945,7 +949,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     const parts = [requests, reviews, runs]
     const count = (('value' in requests) ? requests.value : 0) + (('value' in reviews) ? reviews.value : 0) + (('value' in runs) ? runs.value.length : 0)
     const partial = parts.some((p) => 'unknown' in p) || ('more' in runs && runs.more === true)
-    return json(res, 200, { asOf: new Date().toISOString(), ...(since ? { since: since.toISOString() } : {}), requests, reviews, runs, count, ...(partial ? { partial: true } : {}) })
+    return json(res, 200, { asOf: new Date().toISOString(), ...(since ? { since: since.toISOString() } : {}), requests, reviews, runs, count,...(partial ? { partial: true } : {}) } satisfies WaitingResponse)
   }
 
   /**
@@ -966,7 +970,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       board: ctx.get('board') as RosterServices['board'],
     }
     try {
-      return json(res, 200, await readRoster(services, { scope: 'operator' }))
+      return json(res, 200, await readRoster(services, { scope: 'operator' }) satisfies RosterResponse)
     } catch (error) {
       return json(res, 500, { error: `the roster could not be made: ${(error as Error).message.slice(0, 500)}` })
     }
@@ -1072,13 +1076,13 @@ export function apply(ctx: Context, config: Config = {}): void {
    */
   const leadPanel = (req: IncomingMessage, res: ServerResponse, lead?: string): void => {
     if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
-    const inbox = ctx.get('leadInbox' as never) as { unread(project?: string, limit?: number): unknown[]; digests(project: string, limit?: number): unknown[]; stats(project?: string): unknown } | undefined
+    const inbox = ctx.get('leadInbox' as never) as { unread(project?: string, limit?: number): LeadResponse['unread']; digests(project: string, limit?: number): LeadResponse['digests']; stats(project?: string): LeadResponse['stats'] } | undefined
     if (!inbox) return json(res, 503, { error: 'the lead inbox is not running' })
     const asked = new URL(req.url ?? '/', 'http://localhost').searchParams.get('project') ?? undefined
     if (lead !== undefined && asked !== undefined && asked !== lead) return json(res, 403, { error: `the lead token of project ${lead} reaches only project ${lead}'s inbox` })
     const project = lead ?? asked
     if (project === undefined) return json(res, 400, { error: 'name the project: ?project=<id>' })
-    return json(res, 200, { project, unread: inbox.unread(project, 50), digests: inbox.digests(project, 5), stats: inbox.stats(project) })
+    return json(res, 200, { project, unread: inbox.unread(project, 50), digests: inbox.digests(project, 5), stats: inbox.stats(project) } satisfies LeadResponse)
   }
 
   const api = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
@@ -1103,12 +1107,12 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (path === 'waiting') return waiting(req, res)
     if (path === 'runs/live') return req.method === 'GET' ? live(res) : json(res, 405, { error: 'method not allowed' })
     // The last daily run of every browser spec (T305b), for Home.
-    if (path === 'daily-check') return req.method === 'GET' ? json(res, 200, ctx.workflow.dailyCheckReport(1)) : json(res, 405, { error: 'method not allowed' })
+    if (path === 'daily-check') return req.method === 'GET' ? json(res, 200, ctx.workflow.dailyCheckReport(1) satisfies DailyResponse) : json(res, 405, { error: 'method not allowed' })
     // Dispatch (ADR-0064): the starts System proposes, for Home's "Starts awaiting approval"; their verdicts go
     // through the approval queue (approvals/decide), each on its request's exact subject.
-    if (path === 'dispatch') return req.method === 'GET' ? json(res, 200, ctx.workflow.dispatchStatus()) : json(res, 405, { error: 'method not allowed' })
+    if (path === 'dispatch') return req.method === 'GET' ? json(res, 200, ctx.workflow.dispatchStatus() satisfies DispatchResponse) : json(res, 405, { error: 'method not allowed' })
     const workflow = ctx.workflow
-    if (req.method === 'GET' && path === 'runs') return json(res, 200, { runs: workflow.usage(100) })
+    if (req.method === 'GET' && path === 'runs') return json(res, 200, { runs: workflow.usage(100) } satisfies RunsResponse)
     const match = /^runs\/([A-Za-z0-9_-]{1,100})(?:\/(approve|vote|stop|continue|review))?$/.exec(path)
     if (!match) return json(res, 404, { error: 'not found' })
     const [, runId, action] = match as unknown as [string, string, string | undefined]

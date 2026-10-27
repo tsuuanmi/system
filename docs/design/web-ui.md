@@ -150,14 +150,22 @@ The page is all TypeScript, none of it a hand-written HTML, CSS, or JS file (PRO
 `src/ui/shell.ts` (`renderShell`, the shell as a function whose scripts and stylesheets are typed inputs, each
 with an optional subresource-integrity hash and CSP nonce), `src/ui/styles/` (the design tokens as typed
 constants in `tokens.ts`, a `css` template helper, and the rules in `base.ts` and `pages.ts`, joined by
-`stylesheet` into `APP_CSS`), and `client/app.ts` (the script, TypeScript with the DOM lib, so the linter, the
-type checker, and the dead-code check read it). The server renders the shell and the stylesheet at start (same
+`stylesheet` into `APP_CSS`), and `client/` (the script: typed ES modules with the DOM lib, so the linter, the
+type checker, and the dead-code check read them). The server renders the shell and the stylesheet at start (same
 input, same bytes) and reads the script that the package's build compiles with `tsc` (no bundler) to
-`lib/client/app.js` (`clientDir`, default `lib/client/`); it refuses to start when the script is missing, and
-serves each as its bytes with its sha256 content hash as its `ETag`, `no-store`, and the same strict
-content security policy. `app.ts` is still the old script, typed enough to compile (`any` where needed,
-`TODO(T304)`; the client is compiled under `strict` with nothing turned off, so T304 types what is still `any`), served as a
-classic script; the parts that follow split it into modules. Tests build the client into a temporary
+`lib/client/` (`clientDir`, default `lib/client/`); it refuses to start when `app.js` is missing, and
+serves each file as its bytes with its sha256 content hash as its `ETag`, `no-store`, and the same strict
+content security policy. `app.ts` is a classic script of a few lines (the shell's `<script src="/ui/app.js">`
+stays as it was) that runs `import('./boot.js')`; the server serves every compiled `.js` file of `clientDir`
+beside it. The modules are split by page and concern, each under 600 lines, none with an `any`
+(`tests/client-source.spec.ts` fails on a longer module or an `any`): `dom.ts` (the shared blocks: element,
+chip, fold, copy button, table, decision button and its tooltip, times), `state.ts` (the token and the API client, the
+state the address names, `show` and `report`), `router.ts` (the links and the pages they open), `boot.ts` (navigation and
+the refresh), `glossary.ts` and `help.ts`, `describe.ts` and `queue.ts` (the approval queue's cards), `evidence.ts` and
+`reviews.ts`, `runwords.ts` and `runpage.ts`, `home.ts`, `since.ts`, `dispatch.ts`, `board.ts` (with the lead panel),
+`roster.ts` and `workers.ts`, `policy.ts` and `changeview.ts`, and `reports.ts`. The API's response types are one
+declaration file, `src/api.d.ts`, imported with `import type` by the server (which checks what it sends against them)
+and by the client (a declaration file, so the build emits nothing of it). Tests build the client into a temporary
 directory and pass it as `clientDir`: they never write into the package.
 
 ## Visual system
