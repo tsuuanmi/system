@@ -5,7 +5,7 @@
  */
 import type { Action, ActionClass, AutonomyPolicy, Check, ContentHash, Mode, ModeChange } from '@tsuuanmi/system-approvals-core'
 import { ALWAYS_ASK, applyingPolicies as applying, MODES, riskMapProblems, SHELL_METACHARACTER, tierByRiskProblems, waitSeconds as expiryOf, webAccessLines, webAccessProblems } from '@tsuuanmi/system-approvals-core'
-import { contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
+import { contentId, SchemaRegistry, unique } from '@tsuuanmi/system-libs'
 
 /** Every action class (`common@1`'s `actionClass`), in the order `policy()` reports them. */
 export const ACTION_CLASSES: readonly ActionClass[] = ['read', 'workspace-write', 'merge', 'command', 'external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change', 'promotion', 'dispatch']
@@ -288,7 +288,7 @@ export function proposedSet(base: PolicySet, policy: AutonomyPolicy): { policies
  * consequences name it apart, and the operator approves exactly what comes into force.
  */
 export function webAccessEffect(before: PolicySet, after: PolicySet): string | undefined {
-  const projects = [...new Set([...before.projectIds(), ...after.projectIds()])].sort()
+  const projects = unique([...before.projectIds(), ...after.projectIds()])
   const moved: string[] = []
   for (const projectId of [undefined, ...projects]) {
     const was = webAccessLines(before.of(projectId))
@@ -302,7 +302,7 @@ export function webAccessEffect(before: PolicySet, after: PolicySet): string | u
 
 /** Every effective mode that differs between two sets, for the studio and for each project either set has a policy for. */
 export function effectOf(before: PolicySet, after: PolicySet): ModeChange[] {
-  const projects = [...new Set([...before.projectIds(), ...after.projectIds()])].sort()
+  const projects = unique([...before.projectIds(), ...after.projectIds()])
   const changes: ModeChange[] = []
   for (const projectId of [undefined, ...projects]) {
     for (const actionClass of ACTION_CLASSES) {

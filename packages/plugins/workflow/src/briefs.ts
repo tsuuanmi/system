@@ -9,7 +9,7 @@
  * template's placeholder unfilled (`instructionsProblem`, INV-2).
  */
 import type { Lease } from '@tsuuanmi/system-leases'
-import { type Brief, type BriefBudgetLine, type BriefCheck, type BriefFile, BRIEF_LIMITS, type BriefPointer, NO_LOCAL_SANDBOX, QUESTION_LIMITS, renderBrief } from '@tsuuanmi/system-libs'
+import { type Brief, type BriefBudgetLine, type BriefCheck, type BriefFile, BRIEF_LIMITS, type BriefPointer, clampText, NO_LOCAL_SANDBOX, QUESTION_LIMITS, renderBrief } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import type { ArtifactRef, Tier, WorkerSandbox, WorkRequirement } from '@tsuuanmi/system-workers-core'
 import { landingTargets } from './checks.ts'
@@ -18,7 +18,7 @@ import type { Engine } from './engine.ts'
 import { type Wording, wordingOf } from './review.ts'
 import { changePaths } from './risk.ts'
 import { guidesTouching, loadGuides, renderGuides } from './review-guides.ts'
-import { clampText, type Instructions, literal, type PlaceholderScope, type ResolvedNode, unfilledPlaceholders } from './spec.ts'
+import { type Instructions, literal, type PlaceholderScope, type ResolvedNode, unfilledPlaceholders } from './spec.ts'
 import { type NodeRecord, type NodeRow, type RunRow, type WorkflowError, WorkflowFailure } from './types.ts'
 
 /**

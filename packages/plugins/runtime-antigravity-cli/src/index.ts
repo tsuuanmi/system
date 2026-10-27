@@ -45,7 +45,7 @@ import {
   type ToolGate,
   TOOL_GATE_MS, askToolGate, childEnvironment, confinedCommand, proveConfinement, withMetering,
 } from '@tsuuanmi/system-agent-runtime-core'
-import { dshHome } from '@tsuuanmi/system-libs'
+import { dshHome, isRecord } from '@tsuuanmi/system-libs'
 import { ProviderError, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 import { type ConfinedExec, type HookAnswer, type HookEvent, HOOK_ENV, SELF_TEST_REASON, TOKEN_ENV, execConfined, openChannel, prepareHome, selfTest } from './bridge.ts'
 import { USAGE_ARGS, VERIFIED_LIMIT_VERSIONS, limitsFromUsage } from './limits.ts'
@@ -490,7 +490,6 @@ const deny = (reason: string): HookAnswer => ({ decision: 'deny', reason: reason
 const deferredError = (d: Deferral): ProviderError => new ProviderError('config_error',
   `${KIND}: the run stopped at tool call ${d.tool}${d.callId ? ` (${d.callId})` : ''} without running it: ${d.reason.slice(0, 300)} (approval request ${d.requestId})`)
 
-const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const count = (value: unknown): number | undefined => (typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined)
 
 /**
@@ -541,9 +540,9 @@ class StreamReader {
     } catch {
       return
     }
-    if (!isObject(message)) return
+    if (!isRecord(message)) return
     const name = typeof message.event === 'string' ? message.event : undefined
-    const payload = name && isObject(message[name]) ? message[name] as Record<string, unknown> : message
+    const payload = name && isRecord(message[name]) ? message[name] as Record<string, unknown> : message
     const id = [payload.conversation_id, message.conversation_id].find((v): v is string => typeof v === 'string' && v.length > 0)
     if (id && !this.handle) {
       this.handle = id
@@ -581,7 +580,7 @@ class StreamReader {
  * place, or no reading that fits: no usage (a missing number stays missing).
  */
 export function usageFrom(raw: unknown): TokenUsage | undefined {
-  if (!isObject(raw)) return undefined
+  if (!isRecord(raw)) return undefined
   const input = count(raw.input_tokens)
   const output = count(raw.output_tokens)
   if (input === undefined || output === undefined) return undefined

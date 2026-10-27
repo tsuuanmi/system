@@ -21,6 +21,7 @@
  * @module
  */
 import type { LimitObservation, LimitReport } from '@tsuuanmi/system-agent-runtime-core'
+import { isRecord } from '@tsuuanmi/system-libs'
 
 /**
  * Claude Code versions whose `get_usage` answer is read. On any other version the report is never
@@ -48,7 +49,6 @@ export const VERIFIED_LIMIT_VERSIONS: readonly string[] = ['2.1.308', '2.1.309',
 const PLAUSIBLE_MS = 400 * 86_400_000
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 
-const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 /**
  * The one entry of `rate_limits` that has a `utilization` and is not a window: the extra usage spend
  * (`{ is_enabled, monthly_limit, used_credits, utilization, currency }`, no reset), not read.
@@ -59,7 +59,7 @@ const NOT_WINDOWS = new Set(['extra_usage'])
  * an object without a `utilization` (a per-model list, the spend, a flag). A number is not skipped:
  * it may be a share in a changed shape, so it makes the answer unreadable.
  */
-const notWindow = (value: unknown): boolean => Array.isArray(value) || typeof value === 'boolean' || typeof value === 'string' || (isObject(value) && !('utilization' in value))
+const notWindow = (value: unknown): boolean => Array.isArray(value) || typeof value === 'boolean' || typeof value === 'string' || (isRecord(value) && !('utilization' in value))
 
 /**
  * The limit observations a `get_usage` answer gives, read at `observedAt` (ms), or why it cannot be
@@ -78,11 +78,11 @@ const notWindow = (value: unknown): boolean => Array.isArray(value) || typeof va
  * reading.
  */
 export function limitsFromUsage(answer: unknown, observedAt: number): LimitReport {
-  if (!isObject(answer)) return { unreadable: 'its answer is not an object' }
+  if (!isRecord(answer)) return { unreadable: 'its answer is not an object' }
   if (typeof answer.rate_limits_available !== 'boolean') return { unreadable: 'its answer is not in the checked shape (no rate_limits_available)' }
   if (!answer.rate_limits_available) return { unreadable: 'the account reports no plan limits (an API key, a third-party provider, or a sign-in without the profile scope)' }
   const windows = answer.rate_limits
-  if (!isObject(windows)) return { unreadable: 'it reports plan limits, and its rate_limits is not an object' }
+  if (!isRecord(windows)) return { unreadable: 'it reports plan limits, and its rate_limits is not an object' }
   const observed = new Date(observedAt).toISOString()
   const limits: LimitObservation[] = []
   for (const name of Object.keys(windows).sort()) {
@@ -93,7 +93,7 @@ export function limitsFromUsage(answer: unknown, observedAt: number): LimitRepor
       continue
     }
     if (window === null || NOT_WINDOWS.has(name) || notWindow(window)) continue
-    if (!isObject(window) || !(window.utilization === null || typeof window.utilization === 'number') || !(window.resets_at === null || typeof window.resets_at === 'string')) {
+    if (!isRecord(window) || !(window.utilization === null || typeof window.utilization === 'number') || !(window.resets_at === null || typeof window.resets_at === 'string')) {
       return { unreadable: `its window ${name.slice(0, 64)} is not in the checked shape ({ utilization, resets_at })` }
     }
     if (window.utilization === null) continue
@@ -130,7 +130,7 @@ function modelScoped(list: readonly unknown[], observedAt: number, observed: str
   const out: LimitObservation[] = []
   const names = new Set<string>()
   for (const entry of list) {
-    if (!isObject(entry) || typeof entry.display_name !== 'string' || !(entry.utilization === null || typeof entry.utilization === 'number') || !(entry.resets_at === null || entry.resets_at === undefined || typeof entry.resets_at === 'string')) return []
+    if (!isRecord(entry) || typeof entry.display_name !== 'string' || !(entry.utilization === null || typeof entry.utilization === 'number') || !(entry.resets_at === null || entry.resets_at === undefined || typeof entry.resets_at === 'string')) return []
     const name = modelScopedWindow(entry.display_name)
     if (name === `${MODEL_SCOPED}:` || names.has(name)) return []
     names.add(name)

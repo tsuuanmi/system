@@ -19,7 +19,7 @@ import {
   type InfrastructureFailure, infrastructureProblem, type Project, type ProjectState, REOPEN_REASON_MAX, type Reopening, renderTasks, type RunOutcome, type Subject, type TaskInput, type TaskState, TERMINAL, type Unit, type UnreleasedHold, unreleasedProblem, unreleasedText, type WaitReason,
 } from '@tsuuanmi/system-board-core'
 import type {} from '@tsuuanmi/system-gateway-core'
-import { contentId, SchemaError, SchemaRegistry } from '@tsuuanmi/system-libs'
+import { clampText, contentId, isRecord, SchemaError, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import type {} from '@tsuuanmi/system-store'
 import { registerTools } from './tools.ts'
@@ -241,13 +241,12 @@ export function autoAcceptOf(config: AutoAccept | undefined): AutoAccept | undef
     if (new Set(list).size !== list.length) throw new TypeError(`board.autoAccept.${key} names one twice`)
   }
   const line = config.breaker
-  if (line !== undefined && (!isObject(line) || !Number.isInteger(line.escapes) || line.escapes < 1 || line.escapes > 100 || !Number.isInteger(line.days) || line.days < 1 || line.days > 90)) {
+  if (line !== undefined && (!isRecord(line) || !Number.isInteger(line.escapes) || line.escapes < 1 || line.escapes > 100 || !Number.isInteger(line.days) || line.days < 1 || line.days > 90)) {
     throw new TypeError('board.autoAccept.breaker is { escapes: 1 to 100, days: 1 to 90 }')
   }
   // Both lists are needed: a project with no branch, or a branch with no project, accepts nothing.
   return config.projects.length && config.branches.length ? { projects: [...config.projects], branches: [...config.branches], ...(line ? { breaker: { escapes: line.escapes, days: line.days } } : {}) } : undefined
 }
-const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const resourceOf = (taskId: string): string => `board-task:${taskId}`
 const charterRef = (projectId: string, version: number): string => `project:${projectId}:charter:${version}`
 /** The charter's subject version: the sha256 of its canonical JSON without its approval (reference/schemas.md#project). */
@@ -280,11 +279,6 @@ const raised = (budget: readonly BudgetLine[], lines: readonly BudgetLine[]): Bu
 /** What the task's applied raises added to its pool and unit so far. */
 const raisedSoFar = (task: BoardTask, line: BudgetLine): number =>
   round6((task.funding ?? []).flatMap((f) => f.lines).filter((l) => samePoolUnit(l, line)).reduce((n, l) => n + l.amount, 0))
-/** At most `max` characters (code points), cut on a whole one. */
-const clamp = (text: string, max: number): string => {
-  const chars = [...text]
-  return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`
-}
 const newId = (prefix: string): string => `${prefix}-${randomUUID().replaceAll('-', '').slice(0, 12)}`
 /** An id derived from a client's request key, so a retry of the same call names the same record. */
 const derivedId = (prefix: string, key: string): string => `${prefix}-${createHash('sha256').update(key).digest('hex').slice(0, 24)}`
@@ -509,7 +503,7 @@ export class StoreBoard extends Board {
     if (verdict.mode !== 'ask') throw new BoardError('invalid', `a charter is always put to the operator; the policy says ${verdict.mode}`)
     const request = await this.ask({
       subject: { type: 'content', ref: charterRef(projectId, version), version: charterHash(input.charter) },
-      action: { class: 'charter', summary: clamp(`${existing ? 'Amend' : 'Found'} ${draft.title}: ${input.charter.intent}`, 500) },
+      action: { class: 'charter', summary: clampText(`${existing ? 'Amend' : 'Found'} ${draft.title}: ${input.charter.intent}`, 500) },
       requester: { component: 'board', projectId }, verdict, classification: draft.classification ?? 'operator-shared',
     }, at)
     try {
@@ -972,7 +966,7 @@ export class StoreBoard extends Board {
     if (!Array.isArray(funding) || funding.length < 1 || funding.length > FUNDING_LINES) throw new BoardError('invalid', `a funding ask names 1 to ${FUNDING_LINES} budget lines`)
     const lines: BudgetLine[] = []
     for (const line of funding as unknown[]) {
-      if (!isObject(line) || typeof line['pool'] !== 'string' || !UNITS.includes(line['unit'] as Unit) || typeof line['amount'] !== 'number' || !Number.isFinite(line['amount']) || line['amount'] <= 0 || line['amount'] > AMOUNT_MAX) {
+      if (!isRecord(line) || typeof line['pool'] !== 'string' || !UNITS.includes(line['unit'] as Unit) || typeof line['amount'] !== 'number' || !Number.isFinite(line['amount']) || line['amount'] <= 0 || line['amount'] > AMOUNT_MAX) {
         throw new BoardError('invalid', `${JSON.stringify(line)} is not a budget line to add (pool, unit of ${UNITS.join(', ')}, amount above 0 and at most ${AMOUNT_MAX})`)
       }
       const asked: BudgetLine = { pool: line['pool'], unit: line['unit'] as Unit, amount: line['amount'] }
@@ -1700,7 +1694,7 @@ export class StoreBoard extends Board {
     const request = verdict.mode === 'ask' && pending !== undefined && project.state !== 'closed'
       ? await this.ask({
         subject: { type: 'content', ref: charterRef(projectId, pending.version), version: charterHash(pending) },
-        action: { class: 'charter', summary: clamp(`${founding ? 'Found' : 'Amend'} ${project.title}: ${pending.intent}`, 500) },
+        action: { class: 'charter', summary: clampText(`${founding ? 'Found' : 'Amend'} ${project.title}: ${pending.intent}`, 500) },
         requester: { component: 'board', projectId }, verdict, classification: project.classification ?? 'operator-shared',
       }, at)
       : undefined
@@ -1767,8 +1761,8 @@ export class StoreBoard extends Board {
       subject: { type: 'content', ref: `board-task:${task.taskId}:attempt:${task.attempts.count}${answeredWait ? `:answered:${answeredWait}` : ''}`, version: asked ? fundingVersion(contentId(asked)) : reason },
       action: {
         class: actionClass,
-        summary: clamp(`${reason}: ${task.title}${asked ? `; raise its budget by ${linesText(asked, '+')}` : ''}${held ? `; ${unreleased!.length} reservation(s) not released still count` : ''}`, 500),
-        ...(consequences ? { consequences: clamp(consequences, 2000) } : {}),
+        summary: clampText(`${reason}: ${task.title}${asked ? `; raise its budget by ${linesText(asked, '+')}` : ''}${held ? `; ${unreleased!.length} reservation(s) not released still count` : ''}`, 500),
+        ...(consequences ? { consequences: clampText(consequences, 2000) } : {}),
       },
       requester: { component: 'board', projectId: task.projectId, taskId: task.taskId, ...(task.run ? { runId: task.run.runId } : {}) },
       verdict, classification: project.classification ?? 'operator-shared',
@@ -1951,7 +1945,7 @@ export class StoreBoard extends Board {
     const detail = body.outcome?.detail ?? {}
     if (detail['taskId'] !== task.taskId) throw new BoardError('invalid', `${acceptance} does not name task ${task.taskId} (outcome.detail.taskId)`)
     const subject = detail['subject'] as Subject | undefined
-    if (!isObject(subject) || !sameSubject(subject, result.subject)) {
+    if (!isRecord(subject) || !sameSubject(subject, result.subject)) {
       throw new BoardError('invalid', `${acceptance} does not name the result's exact subject ${result.subject.type} ${result.subject.ref}${result.subject.version ? ` at ${result.subject.version}` : ''} (outcome.detail.subject)`)
     }
     const missing = [...result.artifacts, ...(result.digest ? [result.digest] : [])].filter((a) => !body.inputs?.includes(a))
@@ -1959,7 +1953,7 @@ export class StoreBoard extends Board {
     const option = body.outcome?.option
     if (option !== 'accept' && option !== 'reject') throw new BoardError('invalid', `${acceptance} decides ${String(option)}, neither accept nor reject`)
     const checks = detail['checks']
-    if (checks !== undefined && (!isObject(checks) || Object.entries(checks).some(([k, v]) => !CHECKS.includes(k as Check) || typeof v !== 'boolean'))) {
+    if (checks !== undefined && (!isRecord(checks) || Object.entries(checks).some(([k, v]) => !CHECKS.includes(k as Check) || typeof v !== 'boolean'))) {
       throw new BoardError('invalid', `${acceptance} reports checks that are not ${CHECKS.join(', ')} with true or false (outcome.detail.checks)`)
     }
     const leadId = `lead:${task.projectId}`
@@ -2015,11 +2009,11 @@ export class StoreBoard extends Board {
         ? `it names no risk tier (outcome.detail.risk), though a policy of project ${projectId} carries a path map (riskTiers), so the tier is taken as heavy`
         : undefined
     }
-    const ref = isObject(risk) && typeof risk['decision'] === 'string' ? risk['decision'] as ArtifactRef : undefined
+    const ref = isRecord(risk) && typeof risk['decision'] === 'string' ? risk['decision'] as ArtifactRef : undefined
     const record = ref && (body!.inputs ?? []).includes(ref) ? this.ctx.artifacts.get(ref)?.body as { decider?: { id?: string }; outcome?: { option?: string } } | undefined : undefined
     if (!record || record.decider?.id !== 'workflow.risk-tier') return `it names a risk tier with no workflow.risk-tier decision among its inputs (outcome.detail.risk.decision), so the tier is taken as heavy`
     if (record.outcome?.option === 'heavy') return `the result is heavy-tier (risk decision ${ref}): a heavy change is never accepted automatically`
-    return isObject(risk) && risk['tier'] !== record.outcome?.option ? `it says the tier is ${String(risk['tier'])}, but its risk decision ${ref} says ${String(record.outcome?.option)}` : undefined
+    return isRecord(risk) && risk['tier'] !== record.outcome?.option ? `it says the tier is ${String(risk['tier'])}, but its risk decision ${ref} says ${String(record.outcome?.option)}` : undefined
   }
 
   /**
@@ -2045,12 +2039,12 @@ export class StoreBoard extends Board {
     const body = envelope.body as { inputs?: string[]; decider?: { type?: string }; outcome?: { detail?: Record<string, unknown> } }
     const detail = body.outcome?.detail ?? {}
     const inputs = body.inputs ?? []
-    const onResult = (subject: unknown): boolean => isObject(subject) && (subject['type'] ?? 'git-head') === 'git-head' && subject['ref'] === result.subject.ref && subject['version'] === result.subject.version
+    const onResult = (subject: unknown): boolean => isRecord(subject) && (subject['type'] ?? 'git-head') === 'git-head' && subject['ref'] === result.subject.ref && subject['version'] === result.subject.version
     const tree = `git:${result.subject.ref}:${result.subject.version ?? ''}`
     const reasons: string[] = []
     if (envelope.producer.type !== 'system' || body.decider?.type !== 'rule') reasons.push(`${acceptance} is not the run owner's (a rule's decision the system produced)`)
 
-    const named = isObject(detail['review']) ? detail['review'] : undefined
+    const named = isRecord(detail['review']) ? detail['review'] : undefined
     const reviewRef = typeof named?.['assessment'] === 'string' ? named['assessment'] as ArtifactRef : undefined
     const review = reviewRef && inputs.includes(reviewRef) ? this.ctx.artifacts.get(reviewRef) : undefined
     const assessment = review?.kind === 'assessment' ? review.body as { schema?: string; subject?: unknown; verdict?: string; findings?: Array<{ severity?: string; repeated?: string; verification?: { vote?: string } }> } : undefined
@@ -2068,7 +2062,7 @@ export class StoreBoard extends Board {
     }
 
     const passed = COMMAND_CHECKS.filter((c) => read.checks?.[c] === true)
-    const checkRun = isObject(detail['checkRun']) ? detail['checkRun'] : undefined
+    const checkRun = isRecord(detail['checkRun']) ? detail['checkRun'] : undefined
     const evidenceRef = typeof checkRun?.['evidence'] === 'string' ? checkRun['evidence'] as ArtifactRef : undefined
     if (passed.length) {
       const record = evidenceRef && inputs.includes(evidenceRef) ? this.ctx.artifacts.get(evidenceRef) : undefined
@@ -2081,14 +2075,14 @@ export class StoreBoard extends Board {
       }
       // A pass whose command reported tests it did not run (T247) says nothing of those: never accepted unattended (T255).
       const listed: unknown = checkRun?.['results']
-      const results = Array.isArray(listed) ? listed.filter(isObject) : []
+      const results = Array.isArray(listed) ? listed.filter(isRecord) : []
       for (const c of passed) {
         const notRun = results.find((r) => r['check'] === c && typeof r['notRun'] === 'string')?.['notRun'] as string | undefined
         if (notRun !== undefined) reasons.push(`checks passed, browser tests not run: its ${c} check passed without running ${notRun}, so its pass says nothing of those`)
       }
     }
 
-    const landing = isObject(detail['landing']) ? detail['landing'] : undefined
+    const landing = isRecord(detail['landing']) ? detail['landing'] : undefined
     const branch = typeof landing?.['branch'] === 'string' ? landing['branch'] : undefined
     if (branch === undefined) reasons.push('no landing target is known for the result (outcome.detail.landing.branch)')
     else if (!this.autoAccept!.branches.includes(branch)) reasons.push(`it lands on ${branch}, not on a listed branch (${this.autoAccept!.branches.join(', ')})`)

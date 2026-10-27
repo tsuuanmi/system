@@ -9,7 +9,7 @@
  * @module @tsuuanmi/system-digest-core
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
-import { bodyText, SchemaRegistry } from '@tsuuanmi/system-libs'
+import { bodyText, clampText, SchemaRegistry } from '@tsuuanmi/system-libs'
 
 export { DIGEST_TOOL_INPUTS, DIGEST_TOOLS, type DigestTool, digestTool, digestToolHandlers, registerDigestTools } from './tools.ts'
 
@@ -158,7 +158,6 @@ const STATUSES: ReadonlyArray<DigestBody['status']> = ['passed', 'failed', 'part
 const schemas = new SchemaRegistry()
 
 const text = (value: unknown, max: number): string | undefined => (typeof value === 'string' && value.trim() && [...value].length <= max ? value : undefined)
-const clamp = (value: string, max: number): string => ([...value].length <= max ? value : `${[...value].slice(0, max - 1).join('')}…`)
 const texts = (value: unknown, max: number): string[] => (Array.isArray(value) ? value.map((v) => text(v, max)).filter((v): v is string => !!v).slice(0, DIGEST_LIMITS.list) : [])
 
 /**
@@ -222,7 +221,7 @@ export function quoteCheck(draft: unknown, sources: readonly ArtifactRef[], read
   const confidence = typeof value.confidence === 'number' && value.confidence >= 0 && value.confidence <= 1 ? value.confidence : undefined
   const openQuestions = texts(value.openQuestions, DIGEST_LIMITS.shortText)
   const nextActions = texts(value.nextActions, DIGEST_LIMITS.shortText)
-  const recorded = [...dropped.map((d) => ({ what: clamp(/^claims? /.test(d.claim) ? d.claim : `claim ${d.claim}`, DIGEST_LIMITS.what), why: clamp(`dropped by the quote check: ${d.why}`, DIGEST_LIMITS.what) })), ...left].slice(0, DIGEST_LIMITS.dropped)
+  const recorded = [...dropped.map((d) => ({ what: clampText(/^claims? /.test(d.claim) ? d.claim : `claim ${d.claim}`, DIGEST_LIMITS.what), why: clampText(`dropped by the quote check: ${d.why}`, DIGEST_LIMITS.what) })), ...left].slice(0, DIGEST_LIMITS.dropped)
   const digest: DigestBody = {
     schema: 'digest@1.0', sources: [...sources], status, summary, claims: kept,
     ...(openQuestions.length ? { openQuestions } : {}), ...(nextActions.length ? { nextActions } : {}),

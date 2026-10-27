@@ -4,7 +4,7 @@
  * changed between them, the answer, whether the registration is pre-registered or refused, the
  * checks that make a registration invalid, and the `registration` decision that records it.
  */
-import { canonicalJson, contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
+import { canonicalJson, contentId, SchemaRegistry, unique } from '@tsuuanmi/system-libs'
 import type {
   ArtifactRef, Environment, Experiment, ExperimentDraft, ExperimentState, Hypothesis, Link, Match, ObjectiveContract, Predicate, Protocol,
   Registration, RegistryAnswer, Relation, Vocabulary,
@@ -33,7 +33,6 @@ export interface Answered {
   experiment: Pick<Experiment, 'objectiveContract' | 'suite'> & { environment: Omit<Environment, 'hash'> }
 }
 
-const unique = (items: readonly string[]): string[] => [...new Set(items)].sort()
 const same = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((x, i) => x === b[i])
 const observed = (e: Omit<Environment, 'hash'>): string[] => unique(e.workers.map((w) => `${w.family}\u0000${w.observed ?? ''}`))
 const collectors = (e: Omit<Environment, 'hash'>): string[] => unique(e.collectors.map((c) => `${c.id}\u0000${c.version}`))
@@ -236,8 +235,8 @@ export function experimentProblems(experiment: ExperimentDraft & { objectiveCont
   if (pinned.id !== contract.contractId || pinned.version !== contract.version) problems.push(`it names contract ${pinned.id} version ${pinned.version}, but its ref holds ${contract.contractId} version ${contract.version}`)
   if (pinned.hash !== contentId(contract)) problems.push('its contract hash is not the sha256 of the contract its ref holds')
   problems.push(...protocolProblems(experiment.protocol, contract.protocol))
-  const used: string[] = [...new Set(experiment.suite.used)].sort()
-  if (!same(used, [...new Set(experiment.protocol.partitions)].sort())) problems.push(`it uses the partitions ${used.join(', ')}, but its protocol declares ${experiment.protocol.partitions.join(', ')}`)
+  const used: string[] = unique(experiment.suite.used)
+  if (!same(used, unique(experiment.protocol.partitions))) problems.push(`it uses the partitions ${used.join(', ')}, but its protocol declares ${experiment.protocol.partitions.join(', ')}`)
   const partitions: string[] = experiment.suite.partitions.map((p) => p.name)
   if (new Set(partitions).size !== partitions.length) problems.push('the suite names a partition twice')
   for (const p of used.filter((x) => !partitions.includes(x))) problems.push(`the suite has no ${p} partition`)

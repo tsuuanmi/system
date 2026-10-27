@@ -16,11 +16,11 @@
  * The choice is a `route` decision, `workflow.session-move` (INV-13). A step no Worker at all can
  * take still fails, with both refusals.
  */
-import { BRIEF_LIMITS, type BriefPointer, type ContentId } from '@tsuuanmi/system-libs'
+import { BRIEF_LIMITS, type BriefPointer, clampText, type ContentId } from '@tsuuanmi/system-libs'
 import { type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type RouteOptions, type WorkRequirement } from '@tsuuanmi/system-workers-core'
 import { type Draft, renderedChars } from './briefs.ts'
 import type { Engine } from './engine.ts'
-import { clampText, type ResolvedNode } from './spec.ts'
+import type { ResolvedNode } from './spec.ts'
 import type { NodeRecord, NodeRow, RunRow } from './types.ts'
 
 /** The decider of a step's move off its session. */

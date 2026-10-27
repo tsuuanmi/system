@@ -4,7 +4,7 @@
  * canonical JSON of the normalized experiment. Each carries its version in the records it writes;
  * changing what either reads or how is a new version, never an edit of this one.
  */
-import { contentId } from '@tsuuanmi/system-libs'
+import { contentId, unique } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, Environment, Experiment, ExactSubject, Fingerprint, Hypothesis, HypothesisDraft, Protocol, Vocabulary, VocabularyTerm } from './index.ts'
 import { ExperimentsError } from './index.ts'
 
@@ -17,7 +17,6 @@ export const IDENTITY_VERSION = '1' as const
 export const TAG = /^[a-z][a-z0-9-]{0,63}(\.[a-z0-9-]{1,64}){0,3}$/
 
 const sorted = <T>(items: readonly T[], key: (item: T) => string): T[] => [...items].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0))
-const unique = (items: readonly string[]): string[] => [...new Set(items)].sort()
 
 /**
  * Every problem of a vocabulary, empty when it can be used: each tag and alias a valid tag, and no

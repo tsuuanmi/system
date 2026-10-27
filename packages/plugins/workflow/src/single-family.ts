@@ -9,9 +9,10 @@
  * family (the default) keeps ADR-0027 and ADR-0029 unchanged.
  */
 import type { Lease } from '@tsuuanmi/system-leases'
+import { clampText } from '@tsuuanmi/system-libs'
 import type { AdmissionFailure, AdmittedWorker, ArtifactRef, WorkerExecution } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
-import { clampText, type ResolvedNode } from './spec.ts'
+import type { ResolvedNode } from './spec.ts'
 import { newId, type NodeRecord, type NodeRow, type RunRow, type WorkflowError } from './types.ts'
 
 /** The decider of a single-family choice, at admission or in recovery. */

@@ -8,7 +8,7 @@
  * `ctx.store`, with `maxTtlMs` set to {@link LEASE_MAX_TTL_MS} and no lease held.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { SchemaRegistry, sleep } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
 import { expect, vi } from 'vitest'
 import { defineSuite, type Scenario } from '../../../libs/conformance/runner.ts'
@@ -65,8 +65,6 @@ const flaky = (ctx: Context, failing: () => boolean): (() => void) => {
     store.transaction = original
   }
 }
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>, since: Scenario<Boot>['since'] = '1.0'): Scenario<Boot> => ({
   id: `leases.${id}`, since, title,

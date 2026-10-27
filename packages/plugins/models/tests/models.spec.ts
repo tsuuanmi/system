@@ -671,6 +671,16 @@ describe('a metered API that says it did not process the request (503 UNAVAILABL
     expect(recoveries.at(-1)!.candidates.find((c) => c.option === 'fail')!.reasons.join(' ')).toMatch(/2 of 2 retries were used \(unprocessedRetries\)/)
   })
 
+  it('a call whose callTimeoutMs runs out during the back-off fails as timeout, naming the ceiling, never resent', async () => {
+    // The first back-off is 1 s; the ceiling over every attempt is 300 ms.
+    const { server, call } = await row({ callTimeoutMs: 300, unprocessedMaxDelayMs: 5_000 })
+    server.script.push({ status: 503, message: UNAVAILABLE })
+    const { done } = await call('u-deadline')
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'timeout' } })
+    expect(done.error!.message).toBe('model:fast did not finish within 300 ms (callTimeoutMs, the ceiling over every attempt); the call was stopped')
+    expect(server.requests).toHaveLength(1)
+  })
+
   it('at the configured maximum (10 retries), ten 503s then 200 complete: the answer records all 11 requests (model-answer@1.1)', async () => {
     const { ctx, server, call } = await row({ unprocessedRetries: 10 })
     server.script.push(...Array.from({ length: 10 }, () => ({ status: 503, message: UNAVAILABLE })))

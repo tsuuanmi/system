@@ -23,6 +23,7 @@ import { existsSync, lstatSync, realpathSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { SandboxMode } from '@tsuuanmi/system-agent-runtime-core'
+import { isRecord } from '@tsuuanmi/system-libs'
 
 /** Tools that only read the workspace: `read_file` (`Path`, and a line or byte range). */
 const READ_TOOLS = ['read_file'] as const
@@ -44,7 +45,6 @@ const CUSTOMIZATION_ROOTS = ['.agents', '.agent', '_agents', '_agent'] as const
 const EXECUTABLE_CUSTOMIZATIONS = ['hooks.json', 'mcp_config.json', 'plugins.json', 'plugins'] as const
 
 const inside = (root: string, path: string): boolean => path === root || path.startsWith(root.endsWith(sep) ? root : root + sep)
-const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
 /**
  * Where `path` (absolute) is on disk: its real path, or for one that does not exist yet its
@@ -113,7 +113,7 @@ function locations(input: Record<string, unknown>): Array<{ field: string; value
   const walk = (field: string, value: unknown): void => {
     if (typeof value === 'string') found.push({ field, value })
     else if (Array.isArray(value)) for (const item of value) walk(field, item)
-    else if (isObject(value)) for (const [key, inner] of Object.entries(value)) if (!TEXT_FIELDS.has(key)) walk(`${field}.${key}`, inner)
+    else if (isRecord(value)) for (const [key, inner] of Object.entries(value)) if (!TEXT_FIELDS.has(key)) walk(`${field}.${key}`, inner)
   }
   for (const [key, value] of Object.entries(input)) if (!TEXT_FIELDS.has(key)) walk(key, value)
   return found
@@ -132,7 +132,7 @@ function inCustomizationRoot(realRoot: string, real: string): boolean {
  */
 export function refusal(call: { tool: string; input: unknown }, workspace: string, offered: readonly string[]): string | undefined {
   if (!offered.includes(call.tool)) return `${call.tool} is not a tool this run offers (${offered.join(', ')})`
-  if (!isObject(call.input)) return `the input of ${call.tool} is not an object`
+  if (!isRecord(call.input)) return `the input of ${call.tool} is not an object`
   const writes = (WRITE_TOOLS as readonly string[]).includes(call.tool)
   let realRoot: string
   try {

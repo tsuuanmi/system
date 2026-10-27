@@ -27,13 +27,13 @@
  * and its checks to the HEAD it writes (`writes.ref`), which a commit on the run's branch would leave.
  */
 import type { Lease } from '@tsuuanmi/system-leases'
-import { BRIEF_LIMITS, type GitSubject, subjectId } from '@tsuuanmi/system-libs'
+import { BRIEF_LIMITS, clampText, type GitSubject, subjectId } from '@tsuuanmi/system-libs'
 import type { AdmissionFailure, AdmittedWorker, ArtifactRef, LandStep } from '@tsuuanmi/system-workers-core'
 import type { Draft } from './briefs.ts'
 import type { Engine } from './engine.ts'
 import { admissionKind, errorLine } from './recovery.ts'
 import { pointer, turnsOf } from './session-moves.ts'
-import { clampText, type ResolvedNode } from './spec.ts'
+import type { ResolvedNode } from './spec.ts'
 import type { NodeRecord, NodeRow, RunRow, WorkflowError } from './types.ts'
 
 /** The decider of a fix's path to its author's session. */

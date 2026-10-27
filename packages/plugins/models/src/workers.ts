@@ -14,7 +14,7 @@ import { type Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
 import type { Classification } from '@tsuuanmi/system-egress'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
-import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
+import { type ContentId, sha256, sleep } from '@tsuuanmi/system-libs'
 import { type ModelCompletion, ModelError, type ModelFailure, type ModelStatus, type ModelTurn } from '@tsuuanmi/system-models-core'
 import { ProviderError, type ProviderErrorKind, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
@@ -547,8 +547,8 @@ export class ModelWorkers {
         const delayMs = Math.min(maxDelayMs, error.unprocessed.retryAfterMs ?? Math.min(UNPROCESSED_FIRST_DELAY_MS, maxDelayMs) * 2 ** retry)
         this.recordUnprocessed(row, error, { retry: retry + 1, retries, delayMs, again }, lease)
         if (!again) throw typed(error)
-        await sleep(delayMs, bounded).catch((stopped: unknown) => {
-          throw typed(stopped)
+        await sleep(delayMs, bounded).catch(() => {
+          throw typed(new ModelError('aborted', 'aborted while waiting to send the request again'))
         })
       }
     }
@@ -618,21 +618,6 @@ export class ModelWorkers {
   }
 }
 
-/** Wait `ms`, or reject with an `aborted` failure once `signal` stops the call. */
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const stop = (): void => {
-      clearTimeout(timer)
-      reject(new ModelError('aborted', 'aborted while waiting to send the request again'))
-    }
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', stop)
-      resolve()
-    }, ms)
-    if (signal.aborted) stop()
-    else signal.addEventListener('abort', stop, { once: true })
-  })
-}
 
 function execution(row: CallRow): WorkerExecution {
   return {

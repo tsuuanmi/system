@@ -3,7 +3,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
-  MAX_UNKNOWN_REASON, NAMED_UNKNOWN_RUNS, SchemaError, SchemaRegistry, canonicalJson, contentId, countedWhole, countUnknownUsage, dshHome, readOrCreateSecretFile, reconciledBy, unknownUsageOf, USAGE_UNKNOWN_EVENT,
+  MAX_UNKNOWN_REASON, NAMED_UNKNOWN_RUNS, SchemaError, SchemaRegistry, canonicalJson, clampText, contentId, countedWhole, isRecord, sleep, unique, countUnknownUsage, dshHome, readOrCreateSecretFile, reconciledBy, unknownUsageOf, USAGE_UNKNOWN_EVENT,
   type UsageUnknown, usageUnknown, usageUnknownOf,
 } from '../src/index.ts'
 
@@ -27,6 +27,24 @@ describe('dshHome', () => {
       if (saved === undefined) delete process.env['DSH_HOME']
       else process.env['DSH_HOME'] = saved
     }
+  })
+})
+
+describe('shared helpers', () => {
+  it('isRecord, clampText, unique', () => {
+    expect([{}, [], null, 'x'].map(isRecord)).toEqual([true, false, false, false])
+    expect(clampText('héllo😀', 4)).toBe('hél…')
+    expect(clampText('abc', 3)).toBe('abc')
+    expect(unique(['b', 'a', 'b'])).toEqual(['a', 'b'])
+  })
+
+  it('sleep waits, and rejects with the signal\'s reason once aborted', async () => {
+    await sleep(1)
+    const stop = new AbortController()
+    const waiting = sleep(60_000, stop.signal)
+    stop.abort(new Error('stopped'))
+    await expect(waiting).rejects.toThrow('stopped')
+    await expect(sleep(1, stop.signal)).rejects.toThrow('stopped')
   })
 })
 

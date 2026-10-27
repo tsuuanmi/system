@@ -1,4 +1,5 @@
 // Ported from tsuuanmi/internet src/browser/completion.ts (docs/design/provider-turns.md#two-clock-completion).
+import { sleep } from '@tsuuanmi/system-libs'
 import { ProviderError, abortReason } from './errors.ts'
 
 export interface CompletionSnapshot {
@@ -36,21 +37,6 @@ export interface WaitOptions {
   onProgress?: (event: ProviderProgressEvent) => void
   /** The clock both deadlines read (milliseconds); the wall clock when absent. A test controls it; the page's own timers are not touched. */
   now?: () => number
-}
-
-function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) return reject(abortReason(signal))
-    const onAbort = (): void => {
-      clearTimeout(timer)
-      reject(abortReason(signal))
-    }
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort)
-      resolve()
-    }, ms)
-    signal?.addEventListener('abort', onAbort, { once: true })
-  })
 }
 
 function emit(observer: WaitOptions['onProgress'], kind: ProviderProgressKind, at: number): void {
@@ -115,7 +101,9 @@ export async function waitForStableCompletion(read: () => Promise<CompletionSnap
     if (options.stallTimeoutMs !== undefined && at - lastProgressAt >= options.stallTimeoutMs) {
       throw new ProviderError('provider_stalled', `provider made no meaningful progress for ${options.stallTimeoutMs}ms`)
     }
-    await delay(options.pollMs, options.signal)
+    await sleep(options.pollMs, options.signal).catch(() => {
+      throw abortReason(options.signal)
+    })
   }
   throw new ProviderError('timeout', `provider did not complete within ${options.timeoutMs}ms`)
 }

@@ -1,4 +1,5 @@
 export { canonicalJson, contentId, sha256, type ContentId } from './canonical.ts'
+export { clampText, isRecord, sleep, unique } from './util.ts'
 export { DESCRIPTION, LABEL, MAX_DESCRIPTION, MAX_LABEL } from './descriptions.ts'
 export { type AccountMode, type AccountSetting, accountSettings, ASSIGNED, type PooledTerms, pooledTermsDecision, type ProviderAccounts } from './accounts.ts'
 export {

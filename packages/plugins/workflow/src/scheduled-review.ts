@@ -17,9 +17,10 @@ import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { matchesPath } from '@tsuuanmi/system-approvals-core'
 import type { BoardTask } from '@tsuuanmi/system-board-core'
+import { clampText } from '@tsuuanmi/system-libs'
 import type { Engine } from './engine.ts'
 import { GUIDE_DIR, GUIDE_LIMITS, GUIDE_SUFFIX, parseGuide, type ReviewGuide } from './review-guides.ts'
-import { clampText, type Finding, findingKey, type NodeTemplate, parseAssessment, parseVotes, REVIEW_RUNS_NOTHING } from './spec.ts'
+import { type Finding, findingKey, type NodeTemplate, parseAssessment, parseVotes, REVIEW_RUNS_NOTHING } from './spec.ts'
 import { type Config, now, type ScheduledReviewConfig } from './types.ts'
 
 /** The workflow template a scheduled review runs by default; the software-development profile provides it. */

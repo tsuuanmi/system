@@ -4,6 +4,7 @@
  * with passive network signals, and heals a drifted element within bounds.
  */
 import { createHash } from 'node:crypto'
+import { sleep } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type { Frame, Locator, Page } from 'patchright-core'
 import { type Scored, choose, parseAiSnapshot, scoreNodes } from './heal.ts'
@@ -208,7 +209,6 @@ const TICK_MS = 100
  * bubble, a menu still opening).
  */
 const SETTLE_MS = 250
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 /** Lines with inner spacing collapsed and blank lines dropped: what an editor must preserve. */
 const lineText = (s: string | null): string => (s ?? '').split('\n').map((l) => l.replace(/[\s\u00a0]+/g, ' ').trim()).filter(Boolean).join('\n')
 const normalizeText = (s: string | null): string => (s ?? '').replace(/ /g, ' ').trim()
