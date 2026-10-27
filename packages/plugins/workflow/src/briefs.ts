@@ -8,7 +8,7 @@
  * at start, resolving the pointers there (INV-12). No execution starts on instructions that leave a
  * template's placeholder unfilled (`instructionsProblem`, INV-2).
  */
-import type { Lease } from '@tsuuanmi/system-leases'
+import type { Lease } from '@tsuuanmi/system-board-core'
 import { type Brief, type BriefBudgetLine, type BriefCheck, type BriefFile, BRIEF_LIMITS, type BriefPointer, clampText, NO_LOCAL_SANDBOX, QUESTION_LIMITS, renderBrief } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import type { ArtifactRef, Tier, WorkerSandbox, WorkRequirement } from '@tsuuanmi/system-workers-core'

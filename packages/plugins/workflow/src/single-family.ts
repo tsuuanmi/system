@@ -8,7 +8,7 @@
  * built on it is told in its brief, and the run's answer says so first. A step that requires another
  * family (the default) keeps ADR-0027 and ADR-0029 unchanged.
  */
-import type { Lease } from '@tsuuanmi/system-leases'
+import type { Lease } from '@tsuuanmi/system-board-core'
 import { clampText } from '@tsuuanmi/system-libs'
 import type { AdmissionFailure, AdmittedWorker, ArtifactRef, WorkerExecution } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'

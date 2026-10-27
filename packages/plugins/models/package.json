@@ -20,9 +20,8 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@tsuuanmi/system-egress": "workspace:*",
+    "@tsuuanmi/system-board-core": "workspace:*",
     "@tsuuanmi/system-gateway-core": "workspace:*",
-    "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-ledger-core": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-models-core": "workspace:*",
@@ -44,7 +43,9 @@
     "@deepseek-ai/schemastery": "3.18.5-alpha.1",
     "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-credentials-vault": "workspace:*",
+    "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-profile-scientific-research": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*",
     "@tsuuanmi/system-worker-sessions": "workspace:*",

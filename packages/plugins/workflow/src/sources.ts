@@ -4,7 +4,7 @@
  * see exactly this, and the team's tally checks every quote against it, so a finding is confirmed
  * by the bytes the members saw, never by a model.
  */
-import type { Lease } from '@tsuuanmi/system-leases'
+import type { Lease } from '@tsuuanmi/system-board-core'
 import { canonicalJson, globMatches, sha256, SnapshotError, snapshotRepository } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'

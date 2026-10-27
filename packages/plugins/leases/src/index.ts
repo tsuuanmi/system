@@ -7,57 +7,11 @@
  */
 import { randomBytes } from 'node:crypto'
 import { hostname } from 'node:os'
-import { type Context, Service } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { type Held, type Holding, type Lease, LeaseLost, Leases as LeasesSeam, StaleGeneration } from '@tsuuanmi/system-board-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-ledger-core'
-
-declare module '@deepseek-ai/cordis' {
-  interface Context {
-    leases: Leases
-  }
-}
-
-/** A held lease (schemas/lease.v1.json). */
-export interface Lease {
-  schema: 'lease@1.0'
-  resource: string
-  owner: string
-  token: string
-  generation: number
-  expiresAt: number
-}
-
-/** The lease was taken over, expired, or invalidated; the holder must stop and must not commit. */
-export class LeaseLost extends Error {
-  constructor(readonly resource: string, reason: string) {
-    super(`lease ${resource}: ${reason}`)
-    this.name = 'LeaseLost'
-  }
-}
-
-/** A commit presented a generation older than the resource's current one. */
-export class StaleGeneration extends Error {
-  constructor(readonly resource: string, readonly presented: number, readonly current: number) {
-    super(`lease ${resource}: generation ${presented} is stale (current ${current})`)
-    this.name = 'StaleGeneration'
-  }
-}
-
-/** What a body holding a lease sees: the current lease (renewed by the heartbeat) and whether it was lost. */
-export interface Holding {
-  /** The lease as last renewed; present it to every fenced commit. */
-  lease(): Lease
-  /**
-   * Aborted (with a {@link LeaseLost}) on a positive loss only: a heartbeat finds the lease expired,
-   * taken over, or invalidated, or the lease's expiry passes with no renewal. A renewal that merely
-   * failed is not a loss (ADR-0056).
-   */
-  readonly lost: AbortSignal
-}
-
-/** A hold's outcome: the body's value, or, while another holder's lease is live, when to look again. */
-export type Held<T> = { held: true; value: T } | { held: false; retryInMs: number }
 
 interface Row { resource: string; owner: string | null; token: string | null; generation: number; expires_at: number | null }
 
@@ -69,7 +23,7 @@ export interface Config {
   maxTtlMs?: number
 }
 
-export class Leases extends Service {
+export class Leases extends LeasesSeam {
   static inject = ['store']
   static Config: z<Config> = z.object({
     maxTtlMs: z.natural().min(1000).default(600_000).description('Upper bound for any requested TTL'),
@@ -79,7 +33,7 @@ export class Leases extends Service {
   private readonly schemas = new SchemaRegistry()
 
   constructor(ctx: Context, config: Config) {
-    super(ctx, 'leases')
+    super(ctx)
     this.maxTtlMs = config.maxTtlMs ?? 600_000
     ctx.store.migrate('leases', [{
       version: 1,

@@ -26,7 +26,7 @@
  * reads the change between the two. The worktree's HEAD never moves: a board task binds its result
  * and its checks to the HEAD it writes (`writes.ref`), which a commit on the run's branch would leave.
  */
-import type { Lease } from '@tsuuanmi/system-leases'
+import type { Lease } from '@tsuuanmi/system-board-core'
 import { BRIEF_LIMITS, clampText, type GitSubject, subjectId } from '@tsuuanmi/system-libs'
 import type { AdmissionFailure, AdmittedWorker, ArtifactRef, LandStep } from '@tsuuanmi/system-workers-core'
 import type { Draft } from './briefs.ts'

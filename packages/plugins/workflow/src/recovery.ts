@@ -2,8 +2,7 @@
  * Recovery after a failed attempt (REQ-WF-6, INV-4) and tier escalation after a rejected result
  * (REQ-WRK-9). Each choice is a decision artifact (INV-13).
  */
-import type { InfrastructureFailure } from '@tsuuanmi/system-board-core'
-import type { Lease } from '@tsuuanmi/system-leases'
+import type { InfrastructureFailure, Lease } from '@tsuuanmi/system-board-core'
 import type { ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 import { type AdmissionFailure, type ArtifactRef, type CapabilityDescriptor, offeredTiers, type RouteOptions, TIERS, type WorkerAccount, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { noteDeferral } from './continuations.ts'

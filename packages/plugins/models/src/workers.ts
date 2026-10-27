@@ -12,12 +12,11 @@
 import { randomBytes } from 'node:crypto'
 import { type Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-ledger-core'
-import type { Classification } from '@tsuuanmi/system-egress'
-import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
+import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-board-core'
 import { type ContentId, sha256, sleep } from '@tsuuanmi/system-libs'
 import { type ModelCompletion, ModelError, type ModelFailure, type ModelStatus, type ModelTurn } from '@tsuuanmi/system-models-core'
 import { ProviderError, type ProviderErrorKind, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
-import type { ArtifactRef, CapabilityDescriptor, ExecutionStatus, WorkerExecution, WorkerStart } from '@tsuuanmi/system-workers-core'
+import type { ArtifactRef, CapabilityDescriptor, Classification, ExecutionStatus, WorkerExecution, WorkerStart } from '@tsuuanmi/system-workers-core'
 
 export interface ModelWorkersConfig {
   /** Calls in flight at once, over every model Worker (default 4). */

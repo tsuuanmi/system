@@ -23,8 +23,7 @@
  * for a task needs it, every other run does not.
  */
 import type { DatabaseSync } from 'node:sqlite'
-import { type ArtifactRef, BoardError, type BoardTask, type Board, type Classification, type InfrastructureFailure, type Project, renderTasks, type RunOutcome, type Subject, UNRELEASED_MAX, type UnreleasedHold, unreleasedText } from '@tsuuanmi/system-board-core'
-import type { Lease } from '@tsuuanmi/system-leases'
+import { type ArtifactRef, BoardError, type BoardTask, type Board, type Classification, type InfrastructureFailure, type Lease, type Project, renderTasks, type RunOutcome, type Subject, UNRELEASED_MAX, type UnreleasedHold, unreleasedText } from '@tsuuanmi/system-board-core'
 import { takesKind, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { BRIEF_LIMITS, type BriefBudgetLine, type BriefFile, type BriefPointer, captureGitSubject, clampText, QUESTION_LIMITS, questionsOf } from '@tsuuanmi/system-libs'
 import { type BudgetLine, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'

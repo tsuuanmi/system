@@ -6,8 +6,7 @@
  * {@link Workflow} facade in `index.ts`.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { Board, Subject } from '@tsuuanmi/system-board-core'
-import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
+import { type Board, type Lease, LeaseLost, StaleGeneration, type Subject } from '@tsuuanmi/system-board-core'
 import { type BriefPointer, canonicalJson, SchemaRegistry, sha256, sleep } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'

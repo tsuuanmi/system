@@ -10,9 +10,9 @@
   "files": ["lib", "plugin-manifest.json"],
   "scripts": { "build": "tsc -p tsconfig.build.json" },
   "dependencies": {
+    "@tsuuanmi/system-board-core": "workspace:*",
     "@tsuuanmi/system-digest-core": "workspace:*",
     "@tsuuanmi/system-gateway-core": "workspace:*",
-    "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-ledger-core": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-workers-core": "workspace:*"
@@ -23,6 +23,7 @@
     "@deepseek-ai/schemastery": "3.18.5-alpha.1",
     "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*",
     "@tsuuanmi/system-workers": "workspace:*"
   }

@@ -11,7 +11,8 @@ A provider extends it, and every consumer imports it from here, never from the p
   `ctx.store` and migrate their own tables through it, and a consumer of one nearly always uses the
   others, so three packages would add edges, not remove them. Leases and egress are not ledger
   seams: leases belong to the work state machine (INV-15) and egress to the gate, and each moves to
-  the definition package of its own component (T316b).
+  the definition package of its own component (T316c): [`board-core`](../board-core/README.md) and
+  [`workers-core`](../workers-core/README.md).
 - **`ctx.store`** ([`src/store.ts`](src/store.ts)): `db`, `transaction`, `afterCommit`, `migrate`,
   `updateRevision`, `RevisionConflict`, `Migration`, `TransactionCallback`. Provider:
   [`@tsuuanmi/system-store`](../plugins/store/README.md).

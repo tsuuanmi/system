@@ -23,7 +23,7 @@
  * ({@link SECOND_REVIEW}), where the adversarial review prompt goes; and the board's hold of a heavy
  * result names the decision a decision brief will summarize.
  */
-import type { Lease } from '@tsuuanmi/system-leases'
+import type { Lease } from '@tsuuanmi/system-board-core'
 import {
   type ChangePaths, changeTier, type ChangeTier, RISK_TIERS, type RiskTier, riskTierMaps, type MapOf, type StepTierByRisk, stepTierByRisk, tierByRiskMaps, type TierByRiskOf, tierReasons,
 } from '@tsuuanmi/system-approvals-core'

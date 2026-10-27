@@ -10,7 +10,7 @@
  * start a fix round (they reach the author once, as optional notes of a fix that runs anyway, else in
  * the dossier); a pre-existing finding proposes a follow-up board task, linked and never blocking.
  */
-import type { Lease } from '@tsuuanmi/system-leases'
+import type { Lease } from '@tsuuanmi/system-board-core'
 import { captureGitSubject, changeBetween, changeSince, clampText, CLEAN_VERSION, type GitSubject, subjectId } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'

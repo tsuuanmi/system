@@ -3,7 +3,7 @@
  * steps appended after it; steps that need approval wait behind a gate bound to the exact plan
  * (INV-5), opened or closed by the operator (`approve` in `operator.ts`) or by policy.
  */
-import type { Lease } from '@tsuuanmi/system-leases'
+import type { Lease } from '@tsuuanmi/system-board-core'
 import { canonicalJson, sha256 } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, Tier } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'

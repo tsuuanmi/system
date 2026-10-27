@@ -1,5 +1,6 @@
 /**
- * Routing seam definition: `ctx.workers`, the Worker registry and deterministic router
+ * Gate seam definitions: `ctx.workers` and `ctx.egress` (explicit data egress, INV-12; see
+ * `./egress.ts`). `ctx.workers` is the routing seam: the Worker registry and deterministic router
  * (docs/design/routing.md). Worker sources (the website turn runtime today; agent runtimes
  * later) register for their plugin's lifetime and describe what each Worker proves now;
  * `route` turns a work requirement into one admitted Worker or an {@link AdmissionFailure}.
@@ -7,6 +8,8 @@
  * @module @tsuuanmi/system-workers-core
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
+
+export * from './egress.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

@@ -13,6 +13,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import type {} from '@tsuuanmi/system-board-core'
 import type {} from '@tsuuanmi/system-ledger-core'
 import { type ArtifactRef, DIGEST_LIMITS, DigestEngine, type DigestRequest, Digests, type DigestView, quoteCheck, registerDigestTools } from '@tsuuanmi/system-digest-core'
 import type {} from '@tsuuanmi/system-gateway-core'

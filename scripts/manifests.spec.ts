@@ -45,7 +45,8 @@ describe('the manifests the workspace ships (REQ-HOST-7)', () => {
     expect(of('landing-core').manifest).toMatchObject({ schema: 'plugin-manifest@1.1', class: { kind: 'core', component: 'gate' }, provides: [], defines: [{ seam: 'landing', version: '1.0.0' }] })
     expect(of('landing-local').manifest).toMatchObject({ class: { kind: 'core', component: 'gate' }, provides: [{ seam: 'landing', version: '1.0.0' }], consumes: [{ seam: 'workers', range: expect.stringMatching(/^\^1\./) }] })
     expect(of('workflow').manifest.consumes).toContainEqual({ seam: 'landing', range: '^1.0.0', optional: true })
-    expect(of('board-core').manifest).toMatchObject({ schema: 'plugin-manifest@1.1', class: { kind: 'core', component: 'work-state-machine' }, provides: [], defines: [{ seam: 'board', version: '1.5.0' }] })
+    expect(of('board-core').manifest).toMatchObject({ schema: 'plugin-manifest@1.1', class: { kind: 'core', component: 'work-state-machine' }, provides: [], defines: [{ seam: 'board', version: '1.5.0' }, { seam: 'leases', version: '1.1.0' }] })
+    expect(of('workers-core').manifest).toMatchObject({ class: { kind: 'core', component: 'gate' }, defines: [{ seam: 'egress', version: '1.0.0' }, { seam: 'workers', version: '1.0.0' }] })
     // Two core seams in one package (PROP-0018 T12): it takes the class of the first, sorted.
     expect(of('feedback-core').manifest).toMatchObject({ class: { kind: 'core' }, defines: [{ seam: 'evaluations', version: '1.0.0' }, { seam: 'experiments', version: '1.0.0' }] })
     expect(of('runtime-claude-agent-sdk').manifest.class).toEqual({ kind: 'family', family: 'worker' })
@@ -103,7 +104,7 @@ describe('the check catches each kind of disagreement', () => {
     expect(check(of('board'), shipped('board', (m) => { m.provides = [] }))).toEqual([expect.stringMatching(/the code provides ctx\.board, which it does not declare in provides/)])
     expect(check(of('board'), shipped('board', (m) => { m.provides.push({ seam: 'approvals', version: '1.0.0' }) }))).toEqual([expect.stringMatching(/provides ctx\.approvals, which the code does not provide/)])
     expect(check(of('board-core'), shipped('board-core', (m) => { m.defines = [{ seam: 'approvals', version: '1.0.0' }] })))
-      .toEqual([expect.stringMatching(/defines ctx\.approvals, which the code does not define/), expect.stringMatching(/the code defines ctx\.board, which it does not declare/)])
+      .toEqual([expect.stringMatching(/defines ctx\.approvals, which the code does not define/), expect.stringMatching(/the code defines ctx\.board, which it does not declare/), expect.stringMatching(/the code defines ctx\.leases, which it does not declare/)])
   })
 
   it('a version that disagrees with the conformance contract, of a provider, a definition, or a consumer\'s range', () => {

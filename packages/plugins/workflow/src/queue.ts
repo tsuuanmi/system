@@ -11,7 +11,7 @@
  * naming it), so a restart reads the request again and never asks twice (INV-4).
  */
 import { type ApprovalRequest, type Approvals, ApprovalsError, type AutonomyVerdict, type Subject } from '@tsuuanmi/system-approvals-core'
-import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
+import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-board-core'
 import { captureGitSubject, type GitSubject, sha256, subjectId } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'

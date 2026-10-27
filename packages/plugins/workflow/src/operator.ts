@@ -3,7 +3,7 @@
  * the verdict on a waiting plan (REQ-WF-11).
  * Each runs under the run's lease and is recorded as the operator's decision (INV-13).
  */
-import type { Lease } from '@tsuuanmi/system-leases'
+import type { Lease } from '@tsuuanmi/system-board-core'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { decideGate, grewFrom, grow } from './growth.ts'

@@ -6,7 +6,7 @@
  * ballots, counts them, and ends the rounds.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { Lease } from '@tsuuanmi/system-leases'
+import type { Lease } from '@tsuuanmi/system-board-core'
 import { canonicalJson, extractJson, sha256 } from '@tsuuanmi/system-libs'
 import { type Runtime, RUNTIMES } from '@tsuuanmi/system-worker-sessions'
 import { type ArtifactRef, type CapabilityDescriptor, type Classification, provesFor, type Tier, type WorkRequirement } from '@tsuuanmi/system-workers-core'

@@ -1,12 +1,17 @@
 # @tsuuanmi/system-board-core
 
-Work state machine **seam definition**
+Work state machine **seam definitions**
 ([plugin model](../../docs/architecture/plugin-model.md#seam-catalog), plugin rule 2;
 [board](../../docs/design/board.md)). A guarantee seam: its contract changes only by an ADR
 ([ADR-0036](../../docs/decisions/adr/0036-guarantee-core-and-capability-plugins.md)).
 
+The plugin model's core table names the work state machine as the component of `board` and of
+`leases` (one writer per subject, [INV-15](../../docs/architecture/invariants.md#inv-15-one-writer-per-subject)),
+so `leases` is defined here too, and not in a package of its own (T316c).
+
 | Seam | Definition | Provider |
 |---|---|---|
+| `ctx.leases` ([`src/leases.ts`](src/leases.ts)) | abstract `Leases` with `acquire`, `hold`, `renew`, `release`, `fence`, `invalidate`, `current`; `Lease`, `Holding`, `Held`, and the errors `LeaseLost` and `StaleGeneration`; the suite [`conformance/leases.ts`](conformance/leases.ts), contract 1.1. Configuration (`maxTtlMs`) is the provider's | [`@tsuuanmi/system-leases`](../plugins/leases/README.md) |
 | `ctx.board` | abstract `Board` with `charter(input, at?)`, `project`, `projects`, `pause`, `resume`, `close`, `propose(input, at?)`, `task`, `tasks`, `claim`, `renew`, `start`, `submit`, `accept`, `reconcileRun`, `block` (its optional `funding`, 1.2, and `unreleased`, 1.3), `answer`, `cancel`, `sweep(at)`, and the optional `attachDigest(taskId, digest, at?)` (1.1) and `reopen(taskId, back, at?)` (1.4); `Project`, `Charter`, `Milestone`, `BoardTask`, `Funding`, `UnreleasedHold`, `Reopening`, `CharterInput`, `TaskInput`, `Claim`, `RunOutcome` (its failed run's optional `infrastructure`, 1.5), `InfrastructureFailure`, `BoardError`; `TERMINAL`, `fundingVersion`, `UNRELEASED_MAX`, `REOPEN_REASON_MAX`, `unreleasedProblem`, `unreleasedText`, `INFRASTRUCTURE_KINDS`, `INFRASTRUCTURE_REASON_MAX`, `infrastructureProblem`, `FREE_RETRIES_DEFAULT`, `FREE_RETRIES_MAX`, `freeRetriesOf`, `BOARD_CONTRACT` (1.5) | the fake `FakeBoard`; the store-backed [`board`](../plugins/board/README.md) |
 
 - The types mirror `project@1.0` and `board-task@1.2` (its `defect` link, `Defect`, set by the optional

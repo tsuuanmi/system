@@ -2,7 +2,7 @@
   "schema": "plugin-manifest@1.1",
   "name": "@tsuuanmi/system-workers-core",
   "version": "0.0.0",
-  "description": "Routing seam definition: ctx.workers, the Worker registry and deterministic router, with its conformance suite",
+  "description": "Gate seam definitions: ctx.workers, the Worker registry and deterministic router, and ctx.egress, explicit data egress, with their conformance suites",
   "class": {
     "kind": "core",
     "component": "gate"
@@ -10,6 +10,10 @@
   "provides": [],
   "consumes": [],
   "defines": [
+    {
+      "seam": "egress",
+      "version": "1.0.0"
+    },
     {
       "seam": "workers",
       "version": "1.0.0"

@@ -40,8 +40,7 @@ import {
 } from '@tsuuanmi/system-agent-runtime-core'
 import { webAccessOf } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-ledger-core'
-import type { Classification } from '@tsuuanmi/system-egress'
-import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
+import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-board-core'
 import {
   type AccountSetting, accountSettings, ASSIGNED, bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, currentProcess, DESCRIPTION, drawEntries, dshHome, LABEL, type LeaseProbe, type Liveness, LIVENESS_RULE, livenessOf, MAX_DESCRIPTION, MAX_LABEL,
   type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, pooledTermsDecision, probeProcess, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDraw, sha256, USAGE_UNKNOWN_EVENT, type UsageUnknown, usageUnknown,
@@ -49,7 +48,7 @@ import {
 import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import { type LimitState, type PoolState, type Resources, ResourcesError, templatePool, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import {
-  type ArtifactRef, type CapabilityDescriptor, type CapabilityOffer, type ExecutionInfrastructure, type ExecutionStatus, type LivenessQuery, type LivenessReport, type LivenessState, MAX_LIVENESS_RUNS, type QuotaClass, type RunLiveness, type Tier,
+  type ArtifactRef, type CapabilityDescriptor, type CapabilityOffer, type Classification, type ExecutionInfrastructure, type ExecutionStatus, type LivenessQuery, type LivenessReport, type LivenessState, MAX_LIVENESS_RUNS, type QuotaClass, type RunLiveness, type Tier,
   type TierOffer, TIERS, type WorkerExecution, type WorkerSandbox, type WorkerStart, type WorkScope,
 } from '@tsuuanmi/system-workers-core'
 import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MAX_SLOTS } from './accounts.ts'

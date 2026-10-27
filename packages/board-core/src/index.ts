@@ -1,5 +1,6 @@
 /**
- * Work state machine seam definition: `ctx.board`, projects with charters and board tasks that
+ * Work state machine seam definitions: `ctx.board` and `ctx.leases` (the one-writer fence, INV-15).
+ * `ctx.board`: projects with charters and board tasks that
  * outlive a run (docs/design/board.md). The types mirror `project@1.0` and `board-task@1.1`; the
  * schemas in `schemas/` are canonical. Only the board moves a task, each move naming the decision
  * behind it (INV-13). A guarantee seam: it fails closed (INV-2), and its contract changes only by
@@ -11,6 +12,7 @@ import type { ActionClass, ArtifactRef, Check, Classification, Subject } from '@
 
 export type { ActionClass, ArtifactRef, Check, Classification, Subject }
 export { renderTasks } from './projection.ts'
+export * from './leases.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

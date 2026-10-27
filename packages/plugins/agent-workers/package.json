@@ -22,9 +22,8 @@
   "dependencies": {
     "@tsuuanmi/system-agent-runtime-core": "workspace:*",
     "@tsuuanmi/system-approvals-core": "workspace:*",
-    "@tsuuanmi/system-egress": "workspace:*",
+    "@tsuuanmi/system-board-core": "workspace:*",
     "@tsuuanmi/system-gateway-core": "workspace:*",
-    "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-ledger-core": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",
@@ -48,6 +47,7 @@
     "@tsuuanmi/system-credentials-vault": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-runtime-claude-agent-sdk": "workspace:*",
     "@tsuuanmi/system-runtime-codex-sdk": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*",

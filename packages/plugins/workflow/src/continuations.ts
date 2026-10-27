@@ -30,7 +30,7 @@
  * that execution as its run, that session.
  */
 import type { Approvals, ApprovalRequest, AutonomyVerdict } from '@tsuuanmi/system-approvals-core'
-import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
+import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-board-core'
 import { canonicalJson, sha256 } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { instructionsText } from './briefs.ts'

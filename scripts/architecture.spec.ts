@@ -131,7 +131,7 @@ describe('architecture rules', () => {
   it('holds every guarantee seam to a conformance suite at a pinned contract, so a worse provider cannot pass unnoticed (ADR-0036, ADR-0037)', () => {
     const suites: Record<string, string> = {
       store: 'ledger-core/conformance/store.ts', eventLog: 'ledger-core/conformance/event-log.ts', artifacts: 'ledger-core/conformance/artifacts.ts',
-      turnReceipts: 'plugins/turn-receipts/conformance/turn-receipts.ts', leases: 'plugins/leases/conformance/leases.ts', egress: 'plugins/egress/conformance/egress.ts',
+      turnReceipts: 'plugins/turn-receipts/conformance/turn-receipts.ts', leases: 'board-core/conformance/leases.ts', egress: 'workers-core/conformance/egress.ts',
       workerSessions: 'plugins/worker-sessions/conformance/worker-sessions.ts', workflow: 'plugins/workflow/conformance/workflow.ts', workers: 'workers-core/conformance/workers.ts',
       board: 'board-core/conformance/board.ts', approvals: 'approvals-core/conformance/approvals.ts', resources: 'resources-core/conformance/resources.ts',
       pluginHost: 'plugin-host-core/conformance/plugin-host.ts', experiments: 'feedback-core/conformance/experiments.ts',

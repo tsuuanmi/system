@@ -21,8 +21,8 @@ import {
   type ActionClass, type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, type Check, type CommandPathScope, commandRulesOf, SHELL_METACHARACTER, webAccessOf, type WebTool, withinClassification,
 } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-ledger-core'
-import type {} from '@tsuuanmi/system-egress'
 import { contentId, isRecord } from '@tsuuanmi/system-libs'
+import type {} from '@tsuuanmi/system-workers-core'
 import { matchCommandRule, REF_NAME } from './command-rules.ts'
 import { namesLocalPath, WEB_PROBE_QUERY, webTarget } from './research.ts'
 

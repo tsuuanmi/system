@@ -20,10 +20,10 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-gateway-core": "workspace:*",
     "@tsuuanmi/system-ledger-core": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
+    "@tsuuanmi/system-workers-core": "workspace:*",
     "zod": "^4.1.0"
   },
   "peerDependencies": {
@@ -39,6 +39,7 @@
     "@tsuuanmi/system-approvals-core": "workspace:*",
     "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-credentials-vault": "workspace:*",
+    "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-event-log": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*"
   }

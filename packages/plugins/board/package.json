@@ -23,7 +23,6 @@
     "@tsuuanmi/system-approvals-core": "workspace:*",
     "@tsuuanmi/system-board-core": "workspace:*",
     "@tsuuanmi/system-gateway-core": "workspace:*",
-    "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-ledger-core": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*"
   },
@@ -37,6 +36,7 @@
     "@deepseek-ai/schemastery": "3.18.5-alpha.1",
     "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*",
     "zod": "^4.1.0"
   }

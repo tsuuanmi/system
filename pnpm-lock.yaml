@@ -302,12 +302,12 @@ importers:
 
   packages/digest-core:
     dependencies:
+      '@tsuuanmi/system-board-core':
+        specifier: workspace:*
+        version: link:../board-core
       '@tsuuanmi/system-gateway-core':
         specifier: workspace:*
         version: link:../gateway-core
-      '@tsuuanmi/system-leases':
-        specifier: workspace:*
-        version: link:../plugins/leases
       '@tsuuanmi/system-ledger-core':
         specifier: workspace:*
         version: link:../ledger-core
@@ -498,15 +498,12 @@ importers:
       '@tsuuanmi/system-approvals-core':
         specifier: workspace:*
         version: link:../../approvals-core
-      '@tsuuanmi/system-egress':
+      '@tsuuanmi/system-board-core':
         specifier: workspace:*
-        version: link:../egress
+        version: link:../../board-core
       '@tsuuanmi/system-gateway-core':
         specifier: workspace:*
         version: link:../../gateway-core
-      '@tsuuanmi/system-leases':
-        specifier: workspace:*
-        version: link:../leases
       '@tsuuanmi/system-ledger-core':
         specifier: workspace:*
         version: link:../../ledger-core
@@ -547,9 +544,15 @@ importers:
       '@tsuuanmi/system-credentials-vault':
         specifier: workspace:*
         version: link:../credentials-vault
+      '@tsuuanmi/system-egress':
+        specifier: workspace:*
+        version: link:../egress
       '@tsuuanmi/system-event-log':
         specifier: workspace:*
         version: link:../event-log
+      '@tsuuanmi/system-leases':
+        specifier: workspace:*
+        version: link:../leases
       '@tsuuanmi/system-runtime-claude-agent-sdk':
         specifier: workspace:*
         version: link:../runtime-claude-agent-sdk
@@ -648,9 +651,6 @@ importers:
       '@tsuuanmi/system-gateway-core':
         specifier: workspace:*
         version: link:../../gateway-core
-      '@tsuuanmi/system-leases':
-        specifier: workspace:*
-        version: link:../leases
       '@tsuuanmi/system-ledger-core':
         specifier: workspace:*
         version: link:../../ledger-core
@@ -670,6 +670,9 @@ importers:
       '@tsuuanmi/system-event-log':
         specifier: workspace:*
         version: link:../event-log
+      '@tsuuanmi/system-leases':
+        specifier: workspace:*
+        version: link:../leases
       '@tsuuanmi/system-store':
         specifier: workspace:*
         version: link:../store
@@ -723,15 +726,15 @@ importers:
 
   packages/plugins/digest:
     dependencies:
+      '@tsuuanmi/system-board-core':
+        specifier: workspace:*
+        version: link:../../board-core
       '@tsuuanmi/system-digest-core':
         specifier: workspace:*
         version: link:../../digest-core
       '@tsuuanmi/system-gateway-core':
         specifier: workspace:*
         version: link:../../gateway-core
-      '@tsuuanmi/system-leases':
-        specifier: workspace:*
-        version: link:../leases
       '@tsuuanmi/system-ledger-core':
         specifier: workspace:*
         version: link:../../ledger-core
@@ -757,6 +760,9 @@ importers:
       '@tsuuanmi/system-event-log':
         specifier: workspace:*
         version: link:../event-log
+      '@tsuuanmi/system-leases':
+        specifier: workspace:*
+        version: link:../leases
       '@tsuuanmi/system-mcp-server':
         specifier: workspace:*
         version: link:../mcp-server
@@ -769,15 +775,15 @@ importers:
 
   packages/plugins/digest-extractive:
     dependencies:
+      '@tsuuanmi/system-board-core':
+        specifier: workspace:*
+        version: link:../../board-core
       '@tsuuanmi/system-digest-core':
         specifier: workspace:*
         version: link:../../digest-core
       '@tsuuanmi/system-gateway-core':
         specifier: workspace:*
         version: link:../../gateway-core
-      '@tsuuanmi/system-leases':
-        specifier: workspace:*
-        version: link:../leases
       '@tsuuanmi/system-ledger-core':
         specifier: workspace:*
         version: link:../../ledger-core
@@ -800,6 +806,9 @@ importers:
       '@tsuuanmi/system-event-log':
         specifier: workspace:*
         version: link:../event-log
+      '@tsuuanmi/system-leases':
+        specifier: workspace:*
+        version: link:../leases
       '@tsuuanmi/system-store':
         specifier: workspace:*
         version: link:../store
@@ -840,6 +849,9 @@ importers:
       '@tsuuanmi/system-provider-core':
         specifier: workspace:*
         version: link:../../provider-core
+      '@tsuuanmi/system-workers-core':
+        specifier: workspace:*
+        version: link:../../workers-core
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1
@@ -984,6 +996,9 @@ importers:
 
   packages/plugins/leases:
     dependencies:
+      '@tsuuanmi/system-board-core':
+        specifier: workspace:*
+        version: link:../../board-core
       '@tsuuanmi/system-ledger-core':
         specifier: workspace:*
         version: link:../../ledger-core
@@ -1107,15 +1122,12 @@ importers:
 
   packages/plugins/models:
     dependencies:
-      '@tsuuanmi/system-egress':
+      '@tsuuanmi/system-board-core':
         specifier: workspace:*
-        version: link:../egress
+        version: link:../../board-core
       '@tsuuanmi/system-gateway-core':
         specifier: workspace:*
         version: link:../../gateway-core
-      '@tsuuanmi/system-leases':
-        specifier: workspace:*
-        version: link:../leases
       '@tsuuanmi/system-ledger-core':
         specifier: workspace:*
         version: link:../../ledger-core
@@ -1156,9 +1168,15 @@ importers:
       '@tsuuanmi/system-credentials-vault':
         specifier: workspace:*
         version: link:../credentials-vault
+      '@tsuuanmi/system-egress':
+        specifier: workspace:*
+        version: link:../egress
       '@tsuuanmi/system-event-log':
         specifier: workspace:*
         version: link:../event-log
+      '@tsuuanmi/system-leases':
+        specifier: workspace:*
+        version: link:../leases
       '@tsuuanmi/system-profile-scientific-research':
         specifier: workspace:*
         version: link:../profile-scientific-research
@@ -1177,9 +1195,6 @@ importers:
 
   packages/plugins/notify:
     dependencies:
-      '@tsuuanmi/system-egress':
-        specifier: workspace:*
-        version: link:../egress
       '@tsuuanmi/system-gateway-core':
         specifier: workspace:*
         version: link:../../gateway-core
@@ -1189,6 +1204,9 @@ importers:
       '@tsuuanmi/system-libs':
         specifier: workspace:*
         version: link:../../libs
+      '@tsuuanmi/system-workers-core':
+        specifier: workspace:*
+        version: link:../../workers-core
       zod:
         specifier: ^4.6.6
         version: 4.6.7
@@ -1214,6 +1232,9 @@ importers:
       '@tsuuanmi/system-credentials-vault':
         specifier: workspace:*
         version: link:../credentials-vault
+      '@tsuuanmi/system-egress':
+        specifier: workspace:*
+        version: link:../egress
       '@tsuuanmi/system-event-log':
         specifier: workspace:*
         version: link:../event-log
@@ -1585,15 +1606,12 @@ importers:
       '@tsuuanmi/system-accounts':
         specifier: workspace:*
         version: link:../accounts
-      '@tsuuanmi/system-egress':
+      '@tsuuanmi/system-board-core':
         specifier: workspace:*
-        version: link:../egress
+        version: link:../../board-core
       '@tsuuanmi/system-gateway-core':
         specifier: workspace:*
         version: link:../../gateway-core
-      '@tsuuanmi/system-leases':
-        specifier: workspace:*
-        version: link:../leases
       '@tsuuanmi/system-ledger-core':
         specifier: workspace:*
         version: link:../../ledger-core
@@ -1634,9 +1652,15 @@ importers:
       '@tsuuanmi/system-display-virtual':
         specifier: workspace:*
         version: link:../display-virtual
+      '@tsuuanmi/system-egress':
+        specifier: workspace:*
+        version: link:../egress
       '@tsuuanmi/system-event-log':
         specifier: workspace:*
         version: link:../event-log
+      '@tsuuanmi/system-leases':
+        specifier: workspace:*
+        version: link:../leases
       '@tsuuanmi/system-provider-chatgpt-web':
         specifier: workspace:*
         version: link:../provider-chatgpt-web
@@ -1796,18 +1820,12 @@ importers:
       '@tsuuanmi/system-digest-core':
         specifier: workspace:*
         version: link:../../digest-core
-      '@tsuuanmi/system-egress':
-        specifier: workspace:*
-        version: link:../egress
       '@tsuuanmi/system-gateway-core':
         specifier: workspace:*
         version: link:../../gateway-core
       '@tsuuanmi/system-landing-core':
         specifier: workspace:*
         version: link:../../landing-core
-      '@tsuuanmi/system-leases':
-        specifier: workspace:*
-        version: link:../leases
       '@tsuuanmi/system-ledger-core':
         specifier: workspace:*
         version: link:../../ledger-core
@@ -1860,12 +1878,18 @@ importers:
       '@tsuuanmi/system-display-virtual':
         specifier: workspace:*
         version: link:../display-virtual
+      '@tsuuanmi/system-egress':
+        specifier: workspace:*
+        version: link:../egress
       '@tsuuanmi/system-event-log':
         specifier: workspace:*
         version: link:../event-log
       '@tsuuanmi/system-landing-local':
         specifier: workspace:*
         version: link:../landing-local
+      '@tsuuanmi/system-leases':
+        specifier: workspace:*
+        version: link:../leases
       '@tsuuanmi/system-login':
         specifier: workspace:*
         version: link:../login
@@ -2096,6 +2120,10 @@ importers:
         version: 1.63.0(patch_hash=a0adfdf949fb2d56a2b047ace2b0ac22c9655a74549995ae80266814e2666284)
 
   packages/workers-core:
+    dependencies:
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../libs
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1

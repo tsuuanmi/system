@@ -13,7 +13,7 @@ import { accessSync, constants } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import type {} from '@tsuuanmi/system-egress'
+import type {} from '@tsuuanmi/system-workers-core'
 import { desktopBody, type Notice } from './notices.ts'
 
 /** How one delivery went: sent, or failed with why (no secret in it). */

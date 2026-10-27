@@ -30,7 +30,7 @@ import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync, re
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { type AutonomyPolicy, changeTier, type RiskTier, riskTierMaps } from '@tsuuanmi/system-approvals-core'
-import type { Lease } from '@tsuuanmi/system-leases'
+import type { Lease } from '@tsuuanmi/system-board-core'
 import { type BriefHandbook, BRIEF_LIMITS, type BriefPointer, type HandbookLayer, type HandbookRole, LESSONS_LIMITS, LESSONS_PATH, lessonsSectionOf, lessonsText, pathMatches, sha256 } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'

@@ -76,7 +76,7 @@ export async function codeFacts(): Promise<CodeFacts> {
     if (schema.type !== 'object' || !schema.dict) throw new Error(`gen-manifests: packages/plugins/${dir}: its Config is not an object schema, so its keys cannot be told`)
     configs.set(dir, configKeys(schema))
   }
-  const egress = await import(pathToFileURL(join(root, 'packages', 'plugins', 'egress', 'src', 'index.ts')).href) as { WORKER_CLASSES: Record<string, Classification[]> }
+  const egress = await import(pathToFileURL(join(root, 'packages', 'workers-core', 'src', 'index.ts')).href) as { WORKER_CLASSES: Record<string, Classification[]> }
   return { configs, workerClasses: egress.WORKER_CLASSES }
 }
 

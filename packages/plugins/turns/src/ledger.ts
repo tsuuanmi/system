@@ -10,7 +10,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { DatabaseSync } from 'node:sqlite'
-import type { Lease } from '@tsuuanmi/system-leases'
+import type { Lease } from '@tsuuanmi/system-board-core'
 import { type ContentId, unique } from '@tsuuanmi/system-libs'
 import { type BrowserTurn, type ConversationMode, type ProviderDriver, ProviderError, type ProviderFeature, type ProviderScheduler, toProviderError } from '@tsuuanmi/system-provider-core'
 

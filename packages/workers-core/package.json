@@ -2,13 +2,14 @@
   "name": "@tsuuanmi/system-workers-core",
   "version": "0.0.0",
   "private": true,
-  "description": "Routing seam definition: ctx.workers, the Worker registry and deterministic router, with its conformance suite",
+  "description": "Gate seam definitions: ctx.workers, the Worker registry and deterministic router, and ctx.egress, explicit data egress, with their conformance suites",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
   "files": ["lib", "plugin-manifest.json"],
   "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": { "@tsuuanmi/system-libs": "workspace:*" },
   "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" },
   "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@tsuuanmi/system-ledger-core": "workspace:*" }
 }

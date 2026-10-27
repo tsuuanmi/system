@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import Store from '@tsuuanmi/system-store'
 import { describe, expect, it, onTestFinished } from 'vitest'
-import Leases, { LeaseLost } from '../src/index.ts'
+import { LeaseLost } from '@tsuuanmi/system-board-core'
+import Leases from '../src/index.ts'
 
 async function boot(): Promise<Context> {
   const dir = mkdtempSync(join(tmpdir(), 'system-leases-'))

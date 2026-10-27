@@ -10,8 +10,8 @@
   "files": ["lib", "plugin-manifest.json"],
   "scripts": { "build": "tsc -p tsconfig.build.json" },
   "dependencies": {
+    "@tsuuanmi/system-board-core": "workspace:*",
     "@tsuuanmi/system-gateway-core": "workspace:*",
-    "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-ledger-core": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-workers-core": "workspace:*"

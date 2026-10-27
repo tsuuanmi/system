@@ -6,12 +6,7 @@
  */
 import { lintSource } from '@secretlint/core'
 import { creator as recommended } from '@secretlint/secretlint-rule-preset-recommend'
-
-export interface Finding {
-  rule: string
-  /** Character offset of the match in the text; the matched text is never kept. */
-  at: number
-}
+import type { Finding } from '@tsuuanmi/system-workers-core'
 
 export interface NamedPattern {
   name: string

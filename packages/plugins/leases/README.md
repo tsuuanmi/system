@@ -29,9 +29,12 @@
   leaves fencing out of scope.
 - **Injects:** `store`.
 - **Config:** `maxTtlMs`.
-- The conformance suite is [`conformance/leases.ts`](conformance/leases.ts), run through the
-  [conformance runner](../../libs/conformance/runner.ts) at contract 1.1 against this plugin
-  over a real store:
+- **The seam** (`Leases`, `Lease`, `Holding`, `Held`, `LeaseLost`, `StaleGeneration`) is defined in
+  [`@tsuuanmi/system-board-core`](../../board-core/README.md), the work state machine's definition
+  package; this plugin extends it, and every consumer imports the types and errors from there.
+- The conformance suite is [`conformance/leases.ts`](../../board-core/conformance/leases.ts) in that
+  package, run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.1
+  against this plugin over a real store:
   - one holder per resource, as a `lease@1.0` record;
   - a generation that rises on every new holder and every invalidation, and never falls on
     release;

@@ -37,9 +37,12 @@
   `website`, `agent`, or `model` Worker by default. Setting `workerClasses`
   replaces the whole default, so list every class.
 - **Injects:** `artifacts`.
-- The conformance suite is [`conformance/egress.ts`](conformance/egress.ts), run through the
-  [conformance runner](../../libs/conformance/runner.ts) at contract 1.0 against this plugin
-  with `EGRESS_CONFIG`:
+- **The seam** (`Egress`, `Config`, `EgressRequest`, `EgressVerdict`, `Finding`, `DenyPattern`,
+  `WORKER_CLASSES`) is defined in [`@tsuuanmi/system-workers-core`](../../workers-core/README.md), the
+  gate's definition package; this plugin extends it, and every consumer imports from there.
+- The conformance suite is [`conformance/egress.ts`](../../workers-core/conformance/egress.ts) in that
+  package, run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.0
+  against this plugin with `EGRESS_CONFIG`:
   - public and operator-shared content to every default Worker class;
   - local-private kept on the machine for every default class, `model-local` included, and
     let out only to a class the operator widened;
