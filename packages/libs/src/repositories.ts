@@ -341,15 +341,16 @@ function segmentMatches(pattern: string, text: string, budget?: GlobBudget): boo
 /**
  * Whether `path` is under `pattern`: `*` within a segment, `**` across any segments, a path or a
  * directory prefix otherwise. Segment by segment, so it is O(pattern × path) and never backtracks;
- * a `budget` bounds the steps over many calls.
+ * a `budget` bounds the steps over many calls. With `exact`, a pattern without a trailing `/` or `**`
+ * names only the path itself, not what is under it.
  */
-export function globMatches(pattern: string, path: string, budget?: GlobBudget): boolean {
+export function globMatches(pattern: string, path: string, budget?: GlobBudget, exact = false): boolean {
   const parts = pattern.replace(/^\.?\//, '').split('/').filter((s, i, all) => s !== '' || i === all.length - 1)
     .map((s) => (/^\*{2,}$/.test(s) ? '**' : s.replace(/\*+/g, '*')))
     .filter((s, i, all) => !(s === '**' && all[i - 1] === '**'))
-  // A pattern names a path or everything under it.
-  if (parts.at(-1) === '') parts.pop()
-  if (parts.at(-1) !== '**') parts.push('**')
+  // A trailing `/` is the directory and all below it; unless `exact`, so is a bare name.
+  if (parts.at(-1) === '') parts[parts.length - 1] = '**'
+  else if (!exact && parts.at(-1) !== '**') parts.push('**')
   const segs = path.split('/')
   const memo = new Map<number, boolean>()
   const at = (i: number, j: number): boolean => {
@@ -365,6 +366,27 @@ export function globMatches(pattern: string, path: string, budget?: GlobBudget):
     return ok
   }
   return at(0, 0)
+}
+
+/** A checked pattern's characters: a path's, plus `*`. Never a leading `/` or an empty segment but a trailing `/`. */
+const GLOB_PATTERN = /^[A-Za-z0-9._@+*-]+(\/[A-Za-z0-9._@+*-]+)*\/?$/
+/** The most characters a checked pattern holds (INV-9). */
+const GLOB_PATTERN_CHARS = 200
+
+/**
+ * Why `pattern` is not a repository-relative pattern {@link globMatches} reads in `exact` mode, or
+ * undefined when it is: path characters and `*`, single slashes, no `.` or `..` segment, `**` only as
+ * a whole segment. Without `deep`, neither `**` nor a trailing `/`: each segment names one.
+ */
+export function globProblem(pattern: unknown, deep: boolean): string | undefined {
+  if (typeof pattern !== 'string' || !pattern.length) return 'is not a non-empty string'
+  if (pattern.length > GLOB_PATTERN_CHARS) return `is longer than ${GLOB_PATTERN_CHARS} characters`
+  if (!GLOB_PATTERN.test(pattern)) return 'is not a repository-relative path of letters, digits, . _ @ + - and *, its segments separated by single slashes'
+  const segments = pattern.split('/')
+  if (segments.some((s) => s === '.' || s === '..')) return 'has a . or .. segment'
+  if (segments.some((s) => s.includes('**') && s !== '**')) return 'has ** inside a segment; ** is a whole segment'
+  if (!deep && (pattern.includes('**') || pattern.endsWith('/'))) return 'holds a glob character other than a single * within a segment, or ends in /'
+  return undefined
 }
 
 /** A focus pattern within its bounds: at most 500 characters, 8 wildcards, and 16 segments. */

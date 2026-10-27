@@ -11,7 +11,7 @@ export { dshHome, ensurePrivateDir, fsyncDir, readOrCreateSecretFile, writeFileD
 export { issueLeadToken, LEAD_PROJECT, leadId, leadTokenFile, leadTokens, listLeads, revokeLeadToken } from './lead-tokens.ts'
 export { nodeVersionProblem, sqliteRuntimeProblem, SUPPORTED_NODE } from './runtime.ts'
 export { registerSecretPath, secretPaths } from './secrets.ts'
-export { GIT_FLOOR, GLOB_BUDGET, type GlobBudget, globMatches, isPrivateAddress, pinnedTo, type RepositorySnapshot, selectFiles, type SnapshotBounds, SnapshotError, type SnapshotFile, type SnapshotRequest, snapshotRepository, type UnreadReason } from './repositories.ts'
+export { GIT_FLOOR, GLOB_BUDGET, type GlobBudget, globMatches, globProblem, isPrivateAddress, pinnedTo, type RepositorySnapshot, selectFiles, type SnapshotBounds, SnapshotError, type SnapshotFile, type SnapshotRequest, snapshotRepository, type UnreadReason } from './repositories.ts'
 export { captureGitSubject, type CapturedSubject, type CaptureOptions, changeBetween, changeSince, CLEAN_VERSION, type GitSubject, ignoredPath, SANDBOX_PLACEHOLDERS, sandboxPlaceholder, subjectId } from './subjects.ts'
 export {
   currentProcess, hostOf, type LeaseProbe, type Liveness, type LivenessBounds, LIVENESS_RULE, LIVENESS_VERDICTS, livenessOf, type LivenessSignals, type LivenessVerdict,

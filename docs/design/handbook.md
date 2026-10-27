@@ -366,7 +366,8 @@ How each layer's parts carry the keys (I1 part 2 builds them; nothing is rewritt
   `tests/` path; a schema rule for a touched `schemas/` path).
 - **Layer 5:** a lesson may end with an `Applies:` clause after its `Check:`, naming roles and
   paths (`Applies: develop, review; schemas/**`). A lesson with none applies to `develop` and
-  `review`, every path.
+  `review`, every path. Its paths are read by libs' one glob matcher and pattern validator
+  (`globMatches`, `globProblem`); a path the validator refuses matches nothing.
 
 ### The slice of each role
 

@@ -22,7 +22,7 @@ import { childEnvironment, confinedCommand, type Confinement, proveConfinement }
 import { type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, SHELL_METACHARACTER } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
-import { type ContentId, contentId, ensurePrivateDir, ignoredPath } from '@tsuuanmi/system-libs'
+import { type ContentId, contentId, ensurePrivateDir, globMatches, globProblem, ignoredPath } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import { RUN_CHECKS, type RunCheck } from '@tsuuanmi/system-workers-core'
@@ -155,22 +155,7 @@ export interface Setup {
  * in the pattern standing for any characters within its segment.
  */
 export function generatedPath(patterns: readonly string[], path: string): boolean {
-  const segments = path.split('/')
-  return patterns.some((pattern) => {
-    const parts = pattern.split('/')
-    return parts.length === segments.length && parts.every((part, i) => new RegExp(`^${part.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')}$`).test(segments[i]!))
-  })
-}
-
-/** Why a generated-file pattern is not one: a relative path, no `.`, `..`, or empty segment, no glob but `*`, never under `.git` or `.system`. */
-function patternProblem(pattern: unknown): string | undefined {
-  if (!RELATIVE(pattern)) return 'is not a relative path without ., .., or an empty segment'
-  const text = pattern as string
-  if (text.length > SETUP_LIMITS.commandChars) return `is longer than ${SETUP_LIMITS.commandChars} characters`
-  if (/[?[\]{}\\\n\r]/.test(text) || text.includes('**')) return 'holds a glob character other than a single * within a segment'
-  const first = text.split('/')[0]!
-  if (first === '.git' || first === '.system' || first === '*') return 'names .git, .system, or every top-level entry, which are never generated files'
-  return undefined
+  return patterns.some((pattern) => globMatches(pattern, path, undefined, true))
 }
 
 /** `commandChars` is the policy's own bound on a commands-list line (`autonomy-policy@1.0`): every setup command can be listed there. */
@@ -283,7 +268,8 @@ function loadGenerated(repository: string, generated: WorktreeGeneratedConfig | 
   if (none(paths) && none(commands)) return undefined
   if (!Array.isArray(paths) || !paths.length || paths.length > SETUP_LIMITS.generatedPaths) fail(`${repository}: generated.paths holds 1 to ${SETUP_LIMITS.generatedPaths} paths`)
   for (const [i, pattern] of paths.entries()) {
-    const problem = patternProblem(pattern)
+    // libs' one pattern validator, each segment naming one (no `**`, no trailing `/`); then never `.git`, `.system`, or every top-level entry.
+    const problem = globProblem(pattern, false) ?? (['.git', '.system', '*'].includes(String(pattern).split('/')[0]!) ? 'names .git, .system, or every top-level entry, which are never generated files' : undefined)
     if (problem) fail(`${repository}: generated path ${i + 1} (${String(pattern)}) ${problem}`)
   }
   if (new Set(paths).size !== paths.length) fail(`${repository}: generated.paths names a path twice`)

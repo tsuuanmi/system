@@ -2,8 +2,11 @@
  * Process tiered by risk (PROP-0016 §4, D83, ADR-0071): the autonomy policy's path map gives each
  * changed path a tier, `light`, `normal`, or `heavy`, and a change's tier is the highest of its
  * paths. A path no rule matches, and a path that cannot be read, is heavy (INV-2). Pure: no store,
- * no clock, no file system. The tier is decided by what a change touches, never by a model.
+ * no clock, and it reads no file system (it imports only libs' `globMatches` and `globProblem`).
+ * The tier is decided by what a change touches, never by a model.
  */
+
+import { globMatches, globProblem } from '@tsuuanmi/system-libs'
 
 /** A change's risk tier, from least to most process. */
 export type RiskTier = 'light' | 'normal' | 'heavy'
@@ -30,45 +33,12 @@ export interface RiskTierMap {
 }
 
 /** The most rules a map holds, and patterns a rule holds (INV-9). */
-const RISK_MAP_BOUNDS = { rules: 200, paths: 64, patternChars: 200, noteChars: 500 } as const
+const RISK_MAP_BOUNDS = { rules: 200, paths: 64, noteChars: 500 } as const
 
-/** A pattern's characters: a path's, plus `*`. Never `..`, a leading `/`, or an empty segment but a trailing `/`. */
-const PATTERN = /^[A-Za-z0-9._@+*-]+(\/[A-Za-z0-9._@+*-]+)*\/?$/
-
-/** Why a pattern is not one {@link matchesPath} reads, or undefined when it is. */
+/** Why a pattern is not one {@link matchesPath} reads (libs' `globProblem`, `**` and a trailing `/` allowed), or undefined when it is. */
 export function patternProblem(pattern: string): string | undefined {
-  if (typeof pattern !== 'string' || !pattern.length) return 'a pattern is a non-empty string'
-  if (pattern.length > RISK_MAP_BOUNDS.patternChars) return `the pattern ${JSON.stringify(pattern.slice(0, 40))}… is longer than ${RISK_MAP_BOUNDS.patternChars} characters`
-  if (!PATTERN.test(pattern)) return `the pattern ${JSON.stringify(pattern)} is not a repository-relative path of letters, digits, . _ @ + - and *, its segments separated by single slashes`
-  if (pattern.split('/').some((s) => s === '.' || s === '..')) return `the pattern ${JSON.stringify(pattern)} has a . or .. segment`
-  if (pattern.split('/').some((s) => s.includes('**') && s !== '**')) return `the pattern ${JSON.stringify(pattern)} has ** inside a segment; ** is a whole segment`
-  return undefined
-}
-
-/** One segment of a pattern against one segment of a path: `*` is any run of characters, `/` never among them. */
-function segmentMatches(pattern: string, segment: string): boolean {
-  if (!pattern.includes('*')) return pattern === segment
-  const parts = pattern.split('*')
-  if (!segment.startsWith(parts[0]!) || !segment.endsWith(parts.at(-1)!)) return false
-  let at = parts[0]!.length
-  const end = segment.length - parts.at(-1)!.length
-  if (end < at) return false
-  for (const part of parts.slice(1, -1)) {
-    const found = segment.indexOf(part, at)
-    if (found < 0 || found + part.length > end) return false
-    at = found + part.length
-  }
-  return true
-}
-
-function segmentsMatch(pattern: readonly string[], path: readonly string[]): boolean {
-  if (!pattern.length) return !path.length
-  const [head, ...rest] = pattern
-  if (head === '**') {
-    for (let skip = 0; skip <= path.length; skip++) if (segmentsMatch(rest, path.slice(skip))) return true
-    return false
-  }
-  return path.length > 0 && segmentMatches(head!, path[0]!) && segmentsMatch(rest, path.slice(1))
+  const problem = globProblem(pattern, true)
+  return problem && `the pattern ${JSON.stringify(String(pattern).slice(0, 40))}${String(pattern).length > 40 ? '…' : ''} ${problem}`
 }
 
 /**
@@ -78,9 +48,7 @@ function segmentsMatch(pattern: readonly string[], path: readonly string[]): boo
  * `docs/**`). A pattern {@link patternProblem} refuses matches nothing.
  */
 export function matchesPath(pattern: string, path: string): boolean {
-  if (patternProblem(pattern)) return false
-  const full = pattern.endsWith('/') ? `${pattern}**` : pattern
-  return segmentsMatch(full.split('/'), path.split('/'))
+  return !patternProblem(pattern) && globMatches(pattern, path, undefined, true)
 }
 
 /** Every problem of a path map, in order; empty when it loads. */

@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { globMatches, isPrivateAddress, pinnedTo, selectFiles, SnapshotError, snapshotRepository } from '../src/index.ts'
+import { globMatches, globProblem, isPrivateAddress, pinnedTo, selectFiles, SnapshotError, snapshotRepository } from '../src/index.ts'
 // The test seams are this package's own: imported from source, never through its exports.
 import { snapshotWithTestSeams } from '../src/repositories.ts'
 
@@ -161,6 +161,19 @@ describe('snapshotRepository: a public repository read at one commit (PROP-0004 
     expect(chosen.map((c) => c.path)).toEqual(['pkg/api/handler.go', 'pkg/api/handler_test.go', 'readme.rst', 'Cargo.toml', 'cmd/tool/main.go'])
   })
 
+  it('checks a pattern once for every reader: deep (** and a trailing /) or one path per segment', () => {
+    expect(globProblem('docs/**/x.md', true)).toBeUndefined()
+    expect(globProblem('docs/', true)).toBeUndefined()
+    expect(globProblem('docs/**/x.md', false)).toMatch(/other than a single \*/)
+    expect(globProblem('docs/', false)).toMatch(/ends in \//)
+    expect(globProblem('packages/*/plugin-manifest.json', false)).toBeUndefined()
+    expect(globProblem('../x', true)).toMatch(/\. or \.\. segment/)
+    expect(globProblem('/abs', true)).toMatch(/repository-relative/)
+    expect(globProblem('a/x**/b', true)).toMatch(/\*\* inside a segment/)
+    expect(globProblem('a'.repeat(201), true)).toMatch(/longer than 200/)
+    expect(globProblem(7, true)).toMatch(/non-empty string/)
+  })
+
   it('matches globs in linear time, and bounds focus patterns and request words (DoS)', async () => {
     expect(globMatches('src/**', 'src/a/b.ts')).toBe(true)
     expect(globMatches('src/*.ts', 'src/a.ts')).toBe(true)
@@ -168,6 +181,9 @@ describe('snapshotRepository: a public repository read at one commit (PROP-0004 
     expect(globMatches('**/*.test.ts', 'a/b/c.test.ts')).toBe(true)
     expect(globMatches('docs', 'docs/x.md')).toBe(true)
     expect(globMatches('docs/', 'docs/x.md')).toBe(true)
+    expect(globMatches('docs', 'docs/x.md', undefined, true)).toBe(false)
+    expect(globMatches('docs/', 'docs/x.md', undefined, true)).toBe(true)
+    expect(globMatches('*', 'a/b.ts', undefined, true)).toBe(false)
     const started = Date.now()
     expect(globMatches(`${'**'.repeat(10)}zz`, `${'a/'.repeat(15)}b`)).toBe(false)
     expect(globMatches('*a*a*a*a*a*a*a*b', 'a'.repeat(5000))).toBe(false)

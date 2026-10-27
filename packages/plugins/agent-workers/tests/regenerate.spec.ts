@@ -321,8 +321,9 @@ describe('a landing\'s conflict confined to generated files (worktreeSetup gener
     const repo = repository()
     const load = (generated: unknown) => () => loadSetups([{ repository: repo, commands: ['true'], generated: generated as never }], [repo])
     expect(load({ paths: [], commands: ['true'] })).toThrow(/generated\.paths holds 1 to 32 paths/)
-    expect(load({ paths: ['../outside'], commands: ['true'] })).toThrow(/generated path 1 \(\.\.\/outside\) is not a relative path/)
-    expect(load({ paths: ['/etc/passwd'], commands: ['true'] })).toThrow(/is not a relative path/)
+    expect(load({ paths: ['../outside'], commands: ['true'] })).toThrow(/generated path 1 \(\.\.\/outside\) has a \. or \.\. segment/)
+    expect(load({ paths: ['/etc/passwd'], commands: ['true'] })).toThrow(/is not a repository-relative path/)
+    expect(load({ paths: ['docs/'], commands: ['true'] })).toThrow(/or ends in \//)
     expect(load({ paths: ['docs/**/x.md'], commands: ['true'] })).toThrow(/holds a glob character other than a single \*/)
     expect(load({ paths: ['.git/config'], commands: ['true'] })).toThrow(/names \.git, \.system, or every top-level entry/)
     expect(load({ paths: ['a.md', 'a.md'], commands: ['true'] })).toThrow(/names a path twice/)
@@ -347,6 +348,6 @@ describe('a landing\'s conflict confined to generated files (worktreeSetup gener
 
   it('refuses at load, through the plugin\'s own config, a generated declaration that is not one', () => {
     const repo = repository()
-    expect(() => new AgentWorkers(new Context(), { workers: [writer(repo)], worktreeSetup: [{ repository: repo, commands: ['true'], generated: { paths: ['x/../y'], commands: ['true'] } }] })).toThrow(/generated path 1 \(x\/\.\.\/y\) is not a relative path/)
+    expect(() => new AgentWorkers(new Context(), { workers: [writer(repo)], worktreeSetup: [{ repository: repo, commands: ['true'], generated: { paths: ['x/../y'], commands: ['true'] } }] })).toThrow(/generated path 1 \(x\/\.\.\/y\) has a \. or \.\. segment/)
   })
 })

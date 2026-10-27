@@ -12,6 +12,8 @@
  * tokens (`ceil(bytes / 4)`, the handbook's measure) never pass layer 5's share.
  */
 
+import { globMatches, globProblem } from './repositories.ts'
+
 /** Where a repository keeps its lessons, relative to its top level. */
 export const LESSONS_PATH = 'docs/engineering/lessons.md'
 
@@ -46,11 +48,9 @@ export function appliesOf(line: string): { roles: string[]; paths: string[] } | 
   return { roles: items.filter((i) => ROLES.has(i)), paths: items.filter((i) => !ROLES.has(i)) }
 }
 
-/** Whether a path matches a pattern: `dir/` (or `dir/` then `**`) a directory prefix; `**` then `/dir/` that directory anywhere; else the file itself. */
+/** Whether a path matches a pattern ({@link globMatches} exact: `dir/` the directory and below, `**` any segments, `*` within one); a pattern {@link globProblem} refuses matches nothing. */
 export function pathMatches(pattern: string, path: string): boolean {
-  const p = pattern.replace(/\*\*$/, '')
-  if (p.startsWith('**/')) return p.endsWith('/') ? `/${path}`.includes(`/${p.slice(3)}`) : path === p.slice(3) || path.endsWith(`/${p.slice(3)}`)
-  return p.endsWith('/') ? path.startsWith(p) : path === p
+  return !globProblem(pattern, true) && globMatches(pattern, path, undefined, true)
 }
 
 /** Whether a lesson applies to `who`: its roles (by default develop and review), then its paths, any path when the touched ones are unknown (INV-2). */

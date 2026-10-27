@@ -12,7 +12,7 @@ ADR ([ADR-0036](../../docs/decisions/adr/0036-guarantee-core-and-capability-plug
 - The types mirror `autonomy-policy@1.0`, `approval-request@1.1`, and `policy-change@1.1` (its
   optional `origin`: a change the store-backed queue proposed itself from repeated approvals,
   [ADR-0050](../../docs/decisions/adr/0050-the-queue-proposes-a-policy-change-from-repeated-approvals.md);
-  no method changes, so the contract stays 1.1); the schemas in `schemas/` are canonical. It depends on nothing but Cordis.
+  no method changes, so the contract stays 1.1); the schemas in `schemas/` are canonical. It depends on Cordis and on `libs` (its one glob matcher, `globMatches`, for the risk-tier path map).
 - Contract 1.1 adds a policy change through the queue
   ([approvals](../../docs/design/approvals.md#a-policy-change), ADR-0041): `proposePolicy` takes one
   policy record from the operator's channel only (INV-6), and asks one `policy-change` request on

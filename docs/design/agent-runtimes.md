@@ -366,8 +366,8 @@ worktreeSetup:
   repository, a command a policy could not list (empty word, shell metacharacter, over 200
   characters), more than 16 commands, or a view with a relative path, a name that is not plain, or
   a path that climbs is refused (`config_error`). So is a `generated` declaration with no path or
-  more than 32, a path that is absolute, climbs, holds a glob character but a `*` within a segment,
-  or starts at `.git`, `.system`, or `*`, a path named twice, or 0 or more than 16 commands, or a
+  more than 32, a path libs' `globProblem` refuses (absolute, climbing, a character outside letters,
+  digits, `. _ @ + -` and `*`, `**`, or a trailing `/`), or starts at `.git`, `.system`, or `*`, a path named twice, or 0 or more than 16 commands, or a
   command a policy could not list.
 - **Generated files** (`generated: { paths, commands }`, optional, T166): the files the repository
   generates and the commands that make them, which a landing whose merge conflicts only in them
