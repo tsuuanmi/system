@@ -7,7 +7,9 @@
 > template node, unrolled by the engine; a review's source step; the `vote` tool),
 > [`worker-sessions`](../../packages/plugins/worker-sessions/README.md) (members' sessions and
 > their group), and [`libs`](../../packages/libs/README.md) (repository snapshots); differs
-> from target: auxiliary Workers are not built.
+> from target: auxiliary Workers are not built. Status audited 2026-10-27: nothing of this
+> mechanism changed from T236 to T295 (a research review's single-family fallback, T260,
+> `bd93f3aa`, is [routing's](routing.md)).
 
 There is no team seam or team runner. A team is the `team` option on a workflow template node:
 `{kind: brainstorm | review, members (2..5, default 2), debateRounds (0..2, default 1)}`. A team

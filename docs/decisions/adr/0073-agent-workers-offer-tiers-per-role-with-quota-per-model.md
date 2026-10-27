@@ -1,6 +1,6 @@
 # ADR-0073: An agent Worker offers a tier per model its role declares, with quota per model, and a task's risk may set a step's tier
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-10-27; built in T261, `a89c5bd4`; a risk's tier on a first review in T288, `d81d8def`)
 - **Date:** 2026-10-26
 - **Related:** T261, the operator's request of 2026-10-26 ("when a Worker is chosen, choose its tier
   (mapping to the provider's frontier, standard and economy models) and its capability (develop,

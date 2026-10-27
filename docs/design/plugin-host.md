@@ -15,7 +15,9 @@
 > split, no promotion); a plugin the manifest check finds something in (no manifest, or a consumed
 > seam version its providers do not satisfy) is recorded and makes health down, but still runs: the
 > host cannot refuse a row ([ADR-0048](../decisions/adr/0048-the-plugin-host-checks-the-composition-at-start.md));
-> a row turned on or off while the host runs is recorded at its next start.
+> a row turned on or off while the host runs is recorded at its next start. Status audited
+> 2026-10-27: nothing of this mechanism changed from T236 to T295 (the canary on a live update,
+> T219, T269, is the [workflow engine's](workflow-engine.md); no lifecycle step is automated).
 
 Every plugin package says what it is in a manifest: the seams it provides and consumes, at which
 contract versions, which core component or plugin family it belongs to, its configuration keys,

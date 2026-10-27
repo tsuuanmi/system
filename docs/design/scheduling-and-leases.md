@@ -8,7 +8,8 @@
 > [`store`](../../packages/plugins/store/README.md); differs from target: `runExclusive` has no
 > caller yet; the workflow engine leases a whole run (`run:<id>`), not each node execution;
 > `RECOVERING` is not used; plugins check revisions in their own writes, not through the
-> store's `updateRevision`.
+> store's `updateRevision`. Status audited 2026-10-27: nothing of this mechanism changed from
+> T236 to T295.
 
 ## Per-account scheduler
 

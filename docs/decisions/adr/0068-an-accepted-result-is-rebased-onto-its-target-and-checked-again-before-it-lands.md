@@ -1,6 +1,6 @@
 # ADR-0068: An accepted result is rebased onto its target and checked again before it lands
 
-- **Status:** Proposed (2026-10-26, T216), built on the operator's decision D82 #1 (2026-10-26). It
+- **Status:** Accepted (2026-10-27; built in T216, `c5d49130`, 2026-10-26; proposed 2026-10-26), built on the operator's decision D82 #1 (2026-10-26). It
   amends [ADR-0060](0060-an-accepted-result-lands-on-the-operators-merge-approval.md)'s decision 4
   ("a moved base asks again") and adds to the `board` and `workers` seams, each by an optional member.
 - **Date:** 2026-10-26

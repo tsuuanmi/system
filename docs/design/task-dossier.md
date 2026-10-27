@@ -4,7 +4,8 @@
 > Shapes: [`task-dossier-entry.v1.json`](../../schemas/task-dossier-entry.v1.json),
 > [`task-dossier.v1.json`](../../schemas/task-dossier.v1.json).
 >
-> Implemented in [`workflow`](../../packages/plugins/workflow/README.md) (`src/dossiers.ts`) and,
+> Built in T233 (`fd3449de`); ADR-0070 accepted 2026-10-27. Implemented in
+> [`workflow`](../../packages/plugins/workflow/README.md) (`src/dossiers.ts`) and,
 > for an agent Worker's own tools, [`agent-workers`](../../packages/plugins/agent-workers/README.md)
 > (`src/dossier.ts`); differs from target: only Claude Code offers host tools today, so an agent
 > Worker on another runtime (Codex, ACP, the Antigravity CLI) holds no dossier tool, its step is

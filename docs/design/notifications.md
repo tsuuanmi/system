@@ -9,6 +9,8 @@
 > from target: no notice when a request expires (it is denied by then, and the waiting work's own
 > notice, a run that failed, follows), and a host that was stopped notifies nothing of what it
 > recorded before it stopped once that is older than `maxAgeMinutes`.
+>
+> Built since 2026-10-25: a held review's expiry and its re-opening, across a restart (T286, `2d246e4d`).
 
 An approval request that nobody answers expires, and expiry denies it
 ([approvals](approvals.md#a-request)): a request the operator never saw is lost work. The same holds

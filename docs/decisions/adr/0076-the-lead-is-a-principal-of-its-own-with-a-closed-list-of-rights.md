@@ -1,6 +1,6 @@
 # ADR-0076: The lead is a principal of its own, with a closed list of rights System enforces
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-10-27; built in T273, `ef6a62f3`; a lead's token reaches only its own project in T285, `a2c7516c`)
 - **Date:** 2026-10-26
 - **Related:** T273, [PROP-0016](../../proposals/0016-operating-model.md) (§7 who decides, I2 lead touches
   recorded), D83, D88,

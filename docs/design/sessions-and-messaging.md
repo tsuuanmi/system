@@ -12,6 +12,10 @@
 > as its reply to a wake, and `session_send` is the operator's or a client's;
 > sessions start `IDLE` at their first admission (no `FORMING`) and are never `CLOSED`; a group
 > lives for its run, not inside one `team` node; the A2A adapter is planned.
+>
+> Built since 2026-10-25: a research run does not fail when its session's Worker cannot take a step
+> (T230, `dcc7442a`); review findings go as messages to the author's session (T232, `b5cae5a1`);
+> Workers that share no session work through a task's dossier (T233, `fd3449de`, ADR-0070).
 
 ## Concepts
 

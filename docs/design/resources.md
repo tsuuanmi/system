@@ -21,6 +21,11 @@
 > task that declares a budget, the bundle configures no pool, no metering oracle checks recorded
 > usage, and usage the ledger cannot count counts as 0 against a cap: it is recorded and shown,
 > and no cap fails closed on it ([usage the ledger cannot count](#usage-the-ledger-cannot-count)).
+>
+> Built since 2026-10-25: a model's own pools per account, so one model's limit closes only its
+> tiers (T261, `a89c5bd4`, ADR-0073); a quota limit or a restart spends no attempt (T272b,
+> `6baddb75`); a step the host's stop cut resumes (T283, `313448de`); a website Worker whose windows
+> have no reading yet takes work one at a time (T294, `c3ee0771`).
 
 The resource ledger knows what each configured pool has left and what every run consumed. Its
 numbers come from objective sources only: a runtime's result message, a provider's usage

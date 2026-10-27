@@ -14,7 +14,8 @@
 > ([extractive-first](#extractive-first)), its row off. Differs from target: only a board task's
 > results are digested on their own (a run outside the board is digested on request only); no test
 > output is parsed before the model reads it (the extractive provider selects lines by signal words,
-> it does not parse a runner's output).
+> it does not parse a runner's output). Status audited 2026-10-27: nothing of this mechanism
+> changed from T236 to T295 (`OutputCheck` made module-private, `283e3481`).
 
 A digest is a cited summary of raw artifacts (test logs, agent results, reports), so the lead
 reads a page instead of the raw material, and every claim on that page can be checked. A cheap

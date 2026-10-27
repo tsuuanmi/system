@@ -83,7 +83,7 @@ comes with its own design and, where it touches a guarantee, its own ADR.
 | [PROP-0014](0014-dispatch-by-quota.md), [PROP-0015](0015-right-worker-right-job.md) (accepted) | System starts ready work by itself; quota and measured strengths choose the Worker | dispatch and E4's measured strengths feed L3 and probation |
 | [PROP-0011](0011-feedback-loop.md) (proposed) | experiments and evaluations as records; promotion through the queue | the research function's evaluations (L4) |
 
-### Where System is today: L2, moving to L3
+### Where System is today: L2, L3 building blocks built
 
 What happened on 2026-10-25 and 2026-10-26:
 
@@ -93,16 +93,18 @@ What happened on 2026-10-25 and 2026-10-26:
 | T217 landed end to end: a listed branch's result is accepted on its review and its checks ([ADR-0067](../decisions/adr/0067-system-accepts-a-listed-branchs-result-on-its-review-and-checks.md), D80) | the lead no longer accepts every routine result | L3 behaviour |
 | T219 landed end to end: a live update fails, and rolls back, when a Worker that took work before it does not take work after it | Worker availability is checked, not assumed | L3 behaviour |
 | T218: an attempt is not spent on an infrastructure failure ([ADR-0069](../decisions/adr/0069-an-attempt-is-not-spent-on-an-infrastructure-failure.md)) | attempt shielding exists | L3 building block |
-| T216: an accepted result is rebased and checked again before it lands ([ADR-0068](../decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md), proposed) | the start of an integration queue | L3 building block |
+| T216: an accepted result is rebased and checked again before it lands ([ADR-0068](../decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md), accepted 2026-10-27) | the start of an integration queue | L3 building block |
 | T220: each writing Worker's brief carries the repository's lessons ([lessons](../engineering/lessons.md)) | the first layer of a handbook, bounded (30 lines) | L3 building block |
 | Dispatch starts ready work with no request under `auto` and `notify` (ADR-0064 D2), and records who started each run (`dispatch`, `lead`, or `operator`, `TaskView.startedBy`) | starting is automated where a project allows it | L3 behaviour, demonstrated |
 | The lead still starts its own tasks with `scripts/sysrun.mjs` (T225 is one), reads the reports, retries or fixes failed attempts, and accepts results outside the listed branches; the operator answers each `ask` approval | the remaining lead and operator touches, per task, are not yet few | **still L2** |
 | T236 computes the maturity metrics from records (`system metrics`); T273 makes the lead a principal of its own and records its touches; T237 tiers process by risk; T251 starts a project from a template; T266 makes a review converge; T269 lets a live update cut at any time | the measuring and the process I2, I4, and I5 need now exist, in part | L3 building blocks |
-| Escaped defects, Worker availability, and idle quota are not recorded yet (T277), and no 30-day share of runs started by `dispatch` or landed with no touch is shown by the metrics | L3 cannot be shown yet, only argued | **still L2** |
+| Escaped defects and Worker availability are recorded and read by the metrics (T277b, `6e937cd2`); idle quota is not recorded yet, and no 30-day share of runs started by `dispatch` or landed with no touch is shown by the metrics | the measuring exists; L3 cannot be shown until 30 days of data | L3 building block |
+| State of the increments on 2026-10-27: I1 (T249, T252, T259, T267), I2 part 1 (T237, T264, T273, T288), I3 shielding, canary, and rebase (T216, T218, T219, T269, T272b, T283, T286), I4 parts 1 and 2 (T236, T277b), I5 part 0 (T251, T253) | each in part; see the [roadmap](roadmap.md#operating-model-prop-0016) | L3 building blocks built |
 
-So the automation L3 needs is demonstrated on single tasks (T215, T217, T219, and dispatched
-starts), but the 30 days of evidence that would establish L3 do not exist yet, and the metrics do
-not show L3 yet. System stays at L2 until they do. I4 makes that measurable.
+Maturity reading on 2026-10-27: **L2, with the L3 building blocks built; the 30-day evidence
+period starts 2026-10-27.** The automation L3 needs is demonstrated on single tasks (T215, T217,
+T219, and dispatched starts), but the 30 days of evidence that would establish L3 do not exist yet.
+System is not claimed to be at L3; the metrics (I4) will show it, or not, once the period has run.
 
 ## Proposed design
 
@@ -428,7 +430,7 @@ Accepted by the operator on 2026-10-26, each open question answered as this prop
   with their duplicates and contradictions, the per-Worker slice, the bound, and each layer's
   version in the brief: [handbook](../design/handbook.md),
   [ADR-0072](../decisions/adr/0072-the-handbook-in-five-layers-and-a-bounded-slice-per-worker.md)
-  (proposed).
+  (accepted 2026-10-27).
 - **I5, part 0** (T251), brought forward by the operator (D87) to pilot on the DNA repository, each
   project with its own lead session (D88): `system project new --kind software-repository`, a
   template that renders the charter, the policy change, the profile patch fragment (never applied),

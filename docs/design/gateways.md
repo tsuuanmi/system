@@ -10,7 +10,8 @@
 > [`gateway-responses`](../../packages/plugins/gateway-responses/README.md),
 > [`gateway-turns`](../../packages/gateway-turns/README.md), and
 > [`gateway-core`](../../packages/gateway-core/README.md) (the guard); differs from target: see
-> [Target (not built)](#target-not-built).
+> [Target (not built)](#target-not-built). Status audited 2026-10-27: nothing of the gateways
+> changed from T236 to T295 (`gateway-core`'s roster changes are the [roster's](roster.md)).
 
 The gateways let Claude Code and Codex use website Workers **as their model**. They are plain
 consumer plugins at the edge, not providers of a seam:

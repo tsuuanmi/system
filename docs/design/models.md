@@ -10,7 +10,9 @@
 > [`models`](../../packages/plugins/models/README.md); differs from target: usage is the
 > provider's token counts per step, not priced, and not recorded on the
 > [resource ledger](resources.md). What was verified live is in the
-> [release checklist](../validation/release-checklist.md).
+> [release checklist](../validation/release-checklist.md). Status audited 2026-10-27: nothing of
+> this seam changed from T236 to T295 (an agent Worker's tiers per model are
+> [agent runtimes'](agent-runtimes.md#tiers-per-role), T261).
 
 A **model Worker** is one entry of the operator's model catalog: an API model or a model served
 on this machine. It answers one prompt with text, and runs no tools. It keeps a session by

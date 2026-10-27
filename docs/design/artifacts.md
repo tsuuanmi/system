@@ -8,6 +8,11 @@
 > Implemented in [`artifacts`](../../packages/plugins/artifacts/README.md); differs from target:
 > bodies are inline only (no large-body store); no `spec-admission` decision is recorded; the
 > store does not itself reject a transition without a decision id.
+>
+> Since 2026-10-25 the envelope is unchanged; the kinds added are described where they are used:
+> `task-dossier-entry` (T233, `fd3449de`, [dossier](task-dossier.md)), `handbook-slice` (T259,
+> `b311a213`, [handbook](handbook.md)), and `assessment@1.1` with severities (T266, `67991500`,
+> [workflow engine](workflow-engine.md)).
 
 An **artifact** is an immutable, typed, content-addressed record. The work that
 `system` produces is artifacts, and so is the record of how `system` decided.

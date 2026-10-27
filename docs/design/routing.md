@@ -8,6 +8,13 @@
 > escalation); differs from target: `connector:<name>` is not proven by any Worker; usage is
 > reported per run step, not estimated per account; there is no resume conformance test behind
 > `persistent-conversation`, and no egress exception naming exact artifacts.
+>
+> Built since 2026-10-25: research keeps two families with a marked single-family fallback (T260,
+> `bd93f3aa`); one Worker offering several tiers, ranked by its own pools (T261, `a89c5bd4`,
+> [ADR-0073](../decisions/adr/0073-agent-workers-offer-tiers-per-role-with-quota-per-model.md));
+> `prefers` for a research Worker that proves `web-search` (T262, `4c924619`, ADR-0074); a frontier
+> review finds its Worker (T282, `4749c2e8`); a tier by risk on a first review too (T288,
+> `d81d8def`); a website Worker with no quota reading yet takes work one at a time (T294, `c3ee0771`).
 
 Routing turns a **work requirement**
 ([`work-requirement.v1.json`](../../schemas/work-requirement.v1.json)) into exactly

@@ -15,6 +15,21 @@
 > a planner's plan gate is still the operator's `approve`. A task's budget is checked before each
 > step of its run, never inside one: an agent run is not stopped at its next turn or tool boundary
 > ([a task's budget](#a-tasks-budget)).
+>
+> Built since 2026-10-25: a task's dossier (T233, `fd3449de`, ADR-0070); review findings to the
+> author's session (T232, `b5cae5a1`); a live update waits for runs, ending at the next step
+> boundary, and can cut at any time (T234, `f54f09ee`; T257, `ef04bacb`; T269, `332a0d2b`); one
+> landing seam (T238, `43c61b00`); a result whose target moved rebased and re-verified (T216,
+> `c5d49130`, ADR-0068); process tiered by risk (T237, `7f0baa51`; T288, `d81d8def`; ADR-0071) and
+> a tier by risk (T261, `a89c5bd4`, ADR-0073); the handbook slice in every brief (T259, `b311a213`,
+> ADR-0072); a review that converges on verified findings with a severity (T266, `67991500`,
+> ADR-0075); a fresh-context self-review and an evidence gate (T267, `c524543e`), the evidence
+> recorded by the System (T284, `905c2f32`); reviewer evals and an auto-accept circuit breaker
+> (T268, `006a84e5`); a new attempt builds on the previous change (T271, `99e8c1a8`); a quota limit
+> or a restart spends no attempt (T272b, `6baddb75`); a heavy result judged on the reviewed tree
+> (T280, `b77f51cf`); a Worker that cannot take work makes the step wait (T282, `4749c2e8`); a step
+> the host's stop cut resumes (T283, `313448de`); acceptance checks under a bounded load (T292,
+> `b7b07486`).
 
 There is one engine, and every multi-step job runs on it as an append-only DAG
 ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)). It combines three
@@ -1452,7 +1467,7 @@ pull request (PROP-0017 G2), is a later increment, and amends ADR-0060 by its ow
 #### A target that moved: rebase, then check again
 
 > Decision: [ADR-0068](../decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)
-> (D82 #1). It amends ADR-0060's decision 4 and needs board contract 1.4 (`Board.reopen`).
+> (D82 #1; accepted 2026-10-27), built in T216 (`c5d49130`). It amends ADR-0060's decision 4 and needs board contract 1.4 (`Board.reopen`).
 
 Seen on 2026-10-25/26: nearly every result was cut from an older base, and its merge conflicted, in
 code, in docs, or in the numbers of ADRs, migrations, and schemas, so the lead merged it by hand. Now
@@ -1619,7 +1634,8 @@ check never installs.
 ## Process tiered by risk
 
 > Decision: [ADR-0071](../decisions/adr/0071-a-changes-risk-tier-comes-from-the-policys-path-map.md)
-> (PROP-0016 §4, D83), T237. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
+> (PROP-0016 §4, D83; accepted 2026-10-27), built in T237 (`7f0baa51`), fixed in T264
+> (`088e42a4`); the tier applies to a first review too (T288, `d81d8def`). Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
 > (`src/risk.ts`), the map in [`approvals-core`](../../packages/approvals-core/README.md)
 > (`src/risk-tiers.ts`), the hold in [`board`](../../packages/plugins/board/README.md). The
 > adversarial review prompt and the decision brief (I2's later parts) are not built.

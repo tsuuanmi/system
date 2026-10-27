@@ -9,10 +9,10 @@
 > flag, not on a resume conformance test, or, for a review member's steps on a runtime
 > without it, on the source's exact replay; a started run is never reconciled from the
 > agent's own records (it fails as `reconciliation_failed` once a liveness verdict finds it gone,
-> [restart and liveness](#restart-and-liveness)); only Claude Code reports its agent process, so
+> [restart and liveness](#restart-and-liveness)), except one the host's own stop cut, which resumes
+> ([turn semantics](#turn-semantics)); only Claude Code reports its agent process, so
 > another runtime's started runs reach the operator as `unknown`; its usage is not reconciled from
-> the agent's session transcript; evidence beyond the final message
-> and the workspace's git subject is not stored; ACP agents cannot ask a
+> the agent's session transcript; ACP agents cannot ask a
 > [tool gate](#tool-gate) before each tool call, so the `agents` source admits none of their
 > Workers; the Antigravity CLI gates only on an agy version verified live (1.4.6), offers no
 > sandbox on any other, and has no [identity reader](#identity-readers); the Codex and Claude Code
@@ -21,6 +21,18 @@
 > [move from hand-named rows](#migration-from-hand-named-rows) (PROP-0012's migration step 5),
 > hand-named Workers run in their runtime's own home, also while its account is `unverified`
 > (REQ-ACC-11 holds for derived Workers).
+>
+> Built since 2026-10-25: an acceptance check never hangs on a dependency change (T235,
+> `5332fecd`); a Worker runs the browser tests in its confinement, a skipped one never read as a
+> pass (T247, `096d6b6d`; T265, `b594eaa9`); a role offers several tiers with per-model quota
+> (T261, `a89c5bd4`, [ADR-0073](../decisions/adr/0073-agent-workers-offer-tiers-per-role-with-quota-per-model.md));
+> a research role with bounded, egress-checked web search (T262, `4c924619`,
+> [ADR-0074](../decisions/adr/0074-a-research-roles-web-calls-run-under-a-bounded-egress-checked-grant.md));
+> a writable scratch `HOME` in the tool sandbox (T270, `656f0f69`); git history reads (T276,
+> `81229660`); a new attempt builds on the previous attempt's change (T271, `99e8c1a8`); a step the
+> host's stop cut resumes by itself (T283, `313448de`); a writing Worker's commands, exit codes,
+> and output tails are recorded by the System into the task's dossier (T284, `905c2f32`;
+> [ADR-0070](../decisions/adr/0070-workers-that-share-no-session-work-through-a-tasks-dossier.md), T233, `fd3449de`).
 
 An **agent runtime** is an external coding agent that `system` drives as a Worker. It is the
 counterpart of the [gateways](gateways.md), where the same agents act as clients. The
@@ -297,7 +309,7 @@ a run with no worktree of its own gets none.
 ### A worktree's setup
 
 > Decision: [ADR-0058](../decisions/adr/0058-a-run-worktree-is-set-up-offline-before-its-agent-starts.md)
-> (proposed). Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (accepted). Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
 > (`src/setup.ts`).
 
 A new worktree is a checkout, with no dependencies, and a Worker's commands have no network
@@ -409,7 +421,8 @@ of waiting, every one or one workflow run's:
 ### Landing a worktree
 
 > Decision: [ADR-0060](../decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md)
-> (proposed). Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (accepted 2026-10-24, D56; amended by [ADR-0068](../decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md),
+> accepted 2026-10-27, built in T216, `c5d49130`: a moved base is rebased and re-verified). Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
 > (`src/worktrees.ts`); the engine asks ([landing an accepted result](workflow-engine.md#landing-an-accepted-result)).
 
 The `agents` source answers `land(step)` on the `workers` seam for the worktrees it holds, one change
@@ -1048,7 +1061,8 @@ Hand-named Workers (`workers`) are the shape before phase F; one row holds one s
 ### Tiers per role
 
 > Decision: [ADR-0073](../decisions/adr/0073-agent-workers-offer-tiers-per-role-with-quota-per-model.md)
-> (proposed), T261. Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (accepted 2026-10-27), built in T261 (`a89c5bd4`); a task's risk sets a step's minimum tier
+> ([ADR-0071](../decisions/adr/0071-a-changes-risk-tier-comes-from-the-policys-path-map.md), T288, `d81d8def`). Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
 > (`src/roles.ts`), the router ([routing](routing.md#intelligence-tiers)), and the Claude Code
 > runtime's usage report reader.
 

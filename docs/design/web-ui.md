@@ -1,7 +1,8 @@
 # The operator's web UI at a glance
 
 > Target state. Boundary: [gateways](../architecture/components.md#gateways), plugin family
-> *surface*. Implemented in [`web-ui`](../../packages/plugins/web-ui/README.md) (T239, T240, T253, T256);
+> *surface*. Implemented in [`web-ui`](../../packages/plugins/web-ui/README.md) (T239, `6a555d90`;
+> T240, `9f0b245f`; T253, `20fe4c45`; T256, `be23958e`; T274b, `4aa5da45`; who decided, T273, `ef6a62f3`);
 > differs from target: the phone is checked in Chromium's emulation of it (its size, scale, touch,
 > and safe areas), not in Safari itself.
 
