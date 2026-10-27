@@ -391,7 +391,10 @@ characters, a field no denial carries) is counted apart, never by reason.
   agent-tool-call:<agent run>:<tool>, version: <content id of the canonical tool input> }`;
   requester `worker`, with the agent run, its session, and the runtime's call id
   (`toolUseId`); summary and consequences say what runs if it is approved, and that it is denied
-  if rejected or unanswered. Its classification is the run's.
+  if rejected or unanswered; for a command, the consequences hold the whole command (at most
+  1,500 characters; a longer one is refused by the gate, never cut), the summary only its first
+  500 (T295). The operator's note on a rejection comes back to the Worker in the denied call's
+  tool result. Its classification is the run's.
 - **The run stops there.** The runtime runs no further tool call (each is denied) and ends the
   run, which fails as `config_error` naming the request, whatever the runtime reported: a
   deferred run never completes, and `config_error` is never retried. On Claude Code a `defer`

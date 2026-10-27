@@ -29,7 +29,7 @@ import Workflow from '@tsuuanmi/system-workflow'
 import { afterAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 import AgentWorkers from '../src/index.ts'
-import { classify, DENIAL_REASONS, EXPLANATION_MAX, readToolsOf, TOOLS_NOTE_MAX, unaskedNote } from '../src/gate.ts'
+import { classify, COMMAND_MAX, DENIAL_REASONS, EXPLANATION_MAX, readToolsOf, TOOLS_NOTE_MAX, unaskedNote } from '../src/gate.ts'
 import { probeExec, scripted as scriptedCodex } from '../../runtime-codex-sdk/tests/fake-codex.ts'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
 
@@ -879,6 +879,33 @@ describe('classify: a tool call as the action the policy judges', () => {
     expect(classify({ tool: 'Bash', input: { command: '' } }, ws)).toMatchObject({ refused: expect.any(String), reason: 'invalid-input' })
   })
 
+  it('carries a command of 1,200 characters whole in its request, beside a short summary, and refuses one past the bound with a reason, never cutting it (T295)', () => {
+    const bash = (command: string) => ({ tool: 'Bash', input: { command } })
+    const files = (n: number) => Array.from({ length: n }, (_, i) => `packages/plugins/x/tests/case-${String(i).padStart(4, '0')}.spec.ts`)
+    const whole = `corepack pnpm vitest run ${files(26).join(' ')}`
+    expect(whole.length).toBeGreaterThan(1100)
+    expect(whole.length).toBeLessThan(1300)
+    const action = classify(bash(whole), ws)
+    expect(action).toMatchObject({ class: 'command', command: whole.split(' ') })
+    expect('consequences' in action && action.consequences).toContain(whole)
+    expect('summary' in action && action.summary.length).toBeLessThanOrEqual(500)
+    // The request's consequences stay within the record's 2000 characters at the bound.
+    const atBound = `corepack pnpm vitest run ${files(40).join(' ')}`.slice(0, COMMAND_MAX)
+    expect('consequences' in classify(bash(atBound), ws) && (classify(bash(atBound), ws) as { consequences: string }).consequences.length).toBeLessThanOrEqual(2000)
+    const long = `corepack pnpm vitest run ${files(150).join(' ')}`
+    expect(long.length).toBeGreaterThan(5000)
+    const refused = classify(bash(long), ws)
+    expect(refused).toMatchObject({ refused: expect.stringContaining(`${long.length} characters, past the ${COMMAND_MAX}`), reason: 'invalid-input' })
+    expect('refused' in refused && refused.refused).toContain('run a shorter command')
+  })
+
+  it('tells a writing Worker, in its brief, to name several test files relative to its worktree, and one test file absolute (T295)', () => {
+    const effective = [{ actionClass: 'read' as const, mode: 'auto' }, { actionClass: 'workspace-write' as const, mode: 'auto' }]
+    expect(unaskedNote({ policies: [], effective }, '/ws')).toContain('Several test files in one command are a command the operator is asked about: name them with paths relative to your worktree')
+    expect(unaskedNote({ policies: [], effective }, '/ws')).toContain('one test file runs as corepack pnpm vitest run <its absolute path inside the workspace>')
+    expect(unaskedNote({ policies: [], effective }, '/ws', { sandbox: 'read-only' })).not.toContain('paths relative to your worktree')
+  })
+
   it('admits `corepack pnpm vitest run <one test file>` inside the worktree, as a write of it, and refuses it outside (T270)', () => {
     const bash = (command: string) => ({ tool: 'Bash', input: { command } })
     const inside = join(ws, 'packages', 'x', 'tests', 'x.spec.ts')
@@ -1723,7 +1750,8 @@ describe('a board task\'s step whose Worker stops at a deferred call', { timeout
       const waiting = await blockedOn(ctx, run.runId)
       const request = (await ctx.approvals.get(waiting.blocked.approvalRequest))!
       expect(waiting.blocked.until, how).toBe(request.expiresAt)
-      if (how === 'rejected') await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'rejected' }])
+      const instead = 'run corepack pnpm vitest run packages/x/tests/a.spec.ts instead'
+      if (how === 'rejected') await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'rejected', note: instead }])
       const done = await reportedRun(ctx, run.runId)
       expect(done, how).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
       expect(done.nodes, how).toEqual([expect.objectContaining({ nodeId: 'change', state: 'COMPLETED', attempt: 2 })])
@@ -1733,7 +1761,7 @@ describe('a board task\'s step whose Worker stops at a deferred call', { timeout
       expect(agent.runs[1]!.prompt, how).toContain(`The tool call you stopped at was denied (approval request ${request.requestId}): ${how === 'rejected' ? 'the operator rejected it' : `no verdict came by ${request.expiresAt}`}. It did not run`)
       // The call itself is denied with the reason, never run, and nothing new is asked; the Worker's next call runs.
       expect(agent.verdicts[1], how).toEqual([
-        { decision: 'deny', reason: `approval request ${request.requestId} for exactly this call was ${how === 'rejected' ? 'rejected by the operator' : 'withdrawn before a verdict (unanswered in time, its work ended, or the policy changed)'}, so it does not run; go on without it` },
+        { decision: 'deny', reason: `approval request ${request.requestId} for exactly this call was ${how === 'rejected' ? 'rejected by the operator' : 'withdrawn before a verdict (unanswered in time, its work ended, or the policy changed)'}, so it does not run; go on without it${how === 'rejected' ? `. The operator's note: ${instead}` : ''}` },
         { decision: 'allow' },
       ])
       // Recorded (INV-13): the denial, on the queue's own resolution and the autonomy decision that the class still asks.
