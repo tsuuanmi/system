@@ -23,7 +23,7 @@ import {
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import { LEAD_PROJECT, leadId, leadMayDecide } from '@tsuuanmi/system-gateway-core'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { isRecord, SchemaRegistry } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
 import { ACTION_CLASSES, commandProblems, effectOf, PolicySet, policyProblems, proposedSet, rank, webAccessEffect } from './policy.ts'
 import { registerTools } from './tools.ts'
@@ -66,7 +66,7 @@ const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/
 /** Every problem of a `devBranches` value; none when it is absent or valid. */
 function devBranchProblems(value: unknown): string[] {
   if (value === undefined) return []
-  if (!isObject(value)) return ['devBranches must be an object: {<projectId>: [<branch>, …]}']
+  if (!isRecord(value)) return ['devBranches must be an object: {<projectId>: [<branch>, …]}']
   const problems: string[] = []
   for (const [project, branches] of Object.entries(value)) {
     if (!LEAD_PROJECT.test(project)) problems.push(`devBranches names project ${JSON.stringify(project)}, which is not a project id a lead token can be issued for`)
@@ -101,7 +101,7 @@ const REPEATED_APPROVALS = { approvals: { min: 3, max: 100, default: 5 }, window
 /** Every problem of a `repeatedApprovals` value; none when it is absent or valid. */
 function repeatedProblems(value: unknown): string[] {
   if (value === undefined) return []
-  if (!isObject(value)) return ['repeatedApprovals must be an object: {enabled?, approvals?, windowSeconds?}']
+  if (!isRecord(value)) return ['repeatedApprovals must be an object: {enabled?, approvals?, windowSeconds?}']
   const problems: string[] = []
   for (const key of Object.keys(value)) if (key !== 'enabled' && key !== 'approvals' && key !== 'windowSeconds') problems.push(`repeatedApprovals.${key} is not an option`)
   if (value.enabled !== undefined && typeof value.enabled !== 'boolean') problems.push('repeatedApprovals.enabled must be true or false')
@@ -175,10 +175,9 @@ const MIGRATIONS = [{
 }]
 
 const invalid = (message: string): ApprovalsError => new ApprovalsError('invalid', message)
-const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const sameSubject = (a: Subject, b: Subject): boolean => a.type === b.type && a.ref === b.ref && a.version === b.version
 /** INV-5: a request's subject is exact: it names a version, unless it is an artifact by its content id. */
-const exactSubject = (subject: unknown): boolean => isObject(subject)
+const exactSubject = (subject: unknown): boolean => isRecord(subject)
   && ((typeof subject.version === 'string' && subject.version !== '') || (subject.type === 'artifact' && typeof subject.ref === 'string' && CONTENT_ID.test(subject.ref)))
 const sameList = (a: unknown, b: readonly string[]): boolean => Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i])
 /** A window in words: whole days, else whole hours, else seconds. */
@@ -362,7 +361,7 @@ export class StoreApprovals extends Approvals {
 
   async request(request: NewRequest, at: Date = new Date()): Promise<ApprovalRequest> {
     const when = this.instant(at)
-    if (!isObject(request) || !isObject(request.verdict) || !isObject(request.action) || !isObject(request.requester)) throw invalid('a request has a subject, an action, a requester, and the verdict that asked')
+    if (!isRecord(request) || !isRecord(request.verdict) || !isRecord(request.action) || !isRecord(request.requester)) throw invalid('a request has a subject, an action, a requester, and the verdict that asked')
     // Only the queue asks for its own policy changes (proposePolicy); a caller never names it.
     if (request.requester.component === 'approvals' || request.requester.policyChangeId !== undefined) throw invalid('only the queue requests a policy change of its own, through proposePolicy')
     return this.open(request, when, 'approval-request@1.0')
@@ -607,7 +606,7 @@ export class StoreApprovals extends Approvals {
    */
   async proposePolicy(proposal: { policy: AutonomyPolicy; note?: string }, at: Date = new Date(), check?: (proposed: { change: PolicyChange; request: ApprovalRequest }) => void): Promise<{ change: PolicyChange; request: ApprovalRequest }> {
     const when = this.instant(at)
-    if (!isObject(proposal) || !isObject(proposal.policy)) throw invalid('a proposal is {policy, note?}: one autonomy-policy@1.0 record')
+    if (!isRecord(proposal) || !isRecord(proposal.policy)) throw invalid('a proposal is {policy, note?}: one autonomy-policy@1.0 record')
     const note = proposal.note
     if (note !== undefined && (typeof note !== 'string' || note.length > 2000)) throw invalid('note must be a string of at most 2000 characters')
     try {
@@ -697,7 +696,7 @@ export class StoreApprovals extends Approvals {
 
   /** The policy changes, newest first: at most `limit` (default {@link DEFAULT_CHANGES}, at most {@link MAX_CHANGES}), in the given states (default all). */
   async policyChanges(filter: { states?: Array<PolicyChange['state']>; limit?: number } = {}): Promise<PolicyChange[]> {
-    if (!isObject(filter)) throw invalid('the filter is not an object')
+    if (!isRecord(filter)) throw invalid('the filter is not an object')
     const limit = filter.limit ?? DEFAULT_CHANGES
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_CHANGES) throw invalid(`limit must be a whole number from 1 to ${MAX_CHANGES}`)
     const states = filter.states ?? CHANGE_STATES
@@ -1152,7 +1151,7 @@ export class StoreApprovals extends Approvals {
     if (body?.decisionType !== 'autonomy' || body.outcome?.option !== 'ask') throw notAsked('the verdict is not a recorded autonomy decision that says ask')
     const policy = { id: String(body.decider?.id), version: Number(body.decider?.version) }
     if (body.decider?.type !== 'policy' || envelope!.producer?.type !== 'policy' || envelope!.producer.ref !== policy.id) throw notAsked('the decision it cites was not made by a policy')
-    if (!isObject(verdict.policy) || verdict.policy.id !== policy.id || verdict.policy.version !== policy.version) throw notAsked('the verdict names another policy than the decision it cites')
+    if (!isRecord(verdict.policy) || verdict.policy.id !== policy.id || verdict.policy.version !== policy.version) throw notAsked('the verdict names another policy than the decision it cites')
     const of = projectId === undefined ? 'the studio' : `project ${projectId}`
     if (!this.set.current(policy, projectId)) throw notAsked(`the decision it cites is ${policy.id}'s at version ${policy.version}, which is not a policy of ${of} now`)
     if (!sameList(body.outcome.detail?.policies, this.set.of(projectId).map((p) => p.id)) || body.decider.hash !== this.set.hash(projectId)) {
@@ -1202,7 +1201,7 @@ export class StoreApprovals extends Approvals {
   }
 
   private where(filter: ListFilter): { where: string; params: Array<string | null> } {
-    if (!isObject(filter)) throw invalid('the filter is not an object')
+    if (!isRecord(filter)) throw invalid('the filter is not an object')
     const states = filter.states ?? OPEN
     if (!Array.isArray(states) || states.some((s) => !REQUEST_STATES.includes(s))) throw invalid(`states must be a list of ${REQUEST_STATES.join(', ')}`)
     if (!states.length) return { where: '', params: [] }
@@ -1219,16 +1218,16 @@ export class StoreApprovals extends Approvals {
   }
 
   private validAction(action: Action): void {
-    if (!isObject(action)) throw invalid('the action is not an object')
+    if (!isRecord(action)) throw invalid('the action is not an object')
     if (!ACTION_CLASSES.includes(action.class)) throw invalid(`${String(action.class)} is not an action class`)
     if (action.projectId !== undefined && (typeof action.projectId !== 'string' || !ID.test(action.projectId))) throw invalid(`projectId ${JSON.stringify(action.projectId)} is not an id`)
     if (action.command !== undefined && (!Array.isArray(action.command) || action.command.some((word) => typeof word !== 'string'))) throw invalid('command must be an argv: a list of strings')
-    if (action.checks !== undefined && !isObject(action.checks)) throw invalid('checks must be an object of check names to whether they passed')
+    if (action.checks !== undefined && !isRecord(action.checks)) throw invalid('checks must be an object of check names to whether they passed')
   }
 
   private validVerdict(v: Verdict, index: number): void {
-    const subject = isObject(v) ? v.subject : undefined
-    const ok = isObject(v) && typeof v.requestId === 'string' && isObject(subject) && typeof subject.type === 'string' && typeof subject.ref === 'string'
+    const subject = isRecord(v) ? v.subject : undefined
+    const ok = isRecord(v) && typeof v.requestId === 'string' && isRecord(subject) && typeof subject.type === 'string' && typeof subject.ref === 'string'
       && (subject.version === undefined || typeof subject.version === 'string') && (v.verdict === 'approved' || v.verdict === 'rejected')
       && (v.note === undefined || typeof v.note === 'string')
     if (!ok) throw invalid(`verdict ${index} is not {requestId, subject, verdict: approved | rejected, note?}: nothing was decided`)

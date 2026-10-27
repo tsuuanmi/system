@@ -15,7 +15,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import { outline, reply } from '@tsuuanmi/system-gateway-core'
-import { MAX_UNKNOWN_ENTRIES, QUOTA_DEFAULTS, QUOTA_RANGES, quotaSettingsProblems, SchemaRegistry, unknownUsageOf, USAGE_UNKNOWN_EVENT } from '@tsuuanmi/system-libs'
+import { isRecord, MAX_UNKNOWN_ENTRIES, QUOTA_DEFAULTS, QUOTA_RANGES, quotaSettingsProblems, SchemaRegistry, unknownUsageOf, USAGE_UNKNOWN_EVENT } from '@tsuuanmi/system-libs'
 import {
   type ArtifactRef, type BudgetLine, type DeclaredAccount, type LimitState, type PoolConfig, type PoolState, type PoolTemplate, type QuotaSettings, type Reservation, type ReservationRequest, Resources, ResourcesError,
   templatePool, type TokenUsage, type Unit, type UsageFilter, type UsageRecord, type UsageTotal,
@@ -152,7 +152,6 @@ const limitedUntil = (reading: LimitState): number | undefined => {
 }
 /** At most {@link MAX_REASONS} reasons, the last one saying how many more there were. */
 const bounded = (reasons: string[]): string[] => reasons.length <= MAX_REASONS ? reasons : [...reasons.slice(0, MAX_REASONS - 1), `and ${reasons.length - MAX_REASONS + 1} more`]
-const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const byPool = (a: PoolConfig, b: PoolConfig): number => (a.pool < b.pool ? -1 : a.pool > b.pool ? 1 : 0)
 
 const TOKEN_KEYS = ['inputTokens', 'outputTokens', 'cacheReadInputTokens', 'cacheCreationInputTokens', 'reasoningOutputTokens'] as const
@@ -349,7 +348,7 @@ export class StoreResources extends Resources {
     const taken = new Set([...this.fixed, ...others].map((p) => p.pool))
     const made: PoolConfig[] = []
     for (const declared of accounts as unknown[]) {
-      if (!isObject(declared) || typeof declared.account !== 'string' || !ID.test(declared.account) || typeof declared.group !== 'string' || !NAME.test(declared.group)) {
+      if (!isRecord(declared) || typeof declared.account !== 'string' || !ID.test(declared.account) || typeof declared.group !== 'string' || !NAME.test(declared.group)) {
         throw invalid(`${JSON.stringify(declared)} is not an account (an id) with its group (a name)`)
       }
       for (const t of this.templates.filter((t) => t.group === declared.group)) {
@@ -683,7 +682,7 @@ export class StoreResources extends Resources {
   }
 
   private where(filter: UsageFilter): { where: string; params: Array<string | number> } {
-    if (!isObject(filter)) throw invalid('the filter is not an object')
+    if (!isRecord(filter)) throw invalid('the filter is not an object')
     const clauses: string[] = []
     const params: Array<string | number> = []
     for (const [key, column] of [['runId', 'run_id'], ['projectId', 'project_id'], ['taskId', 'task_id'], ['account', 'account'], ['pool', 'pool']] as const) {
@@ -734,7 +733,7 @@ export class StoreResources extends Resources {
 
   /** A reservation request's shape (no schema names it): ids, one to {@link MAX_LINES} lines, budget lines as `common@1` bounds them. */
   private assertRequest(request: ReservationRequest): void {
-    if (!isObject(request)) throw invalid('the reservation request is not an object')
+    if (!isRecord(request)) throw invalid('the reservation request is not an object')
     if (typeof request.runId !== 'string' || !ID.test(request.runId)) throw invalid(`runId ${JSON.stringify(request.runId)} is not an id`)
     for (const key of ['projectId', 'taskId'] as const) {
       if (request[key] !== undefined && (typeof request[key] !== 'string' || !ID.test(request[key]))) throw invalid(`${key} ${JSON.stringify(request[key])} is not an id`)
@@ -742,7 +741,7 @@ export class StoreResources extends Resources {
     const lines = (name: string, value: unknown, min: number): void => {
       if (!Array.isArray(value) || value.length < min || value.length > MAX_LINES) throw invalid(`${name} must hold ${min} to ${MAX_LINES} budget lines`)
       for (const line of value as unknown[]) {
-        if (!isObject(line) || typeof line.pool !== 'string' || !ID.test(line.pool) || !UNITS.includes(line.unit as Unit) || typeof line.amount !== 'number' || !Number.isFinite(line.amount) || line.amount < 0 || line.amount > 1e12) {
+        if (!isRecord(line) || typeof line.pool !== 'string' || !ID.test(line.pool) || !UNITS.includes(line.unit as Unit) || typeof line.amount !== 'number' || !Number.isFinite(line.amount) || line.amount < 0 || line.amount > 1e12) {
           throw invalid(`${name}: ${JSON.stringify(line)} is not a budget line (pool, unit of ${UNITS.join(', ')}, amount 0 to 1e12)`)
         }
       }

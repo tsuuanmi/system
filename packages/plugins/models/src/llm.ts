@@ -6,6 +6,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { createAssistantMessage, type LlmFailure, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { sleep } from '@tsuuanmi/system-libs'
 import { type ModelCompletion, type ModelEntry, ModelError, type ModelFailure, type ModelRequest, Models, type ModelStatus, type ModelTurn, type Unprocessed } from '@tsuuanmi/system-models-core'
 
 export interface CatalogEntry extends ModelEntry {
@@ -108,7 +109,9 @@ export class LlmModels extends Models {
       const transient = !NEVER_RETRIED.has(failure.code) && (policy.mode === 'always' || policy.retryableCodes.includes(failure.code))
       if (!transient || attempt >= limit || signal?.aborted) throw modelError(entry.id, failure, signal)
       const backoff = Math.min(policy.maxDelayMs, failure.providerRetryAfterMs ?? policy.initialDelayMs * 2 ** attempt)
-      await sleep(backoff, signal)
+      await sleep(backoff, signal).catch(() => {
+        throw new ModelError('aborted', 'aborted while waiting to try again')
+      })
     }
   }
 
@@ -179,19 +182,4 @@ function modelError(model: string, failure: LlmFailure, signal: AbortSignal | un
   // A provider can echo part of a refused key: a credential failure says only what failed.
   if (kind === 'credential') return new ModelError(kind, `${model}: ${failure.code}: the provider refused the credential, or none is stored (system model key)`)
   return new ModelError(kind, `${model}: ${failure.code}: ${failure.message.slice(0, 500)}`, { ...(unprocessed ? { unprocessed } : {}), ...(attempts ? { attempts } : {}) })
-}
-
-function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(done, ms)
-    function done(): void {
-      signal?.removeEventListener('abort', stop)
-      resolve()
-    }
-    function stop(): void {
-      clearTimeout(timer)
-      reject(new ModelError('aborted', 'aborted while waiting to try again'))
-    }
-    signal?.addEventListener('abort', stop, { once: true })
-  })
 }

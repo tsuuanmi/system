@@ -23,7 +23,7 @@ import { assertSafeBind, canTakeStep, guardRequest, leadId, leadMayDecide, leadT
 import { ALWAYS_ASK, type ApprovalRequest, ApprovalsError, applyingPolicies, type AutonomyPolicy, type Check, type Subject, type Verdict } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type ArtifactRef, BoardError, type BoardTask, type Project, type TaskState } from '@tsuuanmi/system-board-core'
-import { dshHome, registerSecretPath } from '@tsuuanmi/system-libs'
+import { dshHome, isRecord, registerSecretPath } from '@tsuuanmi/system-libs'
 import type { TaskLanding, TemplateStep } from '@tsuuanmi/system-workflow'
 import type { CapabilityDescriptor } from '@tsuuanmi/system-workers-core'
 import { APP_CSS, APP_JS, PAGE } from './assets.ts'
@@ -93,7 +93,6 @@ function newestFirst<E extends { seq: number }>(entries: E[]): E[] {
   return entries
 }
 
-const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const noteOf = (value: unknown): string | undefined => typeof value === 'string' && value.trim() ? value.trim().slice(0, 2000) : undefined
 
 /**
@@ -101,7 +100,7 @@ const noteOf = (value: unknown): string | undefined => typeof value === 'string'
  * refused. A verdict with no note of its own takes the call's `note`.
  */
 function verdictOf(value: unknown, note: string | undefined): Verdict | string {
-  if (!isObject(value)) return 'a verdict is {requestId, subject, verdict, note?}'
+  if (!isRecord(value)) return 'a verdict is {requestId, subject, verdict, note?}'
   const { requestId, verdict } = value
   if (typeof requestId !== 'string' || !ID.test(requestId)) return 'requestId is not a request id'
   if (verdict !== 'approved' && verdict !== 'rejected') return 'verdict must be approved or rejected'
@@ -113,7 +112,7 @@ function verdictOf(value: unknown, note: string | undefined): Verdict | string {
 
 /** A subject as the page sent it back, or undefined when it is not one. */
 function subjectOf(subject: unknown): Subject | undefined {
-  if (!isObject(subject) || !SUBJECT_TYPES.includes(subject.type as Subject['type']) || typeof subject.ref !== 'string' || !subject.ref || subject.ref.length > 512
+  if (!isRecord(subject) || !SUBJECT_TYPES.includes(subject.type as Subject['type']) || typeof subject.ref !== 'string' || !subject.ref || subject.ref.length > 512
     || (subject.version !== undefined && (typeof subject.version !== 'string' || subject.version.length > 128))) return undefined
   return { type: subject.type as Subject['type'], ref: subject.ref, ...(subject.version !== undefined ? { version: subject.version as string } : {}) }
 }
@@ -137,7 +136,7 @@ export interface Decided {
  * lead principal and are marked so; they are not migrated (ADR-0076).
  */
 export function decidedBy(body: unknown): Decided | undefined {
-  const decider = isObject(body) && isObject(body.decider) ? body.decider : undefined
+  const decider = isRecord(body) && isRecord(body.decider) ? body.decider : undefined
   if (!decider || typeof decider.type !== 'string' || typeof decider.id !== 'string') return undefined
   const { type, id } = decider
   if (type === 'client' && id.startsWith('lead:')) return { kind: 'lead', id, label: id }
@@ -184,13 +183,13 @@ export function acceptanceOf(task: Pick<BoardTask, 'lastDecision'>, read: (ref: 
   const body = (ref: unknown): DecisionBody | undefined => {
     if (typeof ref !== 'string') return undefined
     const value = read(ref as ArtifactRef)
-    return isObject(value) ? value as DecisionBody : undefined
+    return isRecord(value) ? value as DecisionBody : undefined
   }
   const last = body(task.lastDecision)
   const found = [last, ...(Array.isArray(last?.inputs) ? last.inputs.map(body) : [])].find((b) => b?.decisionType === 'acceptance')
   if (!found) return undefined
   const detail = found.outcome?.detail
-  return isObject(detail) ? detail : {}
+  return isRecord(detail) ? detail : {}
 }
 
 /** What a lead's acceptance carries over from the run's own (ADR-0076): the facts System recorded of the result. */
@@ -206,7 +205,7 @@ export function runAcceptanceOf(task: Pick<BoardTask, 'lastDecision'>, read: (re
   const body = (ref: unknown): DecisionBody | undefined => {
     if (typeof ref !== 'string') return undefined
     const value = read(ref as ArtifactRef)
-    return isObject(value) ? value as DecisionBody : undefined
+    return isRecord(value) ? value as DecisionBody : undefined
   }
   const last = body(task.lastDecision)
   const refs = [task.lastDecision, ...(Array.isArray(last?.inputs) ? last.inputs : [])]
@@ -214,7 +213,7 @@ export function runAcceptanceOf(task: Pick<BoardTask, 'lastDecision'>, read: (re
   if (!ref) return undefined
   const found = body(ref)!
   const outcome = found.outcome?.detail
-  const detail: Record<string, unknown> = isObject(outcome) ? outcome : {}
+  const detail: Record<string, unknown> = isRecord(outcome) ? outcome : {}
   const inputs = (Array.isArray(found.inputs) ? found.inputs : []).filter((i): i is ArtifactRef => typeof i === 'string')
   return { ref, inputs, facts: Object.fromEntries(RECORDED_FACTS.filter((k) => detail[k] !== undefined).map((k) => [k, detail[k]])) }
 }
@@ -228,13 +227,13 @@ export function runAcceptanceOf(task: Pick<BoardTask, 'lastDecision'>, read: (re
  */
 export function checkStates(required: readonly Check[], pending: readonly Check[], acceptance: Record<string, unknown> | undefined): CheckState[] {
   const checks = acceptance?.['checks']
-  const recorded: Record<string, unknown> = isObject(checks) ? checks : {}
+  const recorded: Record<string, unknown> = isRecord(checks) ? checks : {}
   const ran = acceptance?.['checkRun']
-  const run: Record<string, unknown> | undefined = isObject(ran) ? ran : undefined
+  const run: Record<string, unknown> | undefined = isRecord(ran) ? ran : undefined
   const askedList = run?.['asked']
   const asked: unknown[] = Array.isArray(askedList) ? askedList : []
   const resultList = run?.['results']
-  const results: Array<Record<string, unknown>> = Array.isArray(resultList) ? resultList.filter(isObject) : []
+  const results: Array<Record<string, unknown>> = Array.isArray(resultList) ? resultList.filter(isRecord) : []
   return CHECK_ORDER.filter((c) => required.includes(c) || pending.includes(c)).map((check): CheckState => {
     const result = results.find((r) => r['check'] === check)
     const code = result?.['exitCode']
@@ -547,7 +546,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       const recorded = lead !== undefined ? runAcceptanceOf(task, (ref) => artifacts.get(ref)?.body) : undefined
       if (lead !== undefined) {
         const landing = recorded?.facts['landing']
-        const branch = isObject(landing) && typeof landing['branch'] === 'string' ? landing['branch'] : undefined
+        const branch = isRecord(landing) && typeof landing['branch'] === 'string' ? landing['branch'] : undefined
         const may = leadMayDecide({ project: lead, of: task.projectId, action: 'acceptance', branch, devBranches: ctx.get('approvals')?.devBranches?.(lead) ?? [] })
         if (!may.ok) return json(res, 403, { error: `${may.reason}; nothing was decided` })
       }

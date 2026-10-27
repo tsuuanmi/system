@@ -21,7 +21,7 @@ import {
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
-import { contentId } from '@tsuuanmi/system-libs'
+import { contentId, isRecord } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
 import { namesLocalPath, WEB_PROBE_QUERY, webTarget } from './research.ts'
 
@@ -228,7 +228,6 @@ const SUMMARY_MAX = 500
  */
 export const COMMAND_MAX = 1500
 const clamp = (text: string): string => (text.length > SUMMARY_MAX ? `${text.slice(0, SUMMARY_MAX - 1)}…` : text)
-const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
 /** Whether `value` has type `type`. */
 function typed(value: unknown, type: FieldType): boolean {
@@ -237,7 +236,7 @@ function typed(value: unknown, type: FieldType): boolean {
     case 'number': return typeof value === 'number' && Number.isFinite(value)
     case 'boolean': return typeof value === 'boolean'
     case 'strings': return Array.isArray(value) && value.every((v) => typeof v === 'string')
-    case 'edits': return Array.isArray(value) && value.every((edit) => isObject(edit) && unknownField(edit, EDIT_FIELDS) === undefined)
+    case 'edits': return Array.isArray(value) && value.every((edit) => isRecord(edit) && unknownField(edit, EDIT_FIELDS) === undefined)
   }
 }
 
@@ -965,12 +964,12 @@ export function classify(call: ToolCall, workspace: string, options: ClassifyOpt
     const name = tool.slice(HOST_PREFIX.length)
     const host = Object.hasOwn(HOST_TOOL_FIELDS, name) ? HOST_TOOL_FIELDS[name] : undefined
     if (!host || !options.hostTools?.includes(name)) return { refused: `${tool.slice(0, 100)} is not a tool the gate classifies: this run was given no such host tool`, reason: 'unclassified-tool' }
-    if (!isObject(input)) return { refused: `the input of ${tool} is not an object`, reason: 'invalid-input' }
+    if (!isRecord(input)) return { refused: `the input of ${tool} is not an object`, reason: 'invalid-input' }
     const unknown = unknownField(input, host.fields)
     if (unknown) return { refused: `${tool} ${unknown}`, reason: 'unsupported-field' }
     return { class: host.class, summary: clamp(`${tool}${typeof input.kind === 'string' ? ` ${input.kind}` : ''}`), consequences: `${host.summary}. ${ANSWER}` }
   }
-  if (!isObject(input)) return { refused: `the input of ${tool} is not an object`, reason: 'invalid-input' }
+  if (!isRecord(input)) return { refused: `the input of ${tool} is not an object`, reason: 'invalid-input' }
   const fields = Object.hasOwn(FIELDS, tool) ? FIELDS[tool] : undefined
   if (!fields) return { refused: `${tool} is not a tool the gate classifies`, reason: 'unclassified-tool' }
   const unknown = unknownField(input, fields)

@@ -14,7 +14,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { BoardError, type BoardTask, type Breaker, type CharterInput, type Claim, type Escape, type Project, type TaskInput } from '@tsuuanmi/system-board-core'
 import { outline, reply, type ToolContext, type ToolHandler, type ToolScope, type ToolSpec } from '@tsuuanmi/system-gateway-core'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { clampText, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
 import type { Chartered, Checked, Closed, Renewed, StoreBoard } from './index.ts'
 
@@ -151,7 +151,6 @@ const breakerOut = (b: Breaker) => ({
 })
 /** The milestone being worked on: the first funded one, else the first planned. */
 const currentMilestone = (p: Project) => (p.milestones.find((m) => m.state === 'funded') ?? p.milestones.find((m) => m.state === 'planned'))?.id
-const clamp = (text: string, max: number): string => ([...text].length <= max ? text : `${[...text].slice(0, max - 1).join('')}…`)
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
 /** The host lists and serves an operator tool to the operator only; a project move from any other caller is never taken (INV-6). */
 const operatorOnly = (scope: ToolScope, move: string): void => {
@@ -224,7 +223,7 @@ function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }): Reco
       const ready = list(['ready'], 20)
       const readFirst = [
         ...(project.closure?.lessons ? [{ ref: project.closure.lessons, why: 'lessons of the closed project' }] : []),
-        ...board.latest(projectId, 'done', 16).flatMap((t) => (t.result ? [{ ref: t.result.digest ?? t.result.artifacts[0]!, why: clamp(`the accepted result of ${t.taskId}: ${t.title}`, 500) }] : [])),
+        ...board.latest(projectId, 'done', 16).flatMap((t) => (t.result ? [{ ref: t.result.digest ?? t.result.artifacts[0]!, why: clampText(`the accepted result of ${t.taskId}: ${t.title}`, 500) }] : [])),
       ].slice(0, 16)
       const notes = project.charter.constraints.notes ?? []
       return {

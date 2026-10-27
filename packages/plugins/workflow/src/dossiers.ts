@@ -22,11 +22,11 @@
  *   author's conversation: the dossier holds no transcript, only what was appended to it.
  */
 import type { Classification, Subject } from '@tsuuanmi/system-board-core'
-import { bodyText, type BriefCheck, type BriefFile, type BriefPointer } from '@tsuuanmi/system-libs'
+import { bodyText, type BriefCheck, type BriefFile, type BriefPointer, clampText } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { writes } from './review.ts'
-import { blocks, bySeverity, clampText, countOf, type Finding, findingLine, type ResolvedNode } from './spec.ts'
+import { blocks, bySeverity, countOf, type Finding, findingLine, type ResolvedNode } from './spec.ts'
 import { type NodeRow, now, type RunRow, WorkflowFailure } from './types.ts'
 
 export type DossierKind = 'plan' | 'progress' | 'review' | 'response' | 'evidence'

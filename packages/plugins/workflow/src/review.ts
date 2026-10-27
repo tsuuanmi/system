@@ -11,13 +11,13 @@
  * the dossier); a pre-existing finding proposes a follow-up board task, linked and never blocking.
  */
 import type { Lease } from '@tsuuanmi/system-leases'
-import { captureGitSubject, changeBetween, changeSince, CLEAN_VERSION, type GitSubject, subjectId } from '@tsuuanmi/system-libs'
+import { captureGitSubject, changeBetween, changeSince, clampText, CLEAN_VERSION, type GitSubject, subjectId } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { fixCommits } from './fix-sessions.ts'
 import { append } from './growth.ts'
 import {
-  type Assessment, blocks, clampText, type Finding, findingKey, growthPrefix, parseAssessment, parseVotes, pendingImportant, type PriorFinding, remediationPrompt,
+  type Assessment, blocks, type Finding, findingKey, growthPrefix, parseAssessment, parseVotes, pendingImportant, type PriorFinding, remediationPrompt,
   type ResolvedNode, type ReviewCycle, subjectBlock, summaryOf, verificationBlock,
 } from './spec.ts'
 import type { NodeRecord, NodeRow, RunRow } from './types.ts'

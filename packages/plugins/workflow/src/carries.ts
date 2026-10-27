@@ -27,11 +27,11 @@
  * continues from it; the review then reviews the whole change on that tree.
  */
 import type { BoardTask, Subject } from '@tsuuanmi/system-board-core'
-import { BRIEF_LIMITS, type BriefPointer, subjectId } from '@tsuuanmi/system-libs'
+import { BRIEF_LIMITS, type BriefPointer, clampText, subjectId } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, Carried, CarryStep } from '@tsuuanmi/system-workers-core'
 import type { TaskFrame } from './briefs.ts'
 import type { Engine } from './engine.ts'
-import { clampText, type ResolvedNode } from './spec.ts'
+import type { ResolvedNode } from './spec.ts'
 import { type NodeRecord, type NodeRow, now, type TaskCarry, type TaskOutcome, type TaskQuestion, type TaskRow, type WorkflowError } from './types.ts'
 
 /** Earlier runs of a task looked at for its previous attempt (runs the board never recorded are skipped), at most. */

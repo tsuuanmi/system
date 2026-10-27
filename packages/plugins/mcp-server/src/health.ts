@@ -4,7 +4,7 @@
  * something needs the operator), or `down` (work cannot run); the report is the worst of them.
  */
 import { statfsSync } from 'node:fs'
-import { agentToolDenialOf, countUnknownUsage, MAX_UNKNOWN_ENTRIES, nodeVersionProblem, type UnknownUsageSources } from '@tsuuanmi/system-libs'
+import { agentToolDenialOf, countUnknownUsage, MAX_UNKNOWN_ENTRIES, nodeVersionProblem, type UnknownUsageSources, unique } from '@tsuuanmi/system-libs'
 
 export type HealthState = 'ok' | 'degraded' | 'down'
 
@@ -486,7 +486,7 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
   if (undeleted) {
     checks.push(await guarded('conversations', () => {
       const failed = undeleted()
-      const accounts = [...new Set(failed.map((c) => c.account))].sort()
+      const accounts = unique(failed.map((c) => c.account))
       return failed.length
         ? { name: 'conversations', state: 'degraded', detail: `${failed.length} website conversation(s) of ${listOf(accounts)} could not be deleted: see system conversations --state failed, and the playbook (docs/operations/playbooks.md)` }
         : ok('conversations', 'every released website conversation was deleted or is due')
@@ -520,7 +520,7 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       const failed = new Set(events('workflow.node.failed', since).filter((e) => e.data?.kind === 'ui_drift').map((e) => String(e.data?.message ?? ''))
         .filter((message) => !reported.some((prefix) => message.startsWith(`${prefix} `))))
       const count = drifted.size + failed.size
-      const named = [...new Set(drifted.values())].sort()
+      const named = unique(drifted.values())
       return count
         ? { name: 'ui-drift', state: 'degraded', detail: `${count} provider UI change(s) seen recently${named.length ? ` (${listOf(named)})` : ''}: update the UI map (docs/operations/playbooks.md)` }
         : ok('ui-drift', 'no provider UI change seen recently')

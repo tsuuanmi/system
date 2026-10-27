@@ -5,6 +5,7 @@
  * @module @tsuuanmi/system-runtime-codex-sdk/overrides
  */
 import { SHELL_CONFIG_DIRECTORIES, WORKSPACE_READS_SERVER, isShellStartupVariable } from '@tsuuanmi/system-agent-runtime-core'
+import { isRecord } from '@tsuuanmi/system-libs'
 import { GATE_ENV } from './gate.ts'
 
 /**
@@ -18,7 +19,6 @@ export const FEATURES_OFF: readonly string[] = [
 ]
 
 const BARE_KEY = /^[A-Za-z0-9_-]+$/
-const isTable = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
 /** A TOML value, as `--config` parses it; `where` names it in an error. */
 function toml(value: unknown, where: string): string {
@@ -29,7 +29,7 @@ function toml(value: unknown, where: string): string {
   }
   if (typeof value === 'boolean') return String(value)
   if (Array.isArray(value)) return `[${value.map((v, i) => toml(v, `${where}[${i}]`)).join(', ')}]`
-  if (isTable(value)) return `{${Object.entries(value).map(([k, v]) => `${BARE_KEY.test(k) ? k : JSON.stringify(k)} = ${toml(v, `${where}.${k}`)}`).join(', ')}}`
+  if (isRecord(value)) return `{${Object.entries(value).map(([k, v]) => `${BARE_KEY.test(k) ? k : JSON.stringify(k)} = ${toml(v, `${where}.${k}`)}`).join(', ')}}`
   throw new Error(`${where} holds a value TOML does not take`)
 }
 
@@ -38,7 +38,7 @@ function flatten(config: Record<string, unknown>, prefix = ''): string[] {
   return Object.entries(config).flatMap(([key, value]) => {
     if (!BARE_KEY.test(key)) throw new Error(`the config key ${JSON.stringify(key)} is not a bare TOML key`)
     const path = prefix ? `${prefix}.${key}` : key
-    if (isTable(value) && Object.keys(value).length) return flatten(value, path)
+    if (isRecord(value) && Object.keys(value).length) return flatten(value, path)
     if (value === undefined) return []
     return [`${path}=${toml(value, path)}`]
   })
@@ -54,18 +54,18 @@ function flatten(config: Record<string, unknown>, prefix = ''): string[] {
 export function refused(config: Record<string, unknown>): string | undefined {
   if ('mcp_servers' in config) return 'mcp_servers in config would reach the Worker outside its sandbox'
   if ('hooks' in config) return 'hooks in config: the run\'s tool gate is its only hook'
-  const features = isTable(config.features) ? config.features : {}
+  const features = isRecord(config.features) ? config.features : {}
   const on = FEATURES_OFF.find((name) => features[name] !== undefined && features[name] !== false)
   if (on) return `features.${on} in config: the runtime keeps it off, since its tools or servers would bypass the run's tool gate`
   if (features.hooks !== undefined && features.hooks !== true) return 'features.hooks in config: the run\'s tool gate is a hook'
-  const exclude = isTable(config.shell_environment_policy) ? config.shell_environment_policy.exclude : undefined
+  const exclude = isRecord(config.shell_environment_policy) ? config.shell_environment_policy.exclude : undefined
   if (exclude !== undefined && !(Array.isArray(exclude) && exclude.every((e) => typeof e === 'string'))) return 'shell_environment_policy.exclude in config is not a list of names'
   // A shell started with one of these runs code before the command it is given (T198): a gated read would not run the program it names.
-  const set = isTable(config.shell_environment_policy) ? config.shell_environment_policy.set : undefined
-  const startup = isTable(set) ? Object.keys(set).find(isShellStartupVariable) : undefined
+  const set = isRecord(config.shell_environment_policy) ? config.shell_environment_policy.set : undefined
+  const startup = isRecord(set) ? Object.keys(set).find(isShellStartupVariable) : undefined
   if (startup) return `shell_environment_policy.set.${startup} in config: a shell would run code from it before each command`
   // HOME, and the XDG configuration directories, are where a shell reads its startup files: they stay the run's private, read-only home.
-  const moved = isTable(set) ? ['HOME', ...SHELL_CONFIG_DIRECTORIES].find((name) => Object.hasOwn(set, name)) : undefined
+  const moved = isRecord(set) ? ['HOME', ...SHELL_CONFIG_DIRECTORIES].find((name) => Object.hasOwn(set, name)) : undefined
   if (moved) return `shell_environment_policy.set.${moved} in config: its commands' shells would read their startup files there instead of the run's private home`
   try {
     flatten(config)
@@ -98,7 +98,7 @@ export function readsOverride(command: { command: string; args: readonly string[
  * it keeps. Given after the operator's configuration, it is the value Codex reads.
  */
 export function writableRootsOverride(config: Record<string, unknown> = {}, roots: readonly string[]): string {
-  const configured = isTable(config.sandbox_workspace_write) ? config.sandbox_workspace_write.writable_roots : undefined
+  const configured = isRecord(config.sandbox_workspace_write) ? config.sandbox_workspace_write.writable_roots : undefined
   const own = Array.isArray(configured) ? configured.filter((root): root is string => typeof root === 'string') : []
   return `sandbox_workspace_write.writable_roots=${toml([...new Set([...own, ...roots])], 'sandbox_workspace_write.writable_roots')}`
 }
@@ -109,7 +109,7 @@ export function writableRootsOverride(config: Record<string, unknown> = {}, root
  * only on a configuration {@link refused} accepts.
  */
 export function configOverrides(config: Record<string, unknown> = {}): string[] {
-  const policy = isTable(config.shell_environment_policy) ? config.shell_environment_policy : undefined
+  const policy = isRecord(config.shell_environment_policy) ? config.shell_environment_policy : undefined
   const own = (policy?.exclude as string[] | undefined) ?? []
   const rest = policy ? { ...config, shell_environment_policy: Object.fromEntries(Object.entries(policy).filter(([k]) => k !== 'exclude')) } : config
   return [

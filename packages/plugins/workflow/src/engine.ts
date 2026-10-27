@@ -8,7 +8,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Board, Subject } from '@tsuuanmi/system-board-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
-import { type BriefPointer, canonicalJson, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
+import { type BriefPointer, canonicalJson, SchemaRegistry, sha256, sleep } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { acceptPlain } from './acceptance.ts'
@@ -535,7 +535,7 @@ export class Engine {
             return
           }
           // Every node deferred to a peer that is not running (it backs off): look again shortly.
-          if (outcomes.every((o) => o === 'deferred') && !(await sleep(250, signal))) return
+          if (outcomes.every((o) => o === 'deferred') && !(await slept(250, signal))) return
         }
       } catch (error) {
         if (this.stopped.signal.aborted || operator.signal.aborted) return
@@ -634,7 +634,7 @@ export class Engine {
       // A peer that is not running now (backing off before a retry) will not be routed while this
       // waits: give the turn back to the run loop, which runs both again.
       if (rows.some((n) => !n.worker && !this.executing.has(`${run.run_id}\0${n.node_id}`))) return 'deferred'
-      if (!(await sleep(250, signal))) return 'stopped'
+      if (!(await slept(250, signal))) return 'stopped'
     }
   }
 
@@ -683,7 +683,7 @@ export class Engine {
     const spec = JSON.parse(node.spec) as ResolvedNode
     if (!node.execution_id) {
       const delay = node.not_before ? Date.parse(node.not_before) - Date.now() : 0
-      if (delay > 0 && !(await sleep(delay, signal))) return
+      if (delay > 0 && !(await slept(delay, signal))) return
       // Held between steps (./hold.ts): nothing new starts; the release schedules the run again.
       if (heldNow(this)) return
       // A review's source is read by the engine, not a Worker.
@@ -995,7 +995,7 @@ export class Engine {
       await Promise.race([source.wait(current.id, 30_000), stop])
       if (signal.aborted) return
       // A runtime that is stopping returns at once; never spin on it.
-      if (Date.now() - waited < 50 && !(await sleep(1000, signal))) return
+      if (Date.now() - waited < 50 && !(await slept(1000, signal))) return
       current = source.get(current.id)
     }
     if (!current) return failAttempt(this, run, node, { kind: 'internal', disposition: 'CODE_FIX', message: `execution ${node.execution_id} is gone` }, { sent: true }, lease)
@@ -1226,17 +1226,4 @@ function aborted(signal: AbortSignal): Promise<void> {
 }
 
 /** Sleep unless aborted; true when the full delay passed. */
-async function sleep(ms: number, signal: AbortSignal): Promise<boolean> {
-  if (signal.aborted) return false
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', stop)
-      resolve(true)
-    }, ms)
-    const stop = (): void => {
-      clearTimeout(timer)
-      resolve(false)
-    }
-    signal.addEventListener('abort', stop, { once: true })
-  })
-}
+const slept = (ms: number, signal: AbortSignal): Promise<boolean> => sleep(ms, signal).then(() => true, () => false)

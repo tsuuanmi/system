@@ -16,6 +16,7 @@
  * @module
  */
 import type { LimitObservation } from '@tsuuanmi/system-agent-runtime-core'
+import { isRecord } from '@tsuuanmi/system-libs'
 
 /**
  * agy versions whose `/usage` report is read. 1.4.6 (2026-10-24, the installed binary): its type
@@ -38,7 +39,6 @@ const REPORTS = new Set(['usage', 'quota'])
 const PLAUSIBLE_MS = 400 * 86_400_000
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 
-const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const optional = (value: unknown, type: 'string' | 'boolean' | 'number'): boolean => value === undefined || typeof value === type
 
 /**
@@ -61,18 +61,18 @@ export function limitsFromUsage(stdout: string, observedAt: number): { limits: L
   } catch {
     return { unreadable: 'it is not one JSON object' }
   }
-  if (!isObject(report)) return { unreadable: 'it is not one JSON object' }
+  if (!isRecord(report)) return { unreadable: 'it is not one JSON object' }
   if (report.status !== undefined && report.status !== 'SUCCESS') return { unreadable: `its status is ${JSON.stringify(report.status).slice(0, 40)}` }
   const command = report.command
-  if (!isObject(command) || typeof command.name !== 'string' || !REPORTS.has(command.name)) return { unreadable: 'it holds no usage report (command)' }
+  if (!isRecord(command) || typeof command.name !== 'string' || !REPORTS.has(command.name)) return { unreadable: 'it holds no usage report (command)' }
   const data = command.data
-  if (!isObject(data) || !Array.isArray(data.groups)) return { unreadable: 'its report has no groups' }
+  if (!isRecord(data) || !Array.isArray(data.groups)) return { unreadable: 'its report has no groups' }
   const observed = new Date(observedAt).toISOString()
   const limits: LimitObservation[] = []
   for (const group of data.groups as unknown[]) {
-    if (!isObject(group) || typeof group.name !== 'string' || !Array.isArray(group.buckets)) return { unreadable: 'a group is not a named list of buckets' }
+    if (!isRecord(group) || typeof group.name !== 'string' || !Array.isArray(group.buckets)) return { unreadable: 'a group is not a named list of buckets' }
     for (const bucket of group.buckets as unknown[]) {
-      if (!isObject(bucket) || typeof bucket.name !== 'string' || !optional(bucket.id, 'string') || !optional(bucket.window, 'string')
+      if (!isRecord(bucket) || typeof bucket.name !== 'string' || !optional(bucket.id, 'string') || !optional(bucket.window, 'string')
         || !optional(bucket.disabled, 'boolean') || !optional(bucket.reset_time, 'string')) return { unreadable: 'a bucket is not in the 1.4.6 shape' }
       const fraction = bucket.remaining_fraction
       const amount = bucket.remaining_amount

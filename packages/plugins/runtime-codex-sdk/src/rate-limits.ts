@@ -17,6 +17,7 @@
  */
 import type { ChildProcess } from 'node:child_process'
 import type { LimitObservation, LimitReport } from '@tsuuanmi/system-agent-runtime-core'
+import { isRecord } from '@tsuuanmi/system-libs'
 
 /**
  * Codex versions whose app server's rate limits are read. 0.164.0 (2026-10-24, the installed
@@ -42,7 +43,6 @@ const KILL_MS = 5000
 /** A reset time further than this from now is not believed. */
 const PLAUSIBLE_MS = 400 * 86_400_000
 
-const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
 /**
  * The limit observations an `account/rateLimits/read` result gives, read at `observedAt` (ms), or why
@@ -55,16 +55,16 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
  * up, as window `*`, which no configuration maps, so the ledger closes every window of the pool.
  */
 export function limitsFromRateLimits(result: unknown, observedAt: number): LimitReport {
-  if (!isObject(result) || !isObject(result.rateLimits)) return { unreadable: 'its answer holds no rateLimits object' }
+  if (!isRecord(result) || !isRecord(result.rateLimits)) return { unreadable: 'its answer holds no rateLimits object' }
   const snapshot = result.rateLimits
   const observed = new Date(observedAt).toISOString()
   const limits: LimitObservation[] = []
   for (const name of ['primary', 'secondary'] as const) {
     const window = snapshot[name]
     if (window === null || window === undefined) continue
-    const minutes = isObject(window) ? window.windowDurationMins : undefined
-    const resets = isObject(window) ? window.resetsAt : undefined
-    if (!isObject(window) || typeof window.usedPercent !== 'number' || !Number.isFinite(window.usedPercent)
+    const minutes = isRecord(window) ? window.windowDurationMins : undefined
+    const resets = isRecord(window) ? window.resetsAt : undefined
+    if (!isRecord(window) || typeof window.usedPercent !== 'number' || !Number.isFinite(window.usedPercent)
       || !(minutes === null || minutes === undefined || (typeof minutes === 'number' && Number.isInteger(minutes) && minutes > 0))
       || !(resets === null || resets === undefined || (typeof resets === 'number' && Number.isFinite(resets)))) {
       return { unreadable: `its ${name} window is not in the checked shape ({ usedPercent, windowDurationMins, resetsAt })` }
@@ -107,7 +107,7 @@ export function askRateLimits(child: ChildProcess, signal: AbortSignal): Promise
     const answer = (message: Record<string, unknown>): void => {
       if (message.id === undefined || message.method !== undefined) return
       if (message.error !== undefined) {
-        const said = isObject(message.error) && typeof message.error.message === 'string' ? message.error.message : JSON.stringify(message.error)
+        const said = isRecord(message.error) && typeof message.error.message === 'string' ? message.error.message : JSON.stringify(message.error)
         finish(new Error(`the app server refused ${message.id === 1 ? 'initialize' : 'account/rateLimits/read'}: ${said.slice(0, 200)}`))
         return
       }
@@ -131,7 +131,7 @@ export function askRateLimits(child: ChildProcess, signal: AbortSignal): Promise
           finish(new Error('the app server wrote a line that is not JSON'))
           return
         }
-        if (!isObject(message)) {
+        if (!isRecord(message)) {
           finish(new Error('the app server wrote a line that is not a JSON object'))
           return
         }

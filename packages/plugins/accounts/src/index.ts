@@ -10,7 +10,7 @@
 import { type Context, Service } from '@deepseek-ai/cordis'
 import { type CredentialKey, type CredentialRecord, credentialKey } from '@deepseek-ai/dsh-credentials'
 import z from '@deepseek-ai/schemastery'
-import { type AccountSetting, accountSettings, ASSIGNED, type ContentId, DESCRIPTION, MAX_DESCRIPTION, type PooledTerms, type ProviderAccounts, SchemaRegistry } from '@tsuuanmi/system-libs'
+import { type AccountSetting, accountSettings, ASSIGNED, type ContentId, DESCRIPTION, MAX_DESCRIPTION, type PooledTerms, type ProviderAccounts, SchemaRegistry, unique } from '@tsuuanmi/system-libs'
 import { type PortableState, ProviderError, type Tier } from '@tsuuanmi/system-provider-core'
 
 export type { PortableState }
@@ -202,7 +202,7 @@ export class Accounts extends Service {
   /** Provider runtime only: the portable browser state of a ready account. */
   /** Record which website features a probe proved on the account (REQ-PRV-7). */
   async setFeatures(id: string, names: readonly string[], provedAt: string = new Date().toISOString()): Promise<AccountView> {
-    return this.mutate(id, undefined, (current) => ({ ...current, features: { names: [...new Set(names)].sort(), provedAt } }))
+    return this.mutate(id, undefined, (current) => ({ ...current, features: { names: unique(names), provedAt } }))
   }
 
   async portableState(id: string): Promise<PortableState | undefined> {

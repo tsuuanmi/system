@@ -17,7 +17,7 @@ import { type ArtifactRef, checkedRequest, DigestError, type DigestRequest, Dige
 import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
-import { type Brief, bodyText, type BriefSegment, extractJson, NO_LOCAL_SANDBOX, renderBrief, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
+import { type Brief, bodyText, type BriefSegment, clampText, extractJson, NO_LOCAL_SANDBOX, renderBrief, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
 import { AdmissionFailure, type Classification, type Tier, TIERS, type WorkRequirement } from '@tsuuanmi/system-workers-core'
 
@@ -408,7 +408,7 @@ export class StoreDigests extends Digests {
       }).id as ArtifactRef
       const check = 'check' in outcome ? outcome.check : undefined
       db.prepare('UPDATE digest_requests SET state = ?, digest = ?, decision = ?, kept = ?, dropped = ?, reason = ?, updated_at = ? WHERE request_id = ?').run(
-        outcome.state, digest ?? null, decision, check ? check.kept : null, check ? check.dropped.length : null, outcome.state === 'written' ? null : clamp(outcome.reason, 1000), now(), row.request_id,
+        outcome.state, digest ?? null, decision, check ? check.kept : null, check ? check.dropped.length : null, outcome.state === 'written' ? null : clampText(outcome.reason, 1000), now(), row.request_id,
       )
       this.ctx.get('eventLog')?.append({ type: 'digests.settled', decision, data: { requestId: row.request_id, state: outcome.state, ...(digest ? { digest } : {}) } })
       if (outcome.state === 'bypassed') this.ctx.logger.info(`digests: request ${row.request_id} bypassed: ${outcome.reason}`)
@@ -423,8 +423,6 @@ export class StoreDigests extends Digests {
     return this.ctx.store.db.prepare('SELECT * FROM digest_requests WHERE request_id = ?').get(requestId) as Row | undefined
   }
 }
-
-const clamp = (text: string, max: number): string => ([...text].length <= max ? text : `${[...text].slice(0, max - 1).join('')}…`)
 
 function view(row: Row): DigestView {
   return {

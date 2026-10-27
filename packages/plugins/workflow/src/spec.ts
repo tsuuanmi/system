@@ -3,7 +3,7 @@
  * preflight validates a DAG before anything runs, and a resolved spec is hashed so a run
  * binds to exactly what was admitted.
  */
-import { BRIEF_LIMITS, type BriefPointer, type BriefSegment, contentId, type ContentId, extractJson } from '@tsuuanmi/system-libs'
+import { BRIEF_LIMITS, type BriefPointer, type BriefSegment, clampText, contentId, type ContentId, extractJson } from '@tsuuanmi/system-libs'
 import type { RiskTier } from '@tsuuanmi/system-approvals-core'
 import { type ArtifactRef, TIERS, type Tier, WORK_KIND } from '@tsuuanmi/system-workers-core'
 
@@ -750,12 +750,6 @@ function instructions(from: Instructions = { segments: [], pointers: [] }) {
       return { segments, pointers }
     },
   }
-}
-
-/** At most `max` characters (code points), cut on a whole character and marked with '…'. */
-export function clampText(text: string, max: number): string {
-  const chars = [...text]
-  return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`
 }
 
 const STEP_ID = /^[a-z0-9][a-z0-9-]{0,40}$/
