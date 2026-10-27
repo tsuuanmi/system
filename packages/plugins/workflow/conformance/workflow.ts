@@ -925,7 +925,7 @@ export const workflowSuite = defineSuite<Boot>({
       // A step's handbook slice, when the engine gives one (docs/design/handbook.md), follows the instructions: the one pointer they do not place.
       const handbook = handbookPointer(ctx, brief)
       expect(brief.artifacts).toEqual(handbook ? [handbook.pointer] : [])
-      expect(workers.started[0]!.prompt).toBe(`Board task ${task.taskId} of project p1, attempt 1.\nGoal: do briefed\nAcceptance criteria:\n- a1: it answers\n- a2: it cites\nIf you cannot finish without an answer from a person, answer with only this JSON object and nothing else: {"questions": ["..."]}, with 1 to 8 questions of at most 500 characters each. The task then waits for the answers, and its next attempt is given them.\n\nq${handbook ? `\n\nRead these too:\n\n${handbook.rendered}` : ''}`)
+      expect(workers.started[0]!.prompt).toBe(`Board task ${task.taskId} of project p1, attempt 1.\nGoal: do briefed\nAcceptance criteria:\n- a1: it answers\n- a2: it cites\nIf you cannot finish without an answer from a person, answer with only this JSON object and nothing else: {"questions": ["..."]}, with 1 to 8 questions of at most 500 characters each. The task then waits for the answers, and this attempt continues with them: asking spends no attempt.\n\nq${handbook ? `\n\nRead these too:\n\n${handbook.rendered}` : ''}`)
     }, {}, '1.3'),
 
     scenario('task-resume', 'resumes, for a board task\'s next attempt, the session of the attempt before it when its Worker keeps a native session it can resume, the new brief as its next message, and starts fresh otherwise; each choice a decision (INV-9, INV-13)', async ({ ctx, workers }) => {
@@ -1075,7 +1075,7 @@ export const workflowSuite = defineSuite<Boot>({
       expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).filter((r) => r.requester.taskId === task.taskId)).toEqual([])
     }, {}, '1.4'),
 
-    scenario('task-question', 'blocks a board task on the questions a step of its run asks instead of answering, as every brief of the run offers (brief@1.2 ask): the step fails as question with no result on a gate decision, nothing after it starts, and the holder raises the board\'s question wait; answered, the next attempt\'s brief points at the answers; outside a board task nothing offers to ask, and such an answer is a result (INV-6, INV-9, INV-13)', async ({ ctx, workers }) => {
+    scenario('task-question', 'blocks a board task on the questions a step of its run asks instead of answering, as every brief of the run offers (brief@1.2 ask): the step fails as question with no result on a gate decision, nothing after it starts, and the holder raises the board\'s question wait; answered, the attempt continues and its next run\'s brief points at the answers (T291); outside a board task nothing offers to ask, and such an answer is a result (INV-6, INV-9, INV-13)', async ({ ctx, workers }) => {
       await activeProject(ctx)
       const task = await readyTask(ctx, 'unclear')
       const questions = ['Which band width?', 'Keep the old API?']
@@ -1096,14 +1096,16 @@ export const workflowSuite = defineSuite<Boot>({
       await pause(300)
       expect(workers.started).toHaveLength(1)
 
-      // Answered: only that trusted move and the gate start the next attempt, which is briefed with the answers.
+      // Answered: only that trusted move and the gate continue the attempt, whose next run is briefed with the answers.
       await ctx.board.answer(task.taskId, ['64 is enough', 'yes, keep it'])
       expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready' })
       workers.reply = () => ({ text: 'the answer' })
       const next = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
       expect((await reported(ctx, next.runId)).task!.outcome).toMatchObject({ status: 'accepted', state: 'done' })
       const brief = ctx.artifacts.get(workers.started[1]!.brief!)!.body as { attempt: number; artifacts: Array<{ role: string }> }
-      expect(brief.attempt).toBe(2)
+      // The answer continued attempt 1: the count did not move, and this run is that attempt again (T291).
+      expect(brief.attempt).toBe(1)
+      expect(await ctx.board.task(task.taskId)).toMatchObject({ attempts: { count: 1 } })
       expect(brief.artifacts.map((p) => p.role)).toContain('review')
       expect(workers.started[1]!.prompt).toContain('64 is enough')
 

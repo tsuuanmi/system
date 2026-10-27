@@ -183,10 +183,11 @@ charters, and their tasks.
     question, `question` its index from 0 in `waiting.questions`, which the tool's own description
     says, so the generated reference shows it; its `note` is not stored (no record holds
     progress notes yet). Only a `question` wait takes answers: a `rejected`, `retries-spent`, or
-    `review-expired` wait takes no input and only expires to cancelled, and answering the last
-    attempt's questions leaves the task waiting for input (`retries-spent`), never ready with no
-    attempt left
-    ([what ends an input wait](../../../docs/design/board.md#what-ends-an-input-wait));
+    `review-expired` wait takes no input and only expires to cancelled. Answering a question wait
+    spends no attempt, also on the last one (T291): the attempt that asked continues through the
+    gate, its count unchanged, and the next `start` runs that same attempt again (the
+    `board_tasks.continues` flag, migration 5;
+    [what ends an input wait](../../../docs/design/board.md#what-ends-an-input-wait));
   - `board_cancel` cancels as `operator` for an operator token and as `lead` for a client one;
   - `board_pause`, `board_resume`, and `board_close` move the project for the operator only: the
     host serves them to the operator token, and each handler refuses any other caller (`invalid`)

@@ -8,9 +8,14 @@ import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync,
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
-import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { type AgentHome, type Confinement, HOME_STARTUP_DIRECTORIES, HOME_STATE_DIRECTORIES, SHELL_CONFIG_DIRECTORIES, SHELL_STARTUP_VARIABLES, agentHome, agentShellEnvironment, childEnvironment, confinedCommand, isShellStartupVariable } from '../src/index.ts'
 import { BWRAP, needsBubblewrap } from './host.ts'
+
+// A test here runs tens of real (often bubblewrap-confined) shells one after another; on a host
+// running several full suites at once it ran past vitest's 5 s default and failed an acceptance
+// check (T291 attempt 2). The integration specs' 120 s, as d4f9d95b; nothing here reads time.
+vi.setConfig({ testTimeout: 120_000 })
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), 'system-shells-')))
 afterAll(() => rmSync(root, { recursive: true, force: true }))

@@ -165,6 +165,11 @@ const MIGRATIONS = [{
     CHECK ((reset_at IS NULL) = (reset_by IS NULL) AND (reset_at IS NULL) = (reset_decision IS NULL))
   );
   CREATE UNIQUE INDEX board_breakers_open ON board_breakers (project_id, branch) WHERE reset_at IS NULL;`,
+}, {
+  // An answered question continues the attempt that asked (T291): the flag is set by the answer and
+  // read, then cleared, by the next start, which then does not count another attempt. Beside the record, never in it.
+  version: 5,
+  sql: 'ALTER TABLE board_tasks ADD COLUMN continues INTEGER NOT NULL DEFAULT 0;',
 }]
 
 type Changes<T> = { [K in keyof T]?: T[K] | undefined }
@@ -254,6 +259,11 @@ const charterHash = (charter: Charter): string => {
 const writesKey = (subject: Subject | undefined): string | null => (subject ? JSON.stringify([subject.type, subject.ref]) : null)
 /** Whether the task may make another attempt: `attempts.count` never exceeds `attempts.max`. */
 const attemptLeft = (task: BoardTask): boolean => task.attempts.count < task.attempts.max
+/** The question wait an answered gate's request names (`board-task:<id>:attempt:<n>:answered:<wait>`), for this task at its attempt; undefined for any other request. */
+const answeredWaitOf = (task: BoardTask, ref: string): string | undefined => {
+  const prefix = `board-task:${task.taskId}:attempt:${task.attempts.count}:answered:`
+  return ref.startsWith(prefix) && ref.length > prefix.length ? ref.slice(prefix.length) : undefined
+}
 /** The task with the attempt its last run made given back: that run failed only on the infrastructure (ADR-0069). */
 const refunded = (task: BoardTask): BoardTask => ({ ...task, attempts: { ...task.attempts, count: Math.max(0, task.attempts.count - 1) } })
 /** The earlier of two instants, either of which may be unknown. */
@@ -751,15 +761,19 @@ export class StoreBoard extends Board {
       const { project } = this.projectOf(task.projectId)
       // Fail-closed rule 1: no task starts outside an active project.
       if (project.state !== 'active') throw new BoardError('invalid-transition', `${project.projectId} is ${project.state}, not active: nothing starts`)
-      if (task.attempts.count >= task.attempts.max) throw new BoardError('invalid-transition', `${taskId} has used its ${task.attempts.max} attempt(s)`)
+      // An answered question continues the attempt that asked: this run is that attempt again, not another one (T291).
+      const continues = this.continuingNow(taskId) && task.attempts.count > 0
+      if (!continues && task.attempts.count >= task.attempts.max) throw new BoardError('invalid-transition', `${taskId} has used its ${task.attempts.max} attempt(s)`)
       if (run.brief !== undefined && !this.ctx.artifacts.get(run.brief)) throw new BoardError('invalid', `brief ${run.brief} is not a stored artifact`)
+      const attempt = continues ? task.attempts.count : task.attempts.count + 1
+      if (continues) this.ctx.store.db.prepare('UPDATE board_tasks SET continues = 0 WHERE task_id = ?').run(taskId)
       return this.commit(current, {
         changes: {
           state: 'running', run: { runId: run.runId, ...(run.brief !== undefined ? { brief: run.brief } : {}), startedAt: at.toISOString() },
-          attempts: { ...task.attempts, count: task.attempts.count + 1 }, result: undefined,
+          attempts: { ...task.attempts, count: attempt }, result: undefined,
           lastDecision: this.decision(project, task, {
-            from: 'claimed', to: 'running', why: `run ${run.runId} recorded before it starts, as attempt ${task.attempts.count + 1} of ${task.attempts.max}`,
-            whyNot: `the holder of generation ${generation} starts it`, inputs: run.brief !== undefined ? [run.brief] : [], detail: { runId: run.runId, attempt: task.attempts.count + 1 },
+            from: 'claimed', to: 'running', why: `run ${run.runId} recorded before it starts, as attempt ${attempt} of ${task.attempts.max}${continues ? ' (continued after an answer)' : ''}`,
+            whyNot: `the holder of generation ${generation} starts it`, inputs: run.brief !== undefined ? [run.brief] : [], detail: { runId: run.runId, attempt, ...(continues ? { continues: true } : {}) },
           }, at),
         },
       }, at)
@@ -888,6 +902,16 @@ export class StoreBoard extends Board {
     return Number(row?.free_retries ?? 0)
   }
 
+  /** Whether the task's next start continues the attempt whose question was answered (T291). */
+  override async continuing(taskId: string): Promise<boolean> {
+    return this.continuingNow(taskId)
+  }
+
+  private continuingNow(taskId: string): boolean {
+    const row = this.ctx.store.db.prepare('SELECT continues FROM board_tasks WHERE task_id = ?').get(taskId) as { continues: number } | undefined
+    return Number(row?.continues ?? 0) === 1
+  }
+
   /**
    * A run that failed only on the infrastructure, with a free retry left (ADR-0069, INV-9): the
    * attempt it made is given back (`attempts.count` one lower), the free retry is counted beside the
@@ -1009,27 +1033,20 @@ export class StoreBoard extends Board {
       throw new BoardError('invalid', `answer every question of a question wait (${questions.length}); a ${before.waiting?.reason ?? 'missing'} wait takes no answers and only expires`)
     }
     if (answers.some((a) => typeof a !== 'string' || a.length === 0 || [...a].length > ANSWER_MAX)) throw new BoardError('invalid', `an answer is 1 to ${ANSWER_MAX} characters`)
-    // The next run is another attempt, so the policy is asked again (S9).
-    const next = attemptLeft(before) ? await this.nextAttempt(before, at) : undefined
+    // An answer continues the attempt that asked (T291): the count does not move, and the next start does not
+    // count again; only a failed or rejected step spends an attempt. The policy is still asked again (S9), on a
+    // request that names the wait it answers, so no earlier approval of the same attempt covers it (INV-2).
+    const next = await this.nextAttempt(before, at, before.waiting.since)
     return this.committing(next, at, () => this.commitLater(before, at, undefined, (current) => {
       const { task } = current
       const { project } = this.projectOf(task.projectId)
-      // The answers are the decision's detail, so the next attempt's brief can point to them.
-      const detail = { questions, answers, ...(task.run ? { runId: task.run.runId } : {}) }
-      const why = `every one of its ${questions.length} question(s) answered`
-      if (next) return this.nextAttemptMove(project, task, next, { why, detail }, at)
-      // A ready task with no attempt left could never start and would never expire (INV-9): it waits for input, which expires.
-      return {
-        changes: {
-          state: 'waiting-for-input', waiting: this.inputWait('retries-spent', at), run: undefined,
-          lastDecision: this.decision(project, task, {
-            from: 'waiting-for-input', to: 'waiting-for-input', instead: 'ready',
-            why: `${why}, but all ${task.attempts.max} attempt(s) are spent: it waits for input (retries-spent), which expires`,
-            whyNot: `no attempt is left to start (${task.attempts.count} of ${task.attempts.max}), and a ready task never expires`,
-            detail: { ...detail, reason: 'retries-spent' },
-          }, at),
-        },
-      }
+      // The answers are the decision's detail, so the continuing attempt's brief can point to them.
+      const detail = { questions, answers, continues: true, ...(task.run ? { runId: task.run.runId } : {}) }
+      const why = `every one of its ${questions.length} question(s) answered: attempt ${task.attempts.count} of ${task.attempts.max} continues, not spent`
+      // nextAttemptMove names the attempt after the count it is given: given the count before this attempt, it names this one.
+      const move = this.nextAttemptMove(project, { ...task, attempts: { ...task.attempts, count: Math.max(0, task.attempts.count - 1) } }, next, { why, detail }, at)
+      if (move.changes.state !== 'cancelled') this.ctx.store.db.prepare('UPDATE board_tasks SET continues = 1 WHERE task_id = ?').run(task.taskId)
+      return { ...move, changes: { attempts: task.attempts, ...move.changes } }
     }, check))
   }
 
@@ -1508,7 +1525,8 @@ export class StoreBoard extends Board {
         return this.commitLater(task, at, undefined, (c) => {
           if (!approved) return { changes: { state: 'waiting-for-input', waiting: this.inputWait('rejected', at), lastDecision: resolution.decision } }
           // attempts.count never exceeds attempts.max: an approval to go on with no attempt left starts nothing (INV-9).
-          if (c.task.attempts.count >= c.task.attempts.max) return { changes: { state: 'waiting-for-input', waiting: this.inputWait('retries-spent', at), lastDecision: resolution.decision } }
+          // An answered question's attempt continues, so it is not spent (T291).
+          if (c.task.attempts.count >= c.task.attempts.max && !this.continuingNow(taskId)) return { changes: { state: 'waiting-for-input', waiting: this.inputWait('retries-spent', at), lastDecision: resolution.decision } }
           return { changes: { state: 'ready', waiting: undefined, run: undefined, lastDecision: resolution.decision } }
         })
       }
@@ -1618,8 +1636,10 @@ export class StoreBoard extends Board {
     const reason = task.waiting!.reason as 'approval-needed' | 'budget-spent' | 'reconciliation-failed'
     const actionClass: ActionClass = reason === 'budget-spent' ? 'funding' : reason === 'reconciliation-failed' ? 'remediation' : task.actionClass
     const verdict = await this.ctx.approvals.check({ class: actionClass, projectId: task.projectId })
-    // A spent budget's funding ask is asked again as it was: the same lines, the same subject.
-    const request = verdict.mode === 'ask' ? await this.ask(this.taskRequest(task, actionClass, reason, verdict, task.waiting!.funding), at) : undefined
+    // A spent budget's funding ask is asked again as it was: the same lines, the same subject. So is an
+    // answered question's gate: on the wait it answered, so no other gate of the same attempt adopts its approval (INV-2, T291).
+    const answered = reason === 'approval-needed' ? answeredWaitOf(task, withdrawn.subject.ref) : undefined
+    const request = verdict.mode === 'ask' ? await this.ask(this.taskRequest(task, actionClass, reason, verdict, task.waiting!.funding, undefined, answered), at) : undefined
     try {
       return this.commitLater(task, at, undefined, (c) => this.regateMove(c.task, reason, actionClass, verdict, request, withdrawn, at))
     } catch (error) {
@@ -1736,14 +1756,15 @@ export class StoreBoard extends Board {
    * spent budget's `funding` ask is its subject's version ({@link fundingVersion}), so the verdict
    * binds to exactly those lines (INV-5), and its summary and consequences name them.
    */
-  private taskRequest(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, funding?: BudgetLine[], unreleased?: UnreleasedHold[]): NewRequest {
+  private taskRequest(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, funding?: BudgetLine[], unreleased?: UnreleasedHold[], answeredWait?: string): NewRequest {
     const { project } = this.projectOf(task.projectId)
     const asked = reason === 'budget-spent' ? funding : undefined
     // The reservations the holder could not release still count: named, so the operator sees why the step was refused (1.3).
     const held = reason === 'budget-spent' && unreleased?.length ? unreleasedText(unreleased) : undefined
     const consequences = [asked ? this.fundingConsequences(task, asked) : undefined, held].filter((c): c is string => c !== undefined).join(' ')
     return {
-      subject: { type: 'content', ref: `board-task:${task.taskId}:attempt:${task.attempts.count}`, version: asked ? fundingVersion(contentId(asked)) : reason },
+      // An answered question continues its attempt, so its request names the wait it answers: no earlier approval of that attempt covers a later gate (INV-2, T291).
+      subject: { type: 'content', ref: `board-task:${task.taskId}:attempt:${task.attempts.count}${answeredWait ? `:answered:${answeredWait}` : ''}`, version: asked ? fundingVersion(contentId(asked)) : reason },
       action: {
         class: actionClass,
         summary: clamp(`${reason}: ${task.title}${asked ? `; raise its budget by ${linesText(asked, '+')}` : ''}${held ? `; ${unreleased!.length} reservation(s) not released still count` : ''}`, 500),
@@ -1767,10 +1788,10 @@ export class StoreBoard extends Board {
    * the verdict asks (S9): every return to ready for a new attempt goes through the gate again, so
    * one approval never covers a later attempt.
    */
-  private async nextAttempt(task: BoardTask, at: Date): Promise<NextAttempt> {
+  private async nextAttempt(task: BoardTask, at: Date, answeredWait?: string): Promise<NextAttempt> {
     const verdict = await this.ctx.approvals.check({ class: task.actionClass, projectId: task.projectId })
     if (verdict.mode !== 'ask') return { verdict }
-    return { verdict, request: await this.ask(this.taskRequest(task, task.actionClass, 'approval-needed', verdict), at) }
+    return { verdict, request: await this.ask(this.taskRequest(task, task.actionClass, 'approval-needed', verdict, undefined, undefined, answeredWait), at) }
   }
 
   /** Run `commit`; when it fails, withdraw the request `next` opened for it, unless something already waits on it. */

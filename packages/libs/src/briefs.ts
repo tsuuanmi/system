@@ -173,7 +173,7 @@ function frame(brief: Brief, options: RenderOptions): string {
   }
   if (brief.ask) {
     lines.push(`If you cannot finish without an answer from a person, answer with only this JSON object and nothing else: {"questions": ["..."]}, `
-      + `with 1 to ${brief.ask.maxQuestions} questions of at most ${QUESTION_LIMITS.chars} characters each. The task then waits for the answers, and its next attempt is given them.`)
+      + `with 1 to ${brief.ask.maxQuestions} questions of at most ${QUESTION_LIMITS.chars} characters each. The task then waits for the answers, and this attempt continues with them: asking spends no attempt.`)
   }
   return lines.join('\n')
 }

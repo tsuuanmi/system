@@ -194,9 +194,10 @@ policy change; the other cases only the store-backed provider checks.
 - [System accepts a listed branch's result](#system-accepts-a-listed-branchs-result) (`autoAccept`, D80).
 - One approval covers one attempt. Every return to ready for a new attempt goes through the
   gate again: after a rejected review, a run its owner reports failed or rejected, an approval to
-  go on after a spent budget or a lost run, and an answered question, the board asks the policy
-  about the task's action class for the next attempt. `ask` opens a new request on
-  `board-task:<id>:attempt:<n>` (`n`, the attempts already made) and the task waits for approval
+  go on after a spent budget or a lost run, and an answered question (for the attempt it
+  continues, below), the board asks the policy about the task's action class for that attempt.
+  `ask` opens a new request on `board-task:<id>:attempt:<n>` (`n`, the attempts already made;
+  `:answered:<wait>` after an answer) and the task waits for approval
   (`approval-needed`); `forbid` cancels it (`forbidden`); `auto` or `notify` makes it ready. The
   move's `board` decision names the decision that caused it and the `autonomy` decision. A claim
   whose lease lapsed before any run returns to ready without asking: it made no attempt.
@@ -220,10 +221,32 @@ policy change; the other cases only the store-backed provider checks.
   the `autonomy` decision, with a reason on every candidate. A wait's expiry does not end it
   first: the queue withdraws only an unexpired request, so the withdrawal came before the wait
   would have expired.
-- No move makes a task ready once its attempts are spent: an approval to go on, or an answered
-  question, with no attempt left leaves it waiting for input (`retries-spent`, with a `board`
-  decision whose candidates both say why), so `attempts.count` never exceeds `attempts.max` and a
-  task that can never start never sits in `ready`, which does not expire (INV-9).
+- No move makes a task ready once its attempts are spent: an approval to go on after a spent
+  budget or a lost run with no attempt left leaves it waiting for input (`retries-spent`, with a
+  `board` decision whose candidates both say why), so `attempts.count` never exceeds
+  `attempts.max` and a task that can never start never sits in `ready`, which does not expire
+  (INV-9).
+- An answered question spends no attempt (T291). The answer continues the attempt that asked:
+  `attempts.count` is the same before and after it, also on the last attempt, and the policy is
+  still asked for it (below). The board keeps a flag beside the record (`board_tasks.continues`,
+  migration 5, set by the answer; `Board.continuing` reads it), which the next `start` reads and
+  clears: that run is the same attempt again (its decision says `continues`), not another one. The
+  engine's run then takes the asking run's steps at its first turn, once its carry settled: the
+  completed ones keep their results and do not run again, and the asking step resumes its session
+  with the answers as its next message. A step whose result is bound to the asking run's tree (a
+  writing step, or one whose result names its worktree or that was bound to its subject) is never
+  kept: its result, and the reviews, checks, and landing that read the tree from it, would point at
+  the asking run's worktree, not this run's. Then the template runs again from its first step on
+  the same attempt, recorded, a new session of it carrying the change (the carry puts it in the
+  run's worktree) and the answers (`workflow.task-continue`). When the asking step is itself a
+  writing step, its tree (the edits it made before it asked) is the attempt's change: kept on the
+  asking run's branch as its ended attempt's change is (T271), and carried; the step resumes when
+  the carry put that tree in the run's worktree, or when the source refused it as `empty` (it asked
+  before changing anything, so nothing is lost). Otherwise the run starts again in a new session,
+  and every brief says the edits are gone. The gate after an answer asks on
+  `board-task:<id>:attempt:<n>:answered:<wait>`, also when a policy change withdraws that request
+  and the board asks again, so no other gate of the same attempt adopts its approval. Only a step
+  that fails or is rejected spends an attempt.
 - One amendment waits at a time: another is refused (`invalid-transition`) until it is approved,
   refused, or expired, so a verdict binds the charter it was asked about. An amendment changes the
   charter only.
@@ -264,7 +287,7 @@ policy change; the other cases only the store-backed provider checks.
 | review → ready / waiting-for-approval / waiting-for-input | `accept` with a `reject` outcome | while `count < max`, another attempt through the gate: a `board` decision naming that decision and the `autonomy` decision (ready, or `approval-needed` with a new request); else that decision and `retries-spent` | an approval of an earlier attempt never covers this one |
 | waiting-for-approval → ready / waiting-for-approval / waiting-for-input | `sweep`, on the request's resolution (an approval to go on after `budget-spent` or `reconciliation-failed` goes through the gate for the next attempt, a `funding` ask's lines added to the budget first, in the same transaction); at `waiting.expiresAt` (or the request's expiry, if earlier) the board applies the expiry itself when the queue has not resolved the request, the board withdrew it, or the queue no longer knows it | the request's `approval` decision, or the board's own (`board`, cause `expired`), after which it withdraws a request still open; a raise: `funding` and its `board` decision, which the gate's decision names | rejection and expiry never start work, and raise nothing: the task waits for input (`rejected`) |
 | waiting-for-approval → ready / waiting-for-approval / cancelled (`approval-needed`), or waiting-for-approval / waiting-for-input (`budget-spent`, `reconciliation-failed`) | `sweep`, on a request the queue withdrew on a policy change (decider rule `approvals.policy`): the wait's gate runs again under the policy loaded now, as when it first asked (the class: the task's, `funding`, or `remediation`) | a `board` decision naming the withdrawal and the `autonomy` decision, a reason on every outcome the wait has; `approval-needed`: ready on `auto` or `notify` (pending checks recorded), a new request on the same exact subject on `ask` (an open one adopted), `forbidden` on `forbid`; a spent budget or a lost run: a new request on `ask`, else a wait for input (`rejected`), the run kept | a move that cannot commit withdraws the new request; the run's owner may still report a lost run |
-| waiting-for-input → ready / waiting-for-approval | `answer`, every question of a `question` wait answered; the next attempt goes through the gate, and with no attempt left the task waits for input (`retries-spent`) instead | a `board` decision with the questions and answers | partial answers, and answers to any other wait, are refused |
+| waiting-for-input → ready / waiting-for-approval | `answer`, every question of a `question` wait answered; the same attempt continues through the gate, its count unchanged (T291) | a `board` decision with the questions and answers | partial answers, and answers to any other wait, are refused |
 | waiting-for-input → cancelled | `sweep`, its wait expired | a `board` decision (`input-expired`) | — |
 | any not running or in review → cancelled | `cancel` (`operator`, `lead`, `superseded`) | a `board` decision; a pending approval request is withdrawn once the move committed; dependents are cancelled on the next sweep | a running task or one in review is refused |
 
@@ -277,9 +300,9 @@ work again as a new task; an expired review alone has a way back, its re-opening
 
 | `waiting.reason` | From | Revived by | Otherwise |
 |---|---|---|---|
-| `question` | `block` with questions | `answer` (`board_update` `answers`, one `{question, answer}` per question, `question` its index from 0 in `waiting.questions`), every question once: the next attempt, through the gate; with no attempt left, `retries-spent` instead | expires: `input-expired` |
+| `question` | `block` with questions | `answer` (`board_update` `answers`, one `{question, answer}` per question, `question` its index from 0 in `waiting.questions`), every question once: the same attempt continues, through the gate, its count unchanged | expires: `input-expired` |
 | `rejected` | an approval refused or expired, or none could be asked (a policy that does not ask, or a funding ask past the bound) | nothing | expires: `input-expired` |
-| `retries-spent` | review rejected the last attempt, a failed run with none left (an infrastructure failure too, once the task's free retries are used, its decision saying so with the reason), or an approval to go on or an answered question with none left | nothing | expires: `input-expired` |
+| `retries-spent` | review rejected the last attempt, a failed run with none left (an infrastructure failure too, once the task's free retries are used, its decision saying so with the reason), or an approval to go on with none left | nothing | expires: `input-expired` |
 | `review-expired` | a review held for the operator expired with no acceptance decision | re-opened to review by the lead or the operator (`board_reopen_review`), while its run's worktree and result exist | expires: `input-expired` |
 
 ### Funding a spent budget

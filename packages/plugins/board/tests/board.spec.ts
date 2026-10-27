@@ -341,18 +341,18 @@ describe('ctx.board (store-backed): the approval queue', () => {
     asked.push(await approveCurrent(merge.taskId, at(11)))
     expect(await ctx.board.task(merge.taskId)).toMatchObject({ state: 'ready' })
 
-    // A question: answering it makes another attempt, which is asked about too.
+    // A question: answering it continues the attempt that asked (T291), which is asked about too, on its own subject.
     claim = await ctx.board.claim(merge.taskId, 'lead', 600_000, at(12))
     await ctx.board.start(merge.taskId, claim.generation, { runId: 'run-2' }, at(12))
     await ctx.board.block(merge.taskId, claim.generation, { reason: 'question', questions: ['Squash?'] }, at(12))
     const answered = await ctx.board.answer(merge.taskId, ['yes'], at(13))
     expect(answered).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'approval-needed' }, attempts: { count: 2 } })
-    expect(ctx.artifacts.get(answered.lastDecision!)?.body).toMatchObject({ outcome: { option: 'waiting-for-approval', detail: { answers: ['yes'], attempt: 3 } } })
+    expect(ctx.artifacts.get(answered.lastDecision!)?.body).toMatchObject({ outcome: { option: 'waiting-for-approval', detail: { answers: ['yes'], attempt: 2, continues: true } } })
     asked.push(await approveCurrent(merge.taskId, at(13)))
 
-    // A rejected review whose move loses a race: the request it opened is withdrawn.
+    // A rejected review whose move loses a race: the request it opened is withdrawn. The run is attempt 2 continued.
     claim = await ctx.board.claim(merge.taskId, 'lead', 600_000, at(14))
-    await ctx.board.start(merge.taskId, claim.generation, { runId: 'run-3' }, at(14))
+    expect(await ctx.board.start(merge.taskId, claim.generation, { runId: 'run-3' }, at(14))).toMatchObject({ attempts: { count: 2 } })
     const r = result(ctx, 'merged')
     await ctx.board.submit(merge.taskId, claim.generation, { artifacts: [r], subject: HEAD }, at(14))
     const rejecting = ctx.board.accept(merge.taskId, acceptance(ctx, 'reject', merge.taskId, r), at(15))
@@ -360,11 +360,13 @@ describe('ctx.board (store-backed): the approval queue', () => {
     expect(await failureOf(rejecting)).toBe('conflict')
     expect(await open(ctx, 'p2')).toEqual([])
     const rejected = await ctx.board.accept(merge.taskId, acceptance(ctx, 'reject', merge.taskId, r), at(15))
-    expect(rejected).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'approval-needed' }, attempts: { count: 3 } })
+    expect(rejected).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'approval-needed' }, attempts: { count: 2 } })
     asked.push(rejected.waiting!.approvalRequest!)
     const subjects = await Promise.all(asked.map(async (id) => (await ctx.approvals.get(id))!.subject))
     expect(new Set(subjects.map((x) => `${x.ref}#${x.version}`)).size).toBe(asked.length)
-    expect(subjects.at(-1)).toMatchObject({ ref: `board-task:${merge.taskId}:attempt:3`, version: 'approval-needed' })
+    expect(subjects.at(-1)).toMatchObject({ ref: `board-task:${merge.taskId}:attempt:2`, version: 'approval-needed' })
+    // The answered question's request named the wait it answered, so its approval never covers the later gate of the same attempt.
+    expect(subjects.at(-2)!.ref).toMatch(new RegExp(`^board-task:${merge.taskId}:attempt:2:answered:`))
   })
 
   it('founds a project under a client request key at an id derived from it, so a retry after a crash adopts the request, also one approved meanwhile (M2, M6)', async () => {
@@ -527,6 +529,44 @@ describe('ctx.board (store-backed): the approval queue', () => {
     await ctx.board.sweep(at(3))
     expect(await ctx.board.task(spend.taskId)).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'approval-needed', approvalRequest: orphan.requestId } })
     expect((await open(ctx, 'p2')).map((r) => r.requestId)).toEqual([orphan.requestId])
+  })
+
+  it('asks again on an answered question\'s own subject after a policy change, so a later answer on the same attempt never adopts its approval (INV-2, T291)', async () => {
+    const { ctx, approvals } = await boot()
+    await active(ctx)
+    const spend = await ctx.board.propose(task('p2', 'spend', { actionClass: 'spend' }), at(2))
+    await ctx.board.sweep(at(2))
+    await decide(ctx, (await ctx.board.task(spend.taskId))!.waiting!.approvalRequest!, 'approved', at(2))
+    await ctx.board.sweep(at(2))
+    const [studio, ...rest] = POLICIES
+    let version = studio!.version
+    const reload = (when: Date) => approvals().reload([{ ...studio!, version: ++version }, ...rest], when)
+    const answeredOnce = async (runId: string, question: string, when: number): Promise<{ withdrawn: string; asked: string }> => {
+      const { generation } = await ctx.board.claim(spend.taskId, 'lead', 600_000, at(when))
+      await ctx.board.start(spend.taskId, generation, { runId }, at(when))
+      await ctx.board.block(spend.taskId, generation, { reason: 'question', questions: [question] }, at(when + 0.5))
+      const answered = await ctx.board.answer(spend.taskId, ['yes'], at(when + 1))
+      const withdrawn = answered.waiting!.approvalRequest!
+      expect(reload(at(when + 1.5)).map((r) => r.requestId)).toEqual([withdrawn])
+      await ctx.board.sweep(at(when + 1.5))
+      const regated = (await ctx.board.task(spend.taskId))!
+      expect(regated).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'approval-needed' }, attempts: { count: 1 } })
+      return { withdrawn, asked: regated.waiting!.approvalRequest! }
+    }
+    // The first answer's gate, withdrawn by a policy change, is asked again on its own subject, and approved.
+    const first = await answeredOnce('run-1', 'Which band?', 3)
+    const [was, again] = await Promise.all([ctx.approvals.get(first.withdrawn), ctx.approvals.get(first.asked)])
+    expect(again!.subject.ref).toMatch(new RegExp(`^board-task:${spend.taskId}:attempt:1:answered:`))
+    expect(again!.subject).toEqual(was!.subject)
+    await decide(ctx, first.asked, 'approved', at(5))
+    await ctx.board.sweep(at(5))
+    expect(await ctx.board.task(spend.taskId)).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+    // A second answer on the same attempt, withdrawn and asked again too: a new request on its own subject, never the first one's approval.
+    const second = await answeredOnce('run-1b', 'Which width?', 6)
+    expect(second.asked).not.toBe(first.asked)
+    const asked = (await ctx.approvals.get(second.asked))!
+    expect(asked.state).toBe('open')
+    expect(asked.subject.ref).not.toBe(again!.subject.ref)
   })
 
   it('withdraws the request it asked again on a policy change when the task changed meanwhile, and leaves a wait the board withdrew itself as it is (S7)', async () => {

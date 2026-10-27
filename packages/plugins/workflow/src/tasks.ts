@@ -22,6 +22,7 @@
  * choices is a decision with a reason for every candidate (INV-13). The board is optional: a run
  * for a task needs it, every other run does not.
  */
+import type { DatabaseSync } from 'node:sqlite'
 import { type ArtifactRef, BoardError, type BoardTask, type Board, type Classification, type InfrastructureFailure, type Project, renderTasks, type RunOutcome, type Subject, UNRELEASED_MAX, type UnreleasedHold, unreleasedText } from '@tsuuanmi/system-board-core'
 import type { Lease } from '@tsuuanmi/system-leases'
 import { takesKind, type WorkerExecution } from '@tsuuanmi/system-workers-core'
@@ -60,6 +61,8 @@ const TASKS_FILE = '.system/TASKS.md'
 /** Pointers a task's run adds to every brief it writes, at most (the brief holds 64). */
 const FRAME_POINTERS = 16
 const PRODUCER = { producer: { type: 'system' as const, ref: 'workflow' } }
+/** The decider of whether a run continues the steps of an answered question's run (T291). */
+const CONTINUE = { type: 'rule' as const, id: 'workflow.task-continue', version: '1' }
 
 type Result = { artifacts: ArtifactRef[]; subject: Subject }
 /** `infrastructure`: the holder lapsed while the host was stopped, found at the first renewal after the start (ADR-0069). */
@@ -225,8 +228,11 @@ export class TaskRuns {
     const runId = newId('run')
     // What every brief of the run carries, and whether the run resumes the session of the work
     // before it; both settled before the task is taken, so a failure here claims nothing.
-    const frame = await this.frameOf(board, task, project, classification)
-    const session = plain.sessionId === undefined ? await this.session(task, prepared, plain.template, runId) : undefined
+    // The attempt this run is: the next one, or the same one again when its question was answered (T291).
+    // Never guessed: a board that cannot say fails the start before the task is taken, as its other reads do.
+    const attempt = task.attempts.count > 0 && await board.continuing(task.taskId) ? task.attempts.count : task.attempts.count + 1
+    const frame = await this.frameOf(board, task, project, classification, attempt)
+    const session = plain.sessionId === undefined ? await this.session(task, prepared, plain.template, runId, attempt) : undefined
     const started = { ...plain, ...(classification ? { classification } : {}), ...(session?.sessionId ? { sessionId: session.sessionId } : {}) }
     const admittedAs = session?.sessionId ? e.prepare(started) : prepared
     // A dispatched start runs its writing step on the Worker dispatch chose or on none (ADR-0064):
@@ -235,11 +241,11 @@ export class TaskRuns {
     // that could only fail; dispatch chooses again (INV-6).
     if (options.dispatch) await this.dispatchable(task, claim, runId, options.dispatch, admittedAs, classification, session?.decision)
     // A start dispatch chose names its decisions in the run's admission (ADR-0064).
-    const { option, generation, expiresAt, decision } = await this.take(board, task, claim, runId, options.dispatch?.decisions ?? [])
+    const { option, generation, expiresAt, decision } = await this.take(board, task, claim, runId, options.dispatch?.decisions ?? [], attempt)
     // Whether its worktree starts from the work the previous attempt left, carried at its first turn
     // (ADR-0061): decided once the run holds the task, so a refused claim decides nothing for a run
     // that never exists; a record of the earlier attempt it cannot read starts the run from HEAD, recorded.
-    const carry = this.carries.plan(task, runId, claim.fresh === true)
+    const carry = this.carries.plan(task, runId, claim.fresh === true, attempt)
     const bound = {
       runId, taskId: task.taskId, holder: claim.holder ?? ownerOf(runId), generation, claim: option === 'adopt' ? 'adopted' as const : 'own' as const, writes: task.writes, frame,
       ...(task.budget?.length ? { budget: { state: 'due' as const, caps: task.budget } } : {}), ...(carry ? { carry } : {}), ...(options.dispatch ? { dispatch: options.dispatch } : {}),
@@ -314,8 +320,7 @@ export class TaskRuns {
    * completed. Only stored artifacts are pointed at, at most {@link FRAME_POINTERS}. The
    * budget is what the task may still draw: its lines less the usage the ledger counts for it.
    */
-  private async frameOf(board: Board, task: BoardTask, project: Project | undefined, classification: Classification | undefined): Promise<TaskFrame> {
-    const attempt = task.attempts.count + 1
+  private async frameOf(board: Board, task: BoardTask, project: Project | undefined, classification: Classification | undefined, attempt: number): Promise<TaskFrame> {
     const pointers: BriefPointer[] = []
     const add = (ref: ArtifactRef, role: BriefPointer['role'], note: string): void => {
       if (pointers.length < FRAME_POINTERS && !pointers.some((p) => p.ref === ref) && this.e.ctx.artifacts.get(ref)) pointers.push({ ref, role, note: clampText(note, BRIEF_LIMITS.note) })
@@ -331,10 +336,10 @@ export class TaskRuns {
       // An attempt the task's spent budget stopped between steps leaves the results of the steps it completed (ADR-0047).
       for (const { nodeId, ref } of this.stoppedSteps(task.taskId)) add(ref, 'prior', `the result of step ${nodeId} of attempt ${task.attempts.count}, which the task's spent budget stopped before its next step`)
       if (task.lastDecision) {
-        // Answers to the questions the previous attempt asked resume the task: its next brief points at them.
+        // Answers to the questions this attempt asked continue it (T291): its next brief points at them.
         const answered = (this.e.ctx.artifacts.get(task.lastDecision)?.body as { outcome?: { detail?: { answers?: unknown } } } | undefined)?.outcome?.detail?.answers
         add(task.lastDecision, 'review', Array.isArray(answered)
-          ? `the answers to the ${answered.length} question(s) attempt ${task.attempts.count} asked, and the decision that made attempt ${attempt}`
+          ? `the answers to the ${answered.length} question(s) attempt ${task.attempts.count} asked, and the decision that ${attempt === task.attempts.count ? 'continues it' : `made attempt ${attempt}`}`
           : `the decision behind attempt ${attempt}: why attempt ${task.attempts.count} did not finish the task`)
       }
     }
@@ -485,14 +490,14 @@ export class TaskRuns {
    * choice is an `admission` decision (`workflow.task-session`). Undefined when there was no work
    * before it with a session, or the caller named a session itself.
    */
-  private async session(task: BoardTask, prepared: Prepared, template: string, runId: string): Promise<{ sessionId?: string; decision: ArtifactRef } | undefined> {
+  private async session(task: BoardTask, prepared: Prepared, template: string, runId: string, attempt: number): Promise<{ sessionId?: string; decision: ArtifactRef } | undefined> {
     const checked = await this.resumable(task, prepared.spec.nodes, template)
     if (!checked) return undefined
     const { previous, what, fresh, handle } = checked
     const resume = !fresh
     const decision = this.e.ctx.artifacts.recordDecision({
       decisionType: 'admission',
-      question: `Does run ${runId}, attempt ${task.attempts.count + 1} of board task ${task.taskId}, resume the session of ${what}?`,
+      question: `Does run ${runId}, attempt ${attempt} of board task ${task.taskId}, resume the session of ${what}?`,
       inputs: [],
       candidates: [
         { option: 'resume', selected: resume, reasons: resume ? [`session ${previous.sessionId} of ${what} keeps native session ${handle}, and its Worker can resume it`, 'the brief is the session\'s next message: the Worker keeps its context'] : [`not resume: ${fresh}`] },
@@ -569,10 +574,10 @@ export class TaskRuns {
    * board fences by generation, or claim the ready task as the run. The choice is an `admission`
    * decision made before the board is asked; a refusal is one too, and refuses the start.
    */
-  private async take(board: Board, task: BoardTask, claim: TaskStartInput['task'], runId: string, chosen: readonly ArtifactRef[] = []): Promise<{ option: 'adopt' | 'claim'; generation: number; expiresAt: string; decision: ArtifactRef }> {
+  private async take(board: Board, task: BoardTask, claim: TaskStartInput['task'], runId: string, chosen: readonly ArtifactRef[] = [], attempt: number = task.attempts.count + 1): Promise<{ option: 'adopt' | 'claim'; generation: number; expiresAt: string; decision: ArtifactRef }> {
     const adopting = claim.holder !== undefined
     const refuse = (why: string, inputs: ArtifactRef[] = []): never => {
-      const refused = this.admission(task, undefined, 'refuse', claim, why, [...chosen, ...inputs])
+      const refused = this.admission(task, undefined, 'refuse', claim, why, [...chosen, ...inputs], attempt)
       throw new WorkflowFailure('invalid_input', `${why}; nothing was started (decision ${refused})`)
     }
     if (adopting) {
@@ -580,7 +585,7 @@ export class TaskRuns {
       if (task.holder?.owner !== claim.holder || task.holder?.generation !== claim.generation) {
         refuse(`a stale claim: task ${task.taskId} is held by ${task.holder?.owner ?? 'no one'} at generation ${task.holder?.generation ?? '(none)'}, not by ${claim.holder} at ${claim.generation}`)
       }
-      const decision = this.admission(task, runId, 'adopt', claim, `${claim.holder} hands its live claim (generation ${claim.generation}) to the run`, [...chosen])
+      const decision = this.admission(task, runId, 'adopt', claim, `${claim.holder} hands its live claim (generation ${claim.generation}) to the run`, [...chosen], attempt)
       try {
         const renewed = await board.renew(task.taskId, claim.generation!, TASK_LEASE_TTL_MS)
         return { option: 'adopt', generation: claim.generation!, expiresAt: renewed.leaseExpiresAt, decision }
@@ -591,7 +596,7 @@ export class TaskRuns {
     }
     if (task.state !== 'ready') refuse(`task ${task.taskId} is ${task.state}, not ready to claim`)
     const how = chosen.length ? `dispatch chose its start (its decisions are this decision's inputs), and the run claims the ready task ${task.taskId} as ${ownerOf(runId)}` : `the caller holds no claim on task ${task.taskId}, which is ready: the run claims it as ${ownerOf(runId)}`
-    const decision = this.admission(task, runId, 'claim', claim, how, [...chosen])
+    const decision = this.admission(task, runId, 'claim', claim, how, [...chosen], attempt)
     try {
       const taken = await board.claim(task.taskId, ownerOf(runId), TASK_LEASE_TTL_MS)
       return { option: 'claim', generation: taken.generation, expiresAt: taken.leaseExpiresAt, decision }
@@ -618,7 +623,7 @@ export class TaskRuns {
   }
 
   /** The engine's choice of how a run takes its task: adopt the caller's claim, claim it, or refuse (INV-13). */
-  private admission(task: BoardTask, runId: string | undefined, option: 'adopt' | 'claim' | 'refuse', claim: TaskStartInput['task'], why: string, inputs: ArtifactRef[] = []): ArtifactRef {
+  private admission(task: BoardTask, runId: string | undefined, option: 'adopt' | 'claim' | 'refuse', claim: TaskStartInput['task'], why: string, inputs: ArtifactRef[] = [], attempt: number = task.attempts.count + 1): ArtifactRef {
     const adopting = claim.holder !== undefined
     const reasons = (candidate: 'adopt' | 'claim' | 'refuse'): string[] => {
       if (candidate === option) return candidate === 'refuse' ? [why, 'nothing was started: no node runs, nothing is sent (fail closed)'] : [why]
@@ -629,7 +634,7 @@ export class TaskRuns {
     const order: Array<'adopt' | 'claim' | 'refuse'> = adopting ? ['adopt', 'claim', 'refuse'] : ['claim', 'adopt', 'refuse']
     return this.e.ctx.artifacts.recordDecision({
       decisionType: 'admission',
-      question: `How does ${runId ? `run ${runId}` : 'a new run'} take board task ${task.taskId} for its attempt ${task.attempts.count + 1}?`,
+      question: `How does ${runId ? `run ${runId}` : 'a new run'} take board task ${task.taskId} for its attempt ${attempt}?`,
       inputs,
       candidates: order.map((candidate) => ({ option: candidate, selected: candidate === option, reasons: reasons(candidate) })),
       decider: { type: 'rule', id: 'workflow.task-admission', version: '1' },
@@ -687,7 +692,182 @@ export class TaskRuns {
   /** Before the run's first step: the work the previous attempt left is carried into its worktree, or not (./carries.ts); then it goes. */
   private async carried(runId: string): Promise<'go'> {
     await this.carries.settle(runId)
+    // An answered question continues its attempt (T291): decided once the carry settled, before any step runs.
+    this.continueAsked(runId)
     return 'go'
+  }
+
+  /**
+   * The run of the task whose step asked the questions an answer continues (T291): the task's latest
+   * reported run, when the board took its question wait. Undefined for any other.
+   */
+  private asking(taskId: string): { row: TaskRow; question: TaskQuestion } | undefined {
+    const row = this.e.ctx.store.db.prepare("SELECT * FROM workflow_tasks WHERE task_id = ? AND phase = 'reported' ORDER BY created_at DESC, rowid DESC LIMIT 1").get(taskId) as TaskRow | undefined
+    const question = row?.question ? JSON.parse(row.question) as TaskQuestion : undefined
+    return row && question?.state === 'raised' ? { row, question } : undefined
+  }
+
+  /**
+   * A run that continues an answered question's attempt (T291): it takes the asking run's steps in
+   * place of the template's fresh ones, so nothing that completed runs again. The completed steps keep
+   * their results; the asking step, and every step that had not completed, wait again. The asking step
+   * then runs on its own session (the run's, a team member's, or its author's), resumed on its Worker
+   * when the Worker keeps it, the answers its next message (the brief points at them); a step with no
+   * session of its own, or one the Worker no longer keeps, starts a new one of the same attempt, its
+   * brief carrying the answers and the run's worktree the change. Decided at the run's first turn,
+   * once its carry settled and before any step runs, and only then. Only steps whose results are bound
+   * to no run's tree are kept: a writing step, or any step whose result names the asking run's worktree,
+   * is never kept, since its result, and the review subjects, checks, and landing that read the tree
+   * from it, would point at the asking run's worktree, not this run's (INV-5; agent sources hold a run's
+   * worktree by its run). Then the whole template runs again on the same attempt, from its first step:
+   * the carry gave this run's worktree the change and its brief says so, and every brief points at the
+   * answers. Recorded as an `admission` decision (`workflow.task-continue`), in the transaction that
+   * rewrites the steps, once per run: `continue`, or `fresh` with why, when the asking run is not this
+   * template's, it completed a step bound to its tree, or its steps cannot be read. Never throws: any
+   * doubt is `fresh`.
+   */
+  private continueAsked(runId: string): void {
+    const e = this.e
+    const row = this.row(runId)
+    const frame = row?.frame ? JSON.parse(row.frame) as TaskFrame : undefined
+    if (!row || !frame || row.lost) return
+    const asked = this.asking(row.task_id)
+    if (!asked || asked.row.run_id === runId) return
+    // A continuation runs the asking run's attempt again; any other run is a new attempt, nothing to continue.
+    const askedFrame = asked.row.frame ? JSON.parse(asked.row.frame) as TaskFrame : undefined
+    if (askedFrame?.attempt !== frame.attempt) return
+    // Once per run: every advance passes here.
+    const decided = e.ctx.artifacts.list({ kind: 'decision', decisionType: 'admission', runId, limit: 1000 })
+      .some((a) => (a.body as { decider?: { id?: string } }).decider?.id === CONTINUE.id)
+    if (decided) return
+    const from = asked.row.run_id
+    const step = asked.question.nodeId
+    let why: string | undefined
+    const kept: string[] = []
+    const writers: string[] = []
+    let resumes: string | undefined
+    // A writing step that asked made edits in the asking run's worktree; when this run's worktree does not hold them, they are lost.
+    let lost: string | undefined
+    const record = (): ArtifactRef => {
+      const session = resumes ? `its session ${resumes}, resumed on its Worker when that Worker keeps it, else a new conversation of it` : 'a new session of the same attempt, as the step keeps no session of its own'
+      return e.ctx.artifacts.recordDecision({
+        decisionType: 'admission',
+        question: `Does run ${runId}, attempt ${frame.attempt} of board task ${row.task_id}, continue step ${step} of run ${from}, which asked the questions now answered?`,
+        inputs: [asked.question.decision],
+        candidates: [
+          { option: 'continue', selected: !why, reasons: why ? [clampText(`not continue: ${why}`, 300)] : [
+            clampText(`the answers continue attempt ${frame.attempt} (T291): the ${kept.length} completed step(s) of run ${from} (${kept.join(', ') || 'none'}) keep their results, bound to no run's tree, and do not run again`, 300),
+            clampText(`step ${step} runs again on ${session}, the answers its next message`, 300),
+          ] },
+          { option: 'fresh', selected: !!why, reasons: why ? [clampText(why, 300), lost
+            ? clampText(`the run runs its template from the first step on the same attempt, in a new session, in its own worktree, which does not hold the edits step ${step} made before it asked: every brief says so, and points at the answers`, 300)
+            : 'the run runs its template from the first step on the same attempt, in its own worktree (which the carry gave the change, when it carried it), every brief pointing at the answers'] : ['not fresh: the asking run\'s steps are this template\'s, none it completed is bound to its tree, and this run\'s worktree holds what the asking step left'] },
+        ],
+        decider: { ...CONTINUE },
+        outcome: { option: why ? 'fresh' : 'continue', detail: { taskId: row.task_id, attempt: frame.attempt, from, nodeId: step, kept, writers, ...(resumes ? { sessionId: resumes } : {}), ...(lost ? { lost } : {}) } },
+        deterministic: true,
+      }, { ...PRODUCER, runId }).id as ArtifactRef
+    }
+    /**
+     * The asking writing step's edits are not in this run's worktree: its session, which made them and
+     * would take them as done, is not resumed (every step on it starts a new one, and so does the run), and
+     * every brief of the run says the edits are gone, pointing at this decision.
+     */
+    const forget = (db: DatabaseSync, decision: ArtifactRef, askerSession: string | undefined): void => {
+      const run = e.runRow(runId)!
+      const old = new Set([askerSession, e.runRow(from)?.session_id].filter((s): s is string => !!s))
+      const renamed = new Map<string, string>()
+      const renamedOf = (id: string): string => renamed.get(id) ?? renamed.set(id, newId('ses')).get(id)!
+      for (const node of e.nodeRows(runId)) {
+        const spec = JSON.parse(node.spec) as ResolvedNode
+        if (!spec.session.sessionId || !old.has(spec.session.sessionId)) continue
+        db.prepare('UPDATE workflow_nodes SET spec = ? WHERE run_id = ? AND node_id = ?').run(JSON.stringify({ ...spec, session: { ...spec.session, sessionId: renamedOf(spec.session.sessionId) } }), runId, node.node_id)
+      }
+      if (run.session_id && old.has(run.session_id)) db.prepare('UPDATE workflow_runs SET session_id = ? WHERE run_id = ?').run(renamedOf(run.session_id), runId)
+      const pointer: BriefPointer = { ref: decision, role: 'prior', note: clampText(`This run's worktree does not hold the edits step ${step} made in attempt ${frame.attempt} before it asked (${lost}): make them again from the brief and the answers, in a new session`, BRIEF_LIMITS.note) }
+      const pointers = [pointer, ...frame.pointers].slice(0, FRAME_POINTERS)
+      db.prepare('UPDATE workflow_tasks SET frame = ? WHERE run_id = ?').run(JSON.stringify({ ...frame, pointers }), runId)
+    }
+    try {
+      const run = e.runRow(runId)!
+      const previous = e.runRow(from)
+      const fresh = e.nodeRows(runId)
+      const old = e.nodeRows(from)
+      const ids = new Set(old.map((n) => n.node_id))
+      const asker = old.find((n) => n.node_id === step)
+      // Completed steps bound to the asking run's tree: a writing step, or one whose result names a worktree or that was bound to its subject.
+      writers.push(...old.filter((n) => {
+        if (n.state !== 'COMPLETED') return false
+        if ((JSON.parse(n.spec) as ResolvedNode).capabilities.includes('develop')) return true
+        const result = (JSON.parse(n.record) as NodeRecord).outputReceipt?.result
+        const body = result ? e.ctx.artifacts.get(result)?.body as { workspace?: unknown } | undefined : undefined
+        return typeof body?.workspace === 'string' || n.subject != null
+      }).map((n) => n.node_id))
+      // The asking step itself writes: what it changed before it asked is in the asking run's worktree, and only the carry brings it here.
+      const askerSpec = asker ? JSON.parse(asker.spec) as ResolvedNode : undefined
+      if (askerSpec?.capabilities.includes('develop')) {
+        const carry = this.carries.view(row)
+        // A step that asked before it changed anything left nothing to carry: the source refuses its tree as empty, and nothing is lost.
+        const empty = carry?.state === 'fresh' && carry.cause === 'empty' && carry.from?.runId === from && carry.from.nodeId === step
+        if (!empty && !(carry?.state === 'carried' && carry.from?.runId === from && carry.from.nodeId === step)) {
+          lost = carry?.state === 'carried' ? `the carry brought step ${carry.from?.nodeId ?? '(unknown)'}'s tree, not step ${step}'s`
+            : carry ? `its carry is ${carry.state}${carry.reason ? `: ${carry.reason}` : ''}` : 'no carry was planned: no tree of step ' + step + ' was found to carry'
+        }
+      }
+      if (!previous) why = `run ${from} is gone`
+      else if (previous.template !== run.template) why = `run ${from} ran template ${previous.template}, not ${run.template}`
+      else if (!asker) why = `run ${from} has no step ${step}`
+      else if (fresh.some((n) => !ids.has(n.node_id))) why = `run ${from}'s steps are not this template's (${fresh.filter((n) => !ids.has(n.node_id)).map((n) => n.node_id).join(', ')} missing)`
+      else if (fresh.some((n) => n.state !== 'WAITING')) why = `run ${runId} already started a step`
+      // A kept result names the tree it was made on: kept, it would point this run's review, checks, and landing at the asking run's worktree (INV-5).
+      else if (writers.length) {
+        why = `step(s) ${writers.join(', ')} of run ${from} completed on run ${from}'s worktree, and their results name it; this run works in its own worktree, so they run again there`
+      }
+      // Resumed on a tree without its edits, the asking step would build on work that is not there.
+      else if (lost) why = `step ${step} changed run ${from}'s worktree before it asked, and this run's worktree does not hold that change (${lost}), so its session is not resumed`
+      if (why) {
+        e.ctx.store.transaction((db) => {
+          const decision = record()
+          if (lost) forget(db, decision, askerSpec?.session.sessionId)
+        })
+        return
+      }
+      const columns = (e.ctx.store.db.prepare('PRAGMA table_info(workflow_nodes)').all() as Array<{ name: string }>).map((c) => c.name)
+      const list = columns.join(', ')
+      const select = columns.map((c) => (c === 'run_id' ? '?' : c)).join(', ')
+      // The asking run's session becomes this run's (the same one, when the run resumed it).
+      const session = (spec: ResolvedNode): ResolvedNode => (previous!.session_id && spec.session.sessionId === previous!.session_id && run.session_id && run.session_id !== previous!.session_id
+        ? { ...spec, session: { ...spec.session, sessionId: run.session_id } } : spec)
+      // The steps and the decision that says why, in one transaction: a crash leaves both or neither.
+      e.ctx.store.transaction((db) => {
+        db.prepare('DELETE FROM workflow_nodes WHERE run_id = ?').run(runId)
+        db.prepare(`INSERT INTO workflow_nodes (${list}) SELECT ${select} FROM workflow_nodes WHERE run_id = ?`).run(runId, from)
+        for (const node of e.nodeRows(runId)) {
+          const spec = session(JSON.parse(node.spec) as ResolvedNode)
+          const record = { ...(JSON.parse(node.record) as NodeRecord), runId }
+          if (node.state === 'COMPLETED' || node.state === 'RETIRED') {
+            if (node.state === 'COMPLETED') kept.push(node.node_id)
+            db.prepare('UPDATE workflow_nodes SET spec = ?, record = ? WHERE run_id = ? AND node_id = ?').run(JSON.stringify(spec), JSON.stringify(record), runId, node.node_id)
+            continue
+          }
+          if (node.node_id === step) resumes = spec.session.sessionId
+          const waiting: NodeRecord = { ...record, state: 'WAITING' }
+          delete waiting.execution
+          delete waiting.outputReceipt
+          delete waiting.inputReceipt
+          // Composed again at its promotion, on this run's brief (the answers) and the tree it reads now.
+          const cleared = ['prompt', 'brief_parts', 'subject', 'execution_id', 'source', 'worker', 'not_before', 'error'].filter((c) => columns.includes(c)).map((c) => `, ${c} = NULL`).join('')
+          db.prepare(`UPDATE workflow_nodes SET spec = ?, record = ?, state = 'WAITING'${cleared} WHERE run_id = ? AND node_id = ?`).run(JSON.stringify(spec), JSON.stringify(waiting), runId, node.node_id)
+        }
+        record()
+      })
+    } catch (error) {
+      // The rewrite rolled back: the run keeps its template's steps, from the first.
+      why = `run ${from}'s steps could not be read (${(error as Error).message.slice(0, 300)})`
+      kept.length = 0
+      resumes = undefined
+      e.ctx.store.transaction(() => void record())
+    }
   }
 
   /**
@@ -1213,7 +1393,7 @@ export class TaskRuns {
       question: `Does step ${node.node_id} of run ${run.run_id} answer board task ${row.task_id}, or ask a person first?`,
       inputs: [result],
       candidates: [
-        { option: 'ask', selected: true, reasons: [`the step's whole answer is ${questions.length} question(s), as its brief offers: it cannot finish without a person's answer`, 'the task waits for the lead or the operator to answer; its next attempt is briefed with the answers'] },
+        { option: 'ask', selected: true, reasons: [`the step's whole answer is ${questions.length} question(s), as its brief offers: it cannot finish without a person's answer`, 'the task waits for the lead or the operator to answer; the answers continue this attempt, its next run briefed with them'] },
         { option: 'accept', selected: false, reasons: ['not accept: the answer is questions, not a result of the task'] },
       ],
       decider: { type: 'rule', id: 'workflow.task-question', version: '1' },

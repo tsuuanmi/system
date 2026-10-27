@@ -333,6 +333,11 @@ export abstract class Board extends Service {
   abstract propose(input: TaskInput, at?: Date): Promise<BoardTask>
 
   abstract task(taskId: string): Promise<BoardTask | undefined>
+  /**
+   * Whether the task's next start continues the attempt whose question was answered (T291): that
+   * run is attempt `attempts.count` again, not `count + 1`. False for a board that keeps no such mark.
+   */
+  async continuing(_taskId: string): Promise<boolean> { return false }
   abstract tasks(filter: { projectId: string; states?: TaskState[] }): Promise<BoardTask[]>
 
   /** Take a ready task's lease (ready → claimed). */
