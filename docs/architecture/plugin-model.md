@@ -231,6 +231,13 @@ code change ([ADR-0078](../decisions/adr/0078-a-plugin-or-a-mechanism-is-turned-
   switch never removes its own control surface, since nothing could turn it on again; its patch turns
   it off, with a restart.
   `system plugin list` shows each row on or off, required or optional, and its last turn with why.
+  **What health says of a dependent** (T325): a plugin that waits, as Cordis makes it wait, only for
+  services whose row is off (off in the composition, or turned off) is not down: health stays `ok`
+  and its `plugins` check names it as `off` with the reason, `Login waits for service accounts, whose
+  row is off`. A plugin that waits for a row that is on but waits for an off row itself (display,
+  browser, Login) is off the same way. A plugin that waits for a service no row provides, or for a row
+  that is on and has not provided it, is still down (INV-2). A package that ships no manifest
+  declares no seam, so its row id is taken as the service it supplies.
 - **A mechanism.** A gate-like mechanism has an enforce switch, `on` (it refuses), `warn` (it records
   what it would refuse and lets it through), or `off` (it does not run), as far as it takes that mode.
   Its owning row's `enforce.<key>` gives its start value; `system enforce set <mechanism> <mode>`

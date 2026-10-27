@@ -704,8 +704,23 @@ export function pluginView(p: PluginRecord): Record<string, unknown> {
  * plugins count: an anonymous `ctx.inject` callback inside a plugin (DSH's own wait for a
  * `settings` service, say) is that plugin's optional part, not a plugin of the composition.
  */
-export function brokenPlugins(ctx: Context): Array<{ name: string; state: 'failed' | 'pending'; detail: string }> {
-  const out: Array<{ name: string; state: 'failed' | 'pending'; detail: string }> = []
+export function brokenPlugins(ctx: Context): Array<{ name: string; state: 'failed' | 'pending' | 'off'; detail: string }> {
+  const out: Array<{ name: string; state: 'failed' | 'pending' | 'off'; detail: string }> = []
+  // The services whose providing row is off (disabled in the composition, or turned off at runtime), by the manifests the plugin host read.
+  const offServices = new Set<string>()
+  const listed = (ctx.get('pluginHost') as { list?: () => PluginRecord[] } | undefined)?.list?.() ?? []
+  const records = listed.filter((p) => p.manifest)
+  for (const p of records) if (!p.mounted) for (const { seam } of p.manifest!.provides) offServices.add(seam)
+  // A package that ships no manifest (a DSH package, `optionalWithoutManifest`) declares no seam: its row's id is taken as the service it supplies (`llm` supplies ctx.llm).
+  for (const p of listed) if (!p.mounted && !p.manifest) for (const row of p.rows) offServices.add(row)
+  // A mounted plugin that consumes a seam whose row is off waits too, so the seams it provides are absent for that reason (the chain: display, browser, Login).
+  for (let grew = true; grew;) {
+    grew = false
+    for (const p of records) {
+      if (!p.mounted || !p.manifest!.consumes.some((c) => !c.optional && offServices.has(c.seam))) continue
+      for (const { seam } of p.manifest!.provides) if (!offServices.has(seam)) { offServices.add(seam); grew = true }
+    }
+  }
   for (const runtime of ctx.registry.values()) {
     const name = runtime.name?.trim()
     if (!name) continue
@@ -715,7 +730,9 @@ export function brokenPlugins(ctx: Context): Array<{ name: string; state: 'faile
       if (state === 3) out.push({ name, state: 'failed', detail: String((fiber as unknown as { _error?: Error })._error?.message ?? 'activation failed').slice(0, 300) })
       else if (state === 0) {
         const missing = Object.entries(fiber.inject ?? {}).filter(([service, spec]) => (spec as { required?: boolean } | null)?.required !== false && fiber.parent.get(service as never) === undefined).map(([service]) => service)
-        if (missing.length) out.push({ name, state: 'pending', detail: `waiting for service ${missing.join(', ')}` })
+        // Pending only on services whose row is off: off, with that reason. Any service no row provides, or whose row is on and has not started, keeps it down (INV-2).
+        if (missing.length && missing.every((s) => offServices.has(s))) out.push({ name, state: 'off', detail: missing.map((s) => `waits for service ${s}, whose row is off`).join('; ') })
+        else if (missing.length) out.push({ name, state: 'pending', detail: `waiting for service ${missing.join(', ')}` })
       }
     }
   }

@@ -1832,8 +1832,8 @@ too. `--apply` alone is only the live steps: use it for a retry of an update the
   which the fake writing Worker passes with an entry saying it ran no command, and its result on the
   board, in review or done); an `ask`; a `research` run; each to completion on the fake Workers; then
   the [removability smoke](../engineering/testing.md#removability-matrix) (`pnpm test:removability`,
-  T317) in the target's checkout. Under `--removability warn` (the default while the matrix is not
-  yet green) a failed smoke is logged and the stage goes on; `--removability on` stops it.
+  T317) in the target's checkout. Under `--removability on` (the default, the matrix being green:
+  T325) a failed smoke stops the stage; `--removability warn` logs it and goes on.
 - **A mechanism switched on** (a row turned on in the live patch, or a setting changed: T322) is
   switched on in the test profile first, the canary run, then on live: put it in the candidate patch
   and update with `--stage … --patch <candidate>`. Nothing is switched on in `system` that the stage

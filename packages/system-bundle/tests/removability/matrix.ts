@@ -64,6 +64,9 @@ export function classes(): { required: string[]; optional: string[] } {
 /** What a step's failure reads as when it is the documented absence of the removed row's seam, not a fault. */
 export const ABSENT = /not mounted|not installed|unknown workflow template|no Worker can take this work/i
 
+/** The one reason health gives a plugin that waits on a removed row's seam (docs/architecture/plugin-model.md#required-and-optional-rows). */
+export const DEPENDENT_OFF = /^\S+ waits for service [\w-]+, whose row is off$/
+
 export class StepFailure extends Error {
   constructor(readonly row: string, readonly step: string, detail: string) {
     super(`removability: row ${row}, step ${step}: ${detail}`)
@@ -281,6 +284,12 @@ export async function smoke(booted: Booted, off: string | undefined, baselineToo
         const health = (status.structuredContent as { health: { state: string; checks: Array<{ name: string; state: string; detail: string }> } }).health
         const bad = health.checks.filter((c) => c.state === 'down')
         if (health.state === 'down' || bad.length) throw new Error(`health is ${health.state}: ${bad.map((c) => `${c.name}: ${c.detail.slice(0, 200)}`).join('; ')}`)
+        // A dependent of the removed row is `off` with that reason (T325); no other wait is accepted.
+        const waiting = health.checks.find((c) => c.name === 'plugins')?.detail.split('off: ')[1]
+        if (waiting) {
+          const odd = waiting.split('; ').filter((w) => !DEPENDENT_OFF.test(w))
+          if (odd.length) throw new Error(`plugins off for a reason other than a row that is off: ${odd.join('; ').slice(0, 300)}`)
+        }
         const plugin = (status.structuredContent as { plugins?: Array<{ rows: string[]; mounted: boolean; findings?: unknown }> }).plugins ?? []
         const found = plugin.filter((p) => p.findings)
         if (found.length) throw new Error(`the plugin host's manifest check found: ${JSON.stringify(found).slice(0, 300)}`)
