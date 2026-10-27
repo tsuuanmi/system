@@ -360,6 +360,40 @@ task, at the landing; everything before it runs what the change relates to.
   attempt, with its failing tests named in the reason and in the task's dossier.
 - Run by hand without a scope, `pnpm test:affected` still runs the affected groups.
 
+#### Browser tests run only when the change touches what they exercise (T305)
+
+A browser test is marked by the gate it is written with in `browser-patchright/tests/support.ts`:
+`describe.runIf(canRunBrowser…)`, `headlessIt`, or `browserUnavailable`. The mark is per test, so
+there is no tag or list to keep, and a file that mixes plain in-process tests with browser ones
+(web-ui's specs, the drivers' `driver.spec.ts`, ui-ops' engine) keeps its plain tests running.
+`pnpm test:related` (the acceptance), `pnpm test:affected` by hand, and the landing's whole suite
+leave the browser tests out unless the change is in the browser stack (`BROWSER_STACK`:
+browser-patchright, display-virtual, ui-ops, login, the two `provider-*-web` drivers, turns,
+web-ui), edits the spec's own file, or edits a helper in its tests directory. Leaving them out, the
+run sets `SYSTEM_SKIP_BROWSER_TESTS=1`: every gate closes, each such test is skipped with the note
+`browser test left out: …` (never counted as a browser test that could not run, so a check's pass is
+not held for it), and a spec whose every test is gated (a browser spec as a whole) is not even
+selected. The specs the change touches run in a second vitest run, browser tests and all. A change
+that affects everything runs them all, and so does `pnpm test:affected --all-browser`. A
+workflow-only change runs no browser test. The landing is told the commit its run's worktree was
+cut at (`SYSTEM_CHECK_BASE`, as the acceptance is) and reads the change from it; with none it runs
+every test. The rebased tree can hold what dev gained since, which then counts as the change: more
+browser tests run, never fewer.
+
+A daily run of every browser spec on dev's tip, inside System, whose failure files a board task, is not built yet (T305b): until then a change that touches no browser code is not checked against the browser specs before it lands.
+
+Estimated, not timed, from the committed per-file durations (`scripts/test-durations.json`,
+2026-10-27): the whole suite is about 3650 s of file time and the browser specs about 2485 s of it
+(workflow's 24 browser specs 1013 s, turns 629 s, the two `provider-*-web` packages' gated specs
+725 s, browser-patchright's three profile specs 89 s, login 30 s), plus the browser tests inside
+mixed files (web-ui's 106 s, ui-ops' engine 34 s, browser-patchright's `browser.spec.ts` 26 s, the
+drivers' `driver.spec.ts` 5 s: those files' plain tests still run, and the table does not split a
+file, so up to 171 s more). The three most recent tasks touched no browser code: T297
+(documentation), T300b (only `workflow/tests/board.spec.ts`, no browser spec) and T301
+(agent-workers and the agent runtimes). Each one's landing suite is about 3650 s of file time
+before and between about 1000 s and 1165 s after, 68 % to 73 % less. File times add up across parallel
+workers, so the wall-clock cut is smaller. A timed run must happen where browsers run.
+
 The related set is wider than a file-level import graph (a package's whole test suite for one source
 file), so it never skips a test that imports a changed file; what it skips is the packages that
 cannot import the change.

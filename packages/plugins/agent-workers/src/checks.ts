@@ -86,9 +86,10 @@ export const CHECK_WORKERS_ENV = 'SYSTEM_CHECK_MAX_WORKERS'
  */
 const CHECK_SCOPE_ENV = 'SYSTEM_CHECK_SCOPE'
 /**
- * The environment an acceptance check's command reads the run's own starting commit from (T299): the
+ * The environment a check's command reads the run's own starting commit from (T299): the
  * commit its worktree was cut at, so the files the result changed are read from there. Unset when the
- * worktree recorded none: the repository's `test:affected` then runs the whole suite.
+ * worktree recorded none: the repository's `test:affected` then runs the whole suite (the landing's
+ * also leaves out the browser specs the change does not touch when it is set, T305).
  */
 const CHECK_BASE_ENV = 'SYSTEM_CHECK_BASE'
 /** Set to `1` for a check run again alone after failing only on timeouts (T292). */
@@ -467,7 +468,8 @@ export class RunChecks {
     // The acceptance's tests are those of the run's own change: read from the commit its worktree was cut at, never from a branch
     // the run did not start on (T299). A worktree with none recorded gets none, and its command runs the whole suite (INV-2).
     const scope = step.scope ?? 'acceptance'
-    const env = { ...noInstallEnvironment(), [CHECK_SCOPE_ENV]: scope, ...(scope === 'acceptance' && found.forkedAt ? { [CHECK_BASE_ENV]: found.forkedAt } : {}) }
+    // The landing's is told it too (T305): its whole suite leaves out the browser specs the run's change does not touch.
+    const env = { ...noInstallEnvironment(), [CHECK_SCOPE_ENV]: scope, ...(found.forkedAt ? { [CHECK_BASE_ENV]: found.forkedAt } : {}) }
     let moved: string | undefined
     for (const a of todo) {
       const base = { check: a.check, argv: a.argv, autonomy: a.autonomy }

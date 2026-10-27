@@ -66,8 +66,20 @@ export const testChrome = findTestChrome()
  * in the account's home does not start the headed suites, whose display a confinement may not give.
  */
 const headedChrome = findTestChrome([homedir()], () => discoverChrome(undefined)?.path, [join('.cache', 'system-chrome')], null)
+/**
+ * This run leaves its browser tests out (T305): the test selection (scripts/test-groups.ts) sets
+ * `SYSTEM_SKIP_BROWSER_TESTS=1` when the change does not touch the browser stack. Every test that
+ * would start a browser is then skipped, with {@link BROWSER_LEFT_OUT} as its note: a decision of the
+ * selection, never counted as a browser test that could not run.
+ */
+export const browserTestsLeftOut = process.env.SYSTEM_SKIP_BROWSER_TESTS === '1'
+/** The note of a browser test the selection left out. */
+export const BROWSER_LEFT_OUT = 'browser test left out: the change does not touch the browser stack (T305)'
+
 /** A headed Chrome on a private Xvfb can run here. */
-export const canRunBrowser = hasXvfb && headedChrome !== undefined
+const hostRunsBrowser = hasXvfb && headedChrome !== undefined
+/** A headed Chrome on a private Xvfb can run here, and this run does not leave its browser tests out. */
+export const canRunBrowser = hostRunsBrowser && !browserTestsLeftOut
 
 /** CI requires the browser tests to run: a browser that cannot fails them instead of skipping them. */
 const REQUIRE_BROWSER = process.env.SYSTEM_REQUIRE_BROWSER === '1'
@@ -123,10 +135,12 @@ let probed: { why: string | undefined } | undefined
 /**
  * Why a browser test cannot run here: undefined when it can. `chrome` and `xvfb`, when given (an
  * explicit `chrome: undefined` too: no Chrome), stand for what this host has; omitted, it is this
- * host's, and a headless test's Chrome must also start here ({@link chromeCannotStart}).
+ * host's, and a headless test's Chrome must also start here ({@link chromeCannotStart}). For this
+ * host, in a run that leaves its browser tests out, it is {@link BROWSER_LEFT_OUT}.
  */
 export function browserUnavailable(options: { chrome?: string | undefined; xvfb?: boolean; headless: boolean }): string | undefined {
   const given = 'chrome' in options
+  if (!given && browserTestsLeftOut) return BROWSER_LEFT_OUT
   const chrome = given ? options.chrome : testChrome
   const xvfb = options.xvfb ?? hasXvfb
   const missing = [
@@ -140,8 +154,8 @@ export function browserUnavailable(options: { chrome?: string | undefined; xvfb?
   return missing.length ? `${BROWSER_SKIP}: ${missing.join('; ')}` : undefined
 }
 
-// CI sets SYSTEM_REQUIRE_BROWSER=1 so a missing browser fails instead of skipping.
-if (REQUIRE_BROWSER && !canRunBrowser) {
+// CI sets SYSTEM_REQUIRE_BROWSER=1 so a missing browser fails instead of skipping; a run that leaves its browser tests out needs none.
+if (REQUIRE_BROWSER && !browserTestsLeftOut && !hostRunsBrowser) {
   throw new Error('real-browser tests need Xvfb and a modern Chrome (set CHROME_PATH)')
 }
 
@@ -158,11 +172,12 @@ export function headlessLaunchOptions(): LaunchOptions {
  * A test that needs a headless Chrome. Where none can run it is skipped, never silently: its skip
  * note says `browser tests did not run: <why>`, the run's report counts it, and a check reports it
  * to the review (scripts/browser-skips.ts). Under `SYSTEM_REQUIRE_BROWSER=1` (CI) it runs, and fails.
+ * In a run that leaves its browser tests out (T305) it is skipped, noted {@link BROWSER_LEFT_OUT}.
  */
 export function headlessIt(name: string, fn: (context: TestContext) => Promise<void>, timeout?: number): void {
   it(name, async (context) => {
     const why = browserUnavailable({ headless: true })
-    if (why && !REQUIRE_BROWSER) context.skip(why)
+    if (why === BROWSER_LEFT_OUT || (why && !REQUIRE_BROWSER)) context.skip(why)
     await fn(context)
   }, timeout)
 }

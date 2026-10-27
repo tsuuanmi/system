@@ -823,9 +823,9 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
       const acceptance = await checks.check(step('run_scope', at))
       // The acceptance is given the commit its worktree was cut at, to read the run's own change from (T299).
       expect(evidenceOf(ctx, acceptance).checks[0]!.output!.tail).toBe('scope acceptance base the fork\n')
-      // The same tree at the landing's scope is its own run, never the acceptance's stored result.
+      // The same tree at the landing's scope is its own run, never the acceptance's stored result; it is told the commit too, to leave out the browser specs its change does not touch (T305).
       const landing = await checks.check({ ...step('run_scope', at), scope: 'landing' })
-      expect(evidenceOf(ctx, landing).checks[0]!.output!.tail).toBe('scope landing base none\n')
+      expect(evidenceOf(ctx, landing).checks[0]!.output!.tail).toBe('scope landing base the fork\n')
       // And each is stored, so neither runs again.
       expect(await checks.check({ ...step('run_scope', at), scope: 'landing' })).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed' }] })
     })

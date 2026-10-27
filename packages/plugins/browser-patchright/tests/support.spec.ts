@@ -9,14 +9,16 @@ import { Browser, computeExecutablePath } from '@puppeteer/browsers'
 import { describe, expect, it, vi } from 'vitest'
 import { BROWSER_SKIP as REPORTED } from '../../../../scripts/browser-skips.ts'
 import { CHROME_LOCK } from '../src/index.ts'
-import { BROWSER_SKIP, browserUnavailable, chromeCannotStart, findTestChrome, startFailure, testChrome } from './support.ts'
+import { BROWSER_LEFT_OUT, BROWSER_SKIP, browserTestsLeftOut, browserUnavailable, chromeCannotStart, findTestChrome, startFailure, testChrome } from './support.ts'
 
 describe('a browser test that cannot run says why (T247)', () => {
   it('names a missing Chrome, and a missing Xvfb only for a headed test, in the words the run\'s report counts', () => {
     expect(BROWSER_SKIP).toBe(REPORTED)
     // An explicit `chrome: undefined` is no Chrome, whatever this host has; an omitted one is this host's, which must also start here.
     const here = browserUnavailable({ headless: true })
-    if (testChrome === undefined) expect(here).toMatch(/^browser tests did not run: no usable Chrome \(/)
+    // A run that leaves its browser tests out (T305, SYSTEM_SKIP_BROWSER_TESTS=1) gives the host's verdict as that decision, never as a browser that could not run.
+    if (browserTestsLeftOut) expect(here).toBe(BROWSER_LEFT_OUT)
+    else if (testChrome === undefined) expect(here).toMatch(/^browser tests did not run: no usable Chrome \(/)
     else expect(here === undefined || /^browser tests did not run: Chrome cannot start here \(.+\)$/.test(here), here).toBe(true)
     expect(browserUnavailable({ chrome: '/opt/chrome', xvfb: false, headless: true })).toBeUndefined()
     expect(browserUnavailable({ chrome: '/opt/chrome', xvfb: true, headless: false })).toBeUndefined()

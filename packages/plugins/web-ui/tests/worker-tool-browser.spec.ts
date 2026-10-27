@@ -22,7 +22,7 @@ import { beforeEach, describe, expect, it, onTestFinished } from 'vitest'
 import { needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
 import AgentRuntimeRegistry, { type Confinement } from '../../agent-runtimes/src/index.ts'
 import { notRunIn } from '../../agent-workers/src/run-report.ts'
-import { browserUnavailable, testChrome } from '../../browser-patchright/tests/support.ts'
+import { BROWSER_LEFT_OUT, browserUnavailable, testChrome } from '../../browser-patchright/tests/support.ts'
 import { ClaudeAgentRuntime } from '../../runtime-claude-agent-sdk/src/index.ts'
 
 const root = realpathSync(fileURLToPath(new URL('../../../../', import.meta.url)))
@@ -147,7 +147,7 @@ describe('a Worker\'s own tool call runs the browser tests (T265)', { timeout: 6
   beforeEach((context) => {
     if (!claudeOnPath()) context.skip('Claude Code is not installed (no claude on PATH): a Worker\'s own tool call cannot be run here')
     const why = browserUnavailable({ headless: true })
-    if (why && process.env.SYSTEM_REQUIRE_BROWSER !== '1') context.skip(why)
+    if (why === BROWSER_LEFT_OUT || (why && process.env.SYSTEM_REQUIRE_BROWSER !== '1')) context.skip(why)
   })
 
   const registry = async () => {

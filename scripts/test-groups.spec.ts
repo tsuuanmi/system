@@ -1,10 +1,10 @@
-import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, onTestFinished } from 'vitest'
-import { affected, changedSince, checkScope, filters, graph, GROUPS, groupOf, packages, related, specFiles, splitArgs } from './test-groups.ts'
+import { affected, browserPlan, browserSpecs, changedSince, isBrowserSpec, SKIP_BROWSER_TESTS_ENV, skippedBrowserSpecs, specsWithBrowserTests, checkScope, filters, graph, GROUPS, groupOf, packages, related, specFiles, splitArgs } from './test-groups.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const all = packages()
@@ -127,6 +127,73 @@ describe('related tests (T299)', () => {
     expect(relatedTo(...own).everything).toBeUndefined()
     // Read since main, as before, it took the branch's package.json for the run's and ran everything.
     expect(changedSince('main', repo)).toContain('package.json')
+  })
+
+  it('leaves out the browser specs a change does not touch (T305): a workflow-only change selects none, a provider-chatgpt-web change its own, an edited spec itself', () => {
+    const browser = browserSpecs()
+    expect(browser).toContain('packages/plugins/workflow/tests/team-votes.spec.ts')
+    expect(browser).toContain('packages/plugins/turns/tests/profiles.spec.ts')
+    expect(browser).not.toContain('packages/plugins/workflow/tests/review-guides.spec.ts')
+    // A file with plain in-process tests beside its browser ones is no browser spec: those tests still run when reached.
+    for (const mixed of ['packages/plugins/web-ui/tests/policy.spec.ts', 'packages/plugins/web-ui/tests/dispatch.spec.ts', 'packages/plugins/provider-chatgpt-web/tests/driver.spec.ts', 'packages/ui-ops/tests/engine.spec.ts']) expect(browser, mixed).not.toContain(mixed)
+    expect(isBrowserSpec("describe.runIf(canRunBrowser)('a', () => {})\ndescribe.runIf(canRunBrowser && vnc)('b', () => {})\n")).toBe(true)
+    expect(isBrowserSpec("describe('a', () => {})\ndescribe.runIf(canRunBrowser)('b', () => {})\n")).toBe(false)
+    expect(isBrowserSpec("describe('a', () => { headlessIt('b', async () => {}) })\n")).toBe(false)
+    expect(isBrowserSpec('export {}\n')).toBe(false)
+    // A change to the board reaches web-ui's in-process tests, which share files with its browser ones.
+    expect(relatedTo('packages/plugins/board/src/index.ts').tests).toContain('packages/plugins/web-ui/tests/policy.spec.ts')
+    // A workflow-only change: no whole browser spec is selected, and the browser tests of the mixed files it reaches (web-ui's layout checks) are left out, one test at a time.
+    const workflowOnly = relatedTo('packages/plugins/workflow/src/engine.ts').tests
+    expect(workflowOnly.length).toBeGreaterThan(0)
+    expect(workflowOnly.filter((t) => browser.includes(t))).toEqual([])
+    expect(workflowOnly).toContain('packages/plugins/web-ui/tests/layout.spec.ts')
+    expect(specsWithBrowserTests()).toContain('packages/plugins/web-ui/tests/layout.spec.ts')
+    const workflowPlan = browserPlan(['packages/plugins/workflow/src/engine.ts'], { all })
+    expect(workflowPlan.leaveOut).toBe(true)
+    expect(workflowOnly.filter((t) => specsWithBrowserTests().includes(t) && workflowPlan.touched(t))).toEqual([])
+    // A provider-chatgpt-web change: its browser specs, and every other, run with their browser tests.
+    const chatgpt = relatedTo('packages/plugins/provider-chatgpt-web/src/driver.ts').tests
+    expect(chatgpt).toContain('packages/plugins/provider-chatgpt-web/tests/answers.spec.ts')
+    expect(chatgpt).toContain('packages/plugins/workflow/tests/team-votes.spec.ts')
+    expect(browserPlan(['packages/plugins/provider-chatgpt-web/src/driver.ts'], { all }).leaveOut).toBe(false)
+    // An edited spec runs its own browser tests; the plan keeps it.
+    expect(browserPlan(['packages/plugins/web-ui/tests/layout.spec.ts'], { all }).touched('packages/plugins/web-ui/tests/layout.spec.ts')).toBe(true)
+    expect(relatedTo('packages/plugins/workflow/tests/team-votes.spec.ts').tests).toEqual(['packages/plugins/workflow/tests/team-votes.spec.ts'])
+    // A helper beside the specs keeps them; documentation selects none.
+    expect(relatedTo('packages/plugins/workflow/tests/support.ts').tests).toContain('packages/plugins/workflow/tests/team-votes.spec.ts')
+    expect(relatedTo('docs/engineering/testing.md').tests.filter((t) => browser.includes(t))).toEqual([])
+  })
+
+  it('leaves out the same at the landing\'s whole suite, given the run\'s starting commit, and runs every one when everything is affected or for the daily run', () => {
+    const browser = browserSpecs()
+    expect(checkScope({ SYSTEM_CHECK_SCOPE: 'landing', SYSTEM_CHECK_BASE: 'a1b2c3d4e5f6' }).browserBase).toBe('a1b2c3d4e5f6')
+    expect(checkScope({ SYSTEM_CHECK_SCOPE: 'landing' }).browserBase).toBeUndefined()
+    expect(skippedBrowserSpecs(['packages/plugins/workflow/src/engine.ts'], { all, specs: browser })).toEqual(browser)
+    expect(skippedBrowserSpecs(['packages/plugins/provider-chatgpt-web/src/driver.ts'], { all, specs: browser })).toEqual([])
+    expect(skippedBrowserSpecs(['packages/plugins/workflow/src/engine.ts'], { every: true, all, specs: browser })).toEqual([])
+    expect(browserPlan(['packages/plugins/workflow/src/engine.ts'], { every: true, all }).leaveOut).toBe(false)
+  })
+
+  it('the browser tests\' support honours the flag a run sets: every gate closes, its note never counted as a browser test that could not run', () => {
+    const probe = "import('./packages/plugins/browser-patchright/tests/support.ts').then((m) => console.log(JSON.stringify({ can: m.canRunBrowser, why: m.browserUnavailable({ headless: true }), given: m.browserUnavailable({ chrome: '/opt/chrome', xvfb: true, headless: true }), note: m.BROWSER_LEFT_OUT, skip: m.BROWSER_SKIP })))"
+    const out = JSON.parse(execFileSync(process.execPath, ['--import', 'tsx', '-e', probe], { cwd: root, encoding: 'utf8', env: { ...process.env, [SKIP_BROWSER_TESTS_ENV]: '1', SYSTEM_REQUIRE_BROWSER: '1' } }).trim().split('\n').at(-1)!) as { can: boolean; why: string; given: string | null; note: string; skip: string }
+    expect(out.can).toBe(false)
+    expect(out.why).toBe(out.note)
+    expect(out.why.startsWith(out.skip)).toBe(false)
+    // A test's explicit host stays its own: the flag leaves the host's verdict alone.
+    expect(out.given ?? undefined).toBeUndefined()
+  })
+
+  it('runs mixed specs under the flag as a run that leaves its browser tests out does: their plain tests pass, their browser tests skip, none counted as not run', { timeout: 300_000 }, () => {
+    // browser-patchright's own support spec asserts the host's verdict; web-ui's dispatch spec mixes plain tests with headlessIt.
+    const specs = ['packages/plugins/browser-patchright/tests/support.spec.ts', 'packages/plugins/web-ui/tests/dispatch.spec.ts']
+    const env: Record<string, string | undefined> = { ...process.env, [SKIP_BROWSER_TESTS_ENV]: '1', SYSTEM_REQUIRE_BROWSER: '1', NO_COLOR: '1' }
+    for (const name of ['SYSTEM_CHECK_REPORT_PATH', 'VITEST', 'VITEST_POOL_ID', 'VITEST_WORKER_ID', 'VITEST_MODE']) delete env[name]
+    const ran = spawnSync(process.execPath, [join(root, 'node_modules', 'vitest', 'vitest.mjs'), 'run', ...specs], { cwd: root, encoding: 'utf8', env, timeout: 280_000 })
+    const output = `${ran.stdout}${ran.stderr}`
+    expect(ran.status, output.slice(-3000)).toBe(0)
+    expect(output).toMatch(/Test Files\s+2 passed/)
+    expect(output).not.toMatch(/BROWSER TESTS DID NOT RUN/)
   })
 
   it('selects the scripts\' tests for documentation, and nothing for no change', () => {

@@ -25,6 +25,15 @@
  * of its packages are reached. The repository scripts' tests check the whole repository, so every
  * change affects their group. A schema reaches every package through libs; a root configuration
  * file, CI, or any path no rule places affects every group (fail closed).
+ *
+ * Browser tests (T305: each test gated on a browser by `browser-patchright/tests/support.ts`) run only
+ * when the change touches what they exercise: a package of the browser stack (`BROWSER_STACK`), their
+ * own file, or a helper in their tests directory; a change that affects everything runs them all.
+ * Otherwise the run sets `SYSTEM_SKIP_BROWSER_TESTS=1` and each such test is skipped, while the plain
+ * tests beside it run; a spec whose every test is gated (`browserSpecs`) is not even selected. This
+ * holds for `related` (the acceptance), for `affected` by hand (`--all-browser` runs them all), and
+ * for the landing's whole suite, given the run's starting commit. A daily run of every browser
+ * spec on dev's tip inside System is T305b.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
@@ -199,6 +208,67 @@ export function specFiles(): string[] {
     .sort()
 }
 
+/**
+ * The packages of the browser stack (T305): Chrome through patchright, its display, the page engine,
+ * the login desktop, the two drivers with their fake sites, turns, and the web UI. A change in one of
+ * them runs every browser spec; a change anywhere else runs only the browser specs it touches itself.
+ */
+export const BROWSER_STACK: readonly string[] = ['browser-patchright', 'display-virtual', 'ui-ops', 'login', 'provider-chatgpt-web', 'provider-gemini-web', 'turns', 'web-ui']
+
+/**
+ * The variable a run sets to leave its browser tests out (T305), read by
+ * `browser-patchright/tests/support.ts`: every test gated on it (`canRunBrowser`, `headlessIt`,
+ * `browserUnavailable`) is skipped, one test at a time, so the in-process tests that share a file with
+ * browser tests still run.
+ */
+export const SKIP_BROWSER_TESTS_ENV = 'SYSTEM_SKIP_BROWSER_TESTS'
+
+/** A browser test's mark: the gate of `browser-patchright/tests/support.ts` it is written with. */
+const BROWSER_GATE = /\b(canRunBrowser|headlessIt|browserUnavailable)\b/
+
+/**
+ * Whether a spec's source is a browser spec as a whole: every test of the file is gated on a browser
+ * (`describe.runIf(canRunBrowser…)`). Such a file a run that leaves its browser tests out does not
+ * even collect; a file that also holds plain tests is collected, and only its gated tests skipped.
+ */
+export function isBrowserSpec(source: string): boolean {
+  const top = source.match(/^(describe|it|test)\b[^\n]*/gm) ?? []
+  return top.length > 0 && top.every((line) => /^describe\.runIf\(canRunBrowser\b/.test(line))
+}
+
+/** Every browser spec of the suite as a whole (a package's spec whose every test is gated on a browser), repository-relative. */
+export function browserSpecs(): string[] {
+  return specFiles().filter((path) => path.startsWith('packages/') && isBrowserSpec(readFileSync(join(root, path), 'utf8')))
+}
+
+/** Every package's spec that holds a browser test (one gated on a browser), whole or beside plain tests. */
+export function specsWithBrowserTests(): string[] {
+  return specFiles().filter((path) => path.startsWith('packages/') && BROWSER_GATE.test(readFileSync(join(root, path), 'utf8')))
+}
+
+/**
+ * What a run does with its browser tests for a change (T305): `leaveOut` when the change touches no
+ * package of the browser stack and is not `every` (a change that affects everything, or the daily
+ * run); then only a spec it `touched` (its own file, or a helper in its tests directory changed) runs
+ * its browser tests.
+ */
+export function browserPlan(changed: readonly string[], opts: { every?: boolean; all?: Package[] } = {}): { leaveOut: boolean; touched: (spec: string) => boolean } {
+  const all = opts.all ?? packages()
+  const helperDirs = changed.filter((path) => /\/tests\/[^/]+\.ts$/.test(path) && !path.endsWith('.spec.ts')).map((path) => path.slice(0, path.lastIndexOf('/') + 1))
+  const touched = (spec: string): boolean => changed.includes(spec) || helperDirs.some((dir) => spec.startsWith(dir))
+  const leaveOut = !opts.every && !changed.some((path) => BROWSER_STACK.includes(packageAt(all, path)?.id ?? ''))
+  return { leaveOut, touched }
+}
+
+/** The whole-file browser specs a change does not touch, which a run does not collect (T305). */
+export function skippedBrowserSpecs(changed: readonly string[], opts: { every?: boolean; all?: Package[]; specs?: readonly string[] } = {}): string[] {
+  const plan = browserPlan(changed, opts)
+  return plan.leaveOut ? (opts.specs ?? browserSpecs()).filter((spec) => !plan.touched(spec)) : []
+}
+
+/** The vitest arguments that leave `specs` out. */
+const excluding = (specs: readonly string[]): string[] => specs.flatMap((spec) => ['--exclude', spec])
+
 export interface Related { tests: string[]; everything?: string; changed: string[] }
 
 /**
@@ -209,7 +279,7 @@ export interface Related { tests: string[]; everything?: string; changed: string
  * the lockfile, `tsconfig*.json`, `vitest*.ts`, CI) and a path no rule places select the whole
  * suite: `everything` names it, and `tests` is then every test file.
  */
-export function related(changed: readonly string[], all: Package[] = packages(), deps: Graph = graph(all), suite: readonly string[] = specFiles()): Related {
+export function related(changed: readonly string[], all: Package[] = packages(), deps: Graph = graph(all), suite: readonly string[] = specFiles(), browser: readonly string[] = browserSpecs()): Related {
   const everything = (why: string): Related => ({ tests: [...suite], everything: why, changed: [] })
   const touched = new Set<string>()
   const direct = new Set<string>()
@@ -225,7 +295,9 @@ export function related(changed: readonly string[], all: Package[] = packages(),
   }
   const reached = reach(touched, deps)
   if (touched.size || repository) reached.add('scripts:test')
-  const tests = suite.filter((path) => direct.has(path) || reached.has(side(packageAt(all, path)!, path)))
+  // A browser spec the change does not touch is left out (T305).
+  const left = new Set(skippedBrowserSpecs(changed, { all, specs: browser }))
+  const tests = suite.filter((path) => !left.has(path) && (direct.has(path) || reached.has(side(packageAt(all, path)!, path))))
   return { tests, changed: [...touched].sort() }
 }
 
@@ -241,10 +313,14 @@ export const CHECK_BASE_ENV = 'SYSTEM_CHECK_BASE'
  * start on. An acceptance with no starting commit, or a scope it does not know, runs the whole suite
  * (INV-2).
  */
-export function checkScope(env: Readonly<Record<string, string | undefined>>): { full?: string; base?: string } {
+export function checkScope(env: Readonly<Record<string, string | undefined>>): { full?: string; base?: string; browserBase?: string } {
   const scope = env[CHECK_SCOPE_ENV]
   if (scope === undefined || scope === '') return {}
-  if (scope === 'landing') return { full: `${CHECK_SCOPE_ENV}=landing (the landing's tree)` }
+  if (scope === 'landing') {
+    // The whole suite, but the browser specs the run's change does not touch (T305): read from the commit its worktree was cut at, if told.
+    const base = env[CHECK_BASE_ENV]
+    return { full: `${CHECK_SCOPE_ENV}=landing (the landing's tree)`, ...(base && /^[0-9a-f]{7,64}$/.test(base) ? { browserBase: base } : {}) }
+  }
   if (scope !== 'acceptance') return { full: `${CHECK_SCOPE_ENV}=${scope} is no scope this script knows` }
   const base = env[CHECK_BASE_ENV]
   if (!base || !/^[0-9a-f]{7,64}$/.test(base)) return { full: `${CHECK_SCOPE_ENV}=acceptance with no commit the run's worktree was cut at (${CHECK_BASE_ENV})` }
@@ -302,9 +378,27 @@ function defaultBase(): string {
 }
 
 /** Run vitest on these filters (none: the whole suite), with the extra arguments; returns its exit status. */
-function vitest(filterList: string[], extra: string[]): number {
+function vitest(filterList: string[], extra: string[], env: Record<string, string> = {}): number {
   // vitest exports no path to its CLI: run the root devDependency's, as `pnpm test` does.
-  return spawnSync(process.execPath, [join(root, 'node_modules', 'vitest', 'vitest.mjs'), 'run', ...filterList, ...extra], { cwd: root, stdio: 'inherit' }).status ?? 1
+  return spawnSync(process.execPath, [join(root, 'node_modules', 'vitest', 'vitest.mjs'), 'run', ...filterList, ...extra], { cwd: root, stdio: 'inherit', env: { ...process.env, ...env } }).status ?? 1
+}
+
+/**
+ * Run these filters (none: the whole suite) for a change (T305). When the change leaves the browser
+ * tests out, two runs: everything but the browser specs the change touches, with
+ * {@link SKIP_BROWSER_TESTS_ENV} set, so every test that would start a browser is skipped (whole
+ * browser specs not even collected); then the touched browser specs, as they are.
+ */
+function runFor(filterList: string[], changed: readonly string[], every: boolean, extra: string[], all: Package[]): number {
+  const plan = browserPlan(changed, { every, all })
+  if (!plan.leaveOut) return vitest(filterList, extra)
+  const inScope = (spec: string): boolean => !filterList.length || filterList.some((f) => spec.startsWith(f))
+  const keep = specsWithBrowserTests().filter((spec) => plan.touched(spec) && inScope(spec))
+  const skipped = browserSpecs().filter((spec) => !plan.touched(spec))
+  console.log(`browser tests left out: the change does not touch the browser stack${keep.length ? `; ${keep.length} browser spec(s) it touches run as they are` : ''}`)
+  const first = vitest(filterList, [...excluding([...skipped, ...keep]), '--passWithNoTests', ...extra], { [SKIP_BROWSER_TESTS_ENV]: '1' })
+  const second = keep.length ? vitest(keep, extra) : 0
+  return first || second
 }
 
 /**
@@ -329,7 +423,7 @@ function runRelated(changed: string[], dryRun: boolean, extra: string[], base?: 
   console.log(result.tests.length ? `related tests: ${result.tests.length} file(s) of ${specFiles().length}` : 'no test is related')
   if (dryRun && !result.everything) console.log(result.tests.join('\n'))
   if (dryRun || !result.tests.length) return 0
-  return vitest(result.everything ? [] : result.tests, extra)
+  return runFor(result.everything ? [] : result.tests, changed, !!result.everything, extra, packages())
 }
 
 function main(argv: string[]): number {
@@ -362,8 +456,11 @@ function main(argv: string[]): number {
     // whole suite, once; the acceptance runs the tests related to the files the result itself changed.
     const scope = checkScope(process.env)
     if (scope.full) {
-      console.log(`${scope.full}: the full suite runs`)
-      return rest.includes('--dry-run') ? 0 : vitest([], extra)
+      console.log(`${scope.full}: the full suite runs${scope.browserBase ? '' : ', every browser test with it (no starting commit to read the change from)'}`)
+      if (rest.includes('--dry-run')) return 0
+      if (!scope.browserBase) return vitest([], extra)
+      const changed = changedSince(scope.browserBase)
+      return runFor([], changed, !!related(changed).everything, extra, all)
     }
     if (scope.base) return runRelated(changedSince(scope.base), rest.includes('--dry-run'), extra, scope.base)
     const at = rest.indexOf('--base')
@@ -378,10 +475,11 @@ function main(argv: string[]): number {
     console.log(`changed since ${base}: ${changed.length} file(s)${result.changed.length ? `, in ${result.changed.join(', ')}` : ''}`)
     if (result.everything) console.log(`${result.everything} affects every group: the full suite runs`)
     console.log(result.groups.length ? `affected groups: ${result.groups.join(', ')} (of ${names.length})` : 'no test group is affected')
-    if (rest.includes('--dry-run') || !result.groups.length) return 0
-    return vitest(result.groups.length === names.length ? [] : result.groups.flatMap((name) => filters(name, all)), extra)
+    if (!result.groups.length) return 0
+    if (rest.includes('--dry-run')) return 0
+    return runFor(result.groups.length === names.length ? [] : result.groups.flatMap((name) => filters(name, all)), changed, rest.includes('--all-browser') || !!result.everything, extra, all)
   }
-  console.error('usage: test-groups.ts group [<name>...] [-- <vitest args>] | affected [--base <ref>] [--dry-run] [-- <vitest args>] | related <file>… [--dry-run] [-- <vitest args>]')
+  console.error('usage: test-groups.ts group [<name>...] [-- <vitest args>] | affected [--base <ref>] [--all-browser] [--dry-run] [-- <vitest args>] | related <file>… [--dry-run] [-- <vitest args>]')
   return 2
 }
 

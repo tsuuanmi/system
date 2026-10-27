@@ -15,7 +15,7 @@ import { beforeEach, describe, expect, it, onTestFinished } from 'vitest'
 import { needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
 import AgentRuntimeRegistry, { childEnvironment, type Confinement, confinedCommand } from '../../agent-runtimes/src/index.ts'
 import { launcherArgs, REPORT_PATH, reportChannel, runBounded } from '../../agent-workers/src/setup.ts'
-import { browserUnavailable, testChrome } from '../../browser-patchright/tests/support.ts'
+import { BROWSER_LEFT_OUT, browserUnavailable, testChrome } from '../../browser-patchright/tests/support.ts'
 
 const root = realpathSync(fileURLToPath(new URL('../../../../', import.meta.url)))
 /** The one web UI browser test run inside: Help, in a headless Chrome on the store-backed daemon. */
@@ -84,7 +84,7 @@ describe('a Worker runs the browser tests in its confinement (T247)', { timeout:
   beforeEach((context) => {
     // CI (SYSTEM_REQUIRE_BROWSER=1) requires this verification: there an unusable browser fails it, never skips it.
     const why = browserUnavailable({ headless: true })
-    if (why && process.env.SYSTEM_REQUIRE_BROWSER !== '1') context.skip(why)
+    if (why === BROWSER_LEFT_OUT || (why && process.env.SYSTEM_REQUIRE_BROWSER !== '1')) context.skip(why)
     // vite's directories are mounted over their paths: inside a check the worktree is read-only, so they must exist already.
     for (const dir of VITE_DIRS.filter((path) => !existsSync(path))) {
       try {
