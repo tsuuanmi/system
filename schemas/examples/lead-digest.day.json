@@ -1,0 +1,31 @@
+{
+  "schema": "lead-digest@1.0",
+  "projectId": "system",
+  "day": "2026-10-26",
+  "period": { "since": "2026-10-26T00:00:00.000Z", "until": "2026-10-27T00:00:00.000Z" },
+  "asOf": "2026-10-27T06:00:00.000Z",
+  "landed": [
+    { "taskId": "task-0001", "title": "make add() add", "runId": "run_0001", "commit": "0123456789abcdef0123456789abcdef01234567", "at": "2026-10-26T09:12:00.000Z" }
+  ],
+  "decided": [
+    { "at": "2026-10-26T09:10:00.000Z", "what": "verdict", "option": "approved", "taskId": "task-0001", "id": "sha256:0000000000000000000000000000000000000000000000000000000000000001" }
+  ],
+  "waiting": [
+    { "kind": "review", "id": "task-0002", "title": "keep add() fast", "expiresAt": "2026-10-27T12:00:00.000Z", "brief": "board_brief task-0002", "pendingChecks": ["tests"] }
+  ],
+  "failed": [
+    { "kind": "daily-check", "at": "2026-10-26T04:00:00.000Z", "status": "failed", "reason": "a browser spec failed", "filedTask": "task-0003" }
+  ],
+  "byHand": [
+    { "commit": "89abcdef0123456789abcdef0123456789abcdef", "at": "2026-10-26T15:00:00.000Z", "subject": "fix a typo" }
+  ],
+  "measures": {
+    "landedBySystem": 1,
+    "landedByHand": { "value": 1 },
+    "leadTouches": 1,
+    "reruns": 0,
+    "redDev": { "value": 1 },
+    "incidents": 0
+  },
+  "notes": []
+}

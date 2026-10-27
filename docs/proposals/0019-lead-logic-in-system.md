@@ -561,5 +561,14 @@ action class) here.
 
 ## Implementation
 
-None yet. Each task of section 5 is filed by the lead after the core loop (T293b, T318b, T321) runs
+Each task of section 5 is filed by the lead after the core loop (T293b, T318b, T321) runs
 clean; it records its commit here and in the [roadmap](roadmap.md) when it lands.
+
+- **Rank 10 (T329), the daily digest and the health table.** Built in the `report` row, read-only:
+  MCP `lead_digest` and `lead_health` (`mcp-report@1.7`), `system lead digest|health`, and the
+  `lead-digest@1.0` record, stored once a day is over
+  ([`report`'s README](../../packages/plugins/report/README.md), [runbook](../operations/runbooks.md#read-the-day)).
+  Not built: the digest's push to a sink at an hour (it will be its own switch, off), the remote
+  row (`landing-publish` is rank 9), and "decisions left for tomorrow" beyond what waits on the
+  operator. A landing by hand is a first-parent commit on a branch the project landed on that no
+  merged landing names.

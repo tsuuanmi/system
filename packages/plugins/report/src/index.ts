@@ -17,15 +17,20 @@ import { ADVICE_EVENT, ADVICE_OUTCOME_EVENT, countedWhole, QUOTA_DRAW_EVENT, typ
 import { ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import { z as zod } from 'zod'
 import { buildMetrics, MAX_RUNS_READ, READY_MOVES_READ, METRICS_DEFAULT_DAYS, type Metrics, renderMetrics, type RunDecision } from './metrics.ts'
+import { renderDigest } from './digest.ts'
+import { type Health, renderHealth } from './health.ts'
+import { leadDigest, leadHealth, MIGRATIONS } from './lead.ts'
 import { renderReport } from './render.ts'
 import { buildReport, type DecisionRead, type DigestRead, type DrawRead, LIVENESS_EVENTS, MAX_DAYS, periodOf, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type UnknownRead, within } from './report.ts'
 
 export { buildMetrics, METRIC_IDS, type Metric, type MetricId, type Metrics, type MetricSources, renderMetrics, type RunDecision } from './metrics.ts'
+export { buildDigest, type Digest, type DigestSources, renderDigest } from './digest.ts'
+export { buildHealth, type Health, type HealthRow, type HealthSources, type HealthState, renderHealth } from './health.ts'
 export { duration, renderReport, whole } from './render.ts'
 export { buildReport, type DecisionRead, type DrawRead, MAX_PROJECTS, periodOf, type Period, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Sources, type UnknownRead, within } from './report.ts'
 
 export const name = 'report'
-export const inject = ['artifacts', 'eventLog']
+export const inject = ['artifacts', 'eventLog', 'store']
 
 /** Event-log entries one report reads per query at most (INV-9): more refuses the report, never truncates it. */
 const MAX_EVENTS = 100_000
@@ -443,8 +448,53 @@ function ownProject(args: Record<string, unknown>, lead: string | undefined): Re
   return { ...args, projectId: lead }
 }
 
-/** The `report` tool: input and output checked against `mcp-report@1.6`; the text is the rendering. */
+const LEAD_DIGEST_INPUT: ToolSpec['inputSchema'] = {
+  projectId: zod.string().regex(ID).optional().describe('The project; a lead token\'s own project by default, and the only one it reaches'),
+  day: zod.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('The UTC day, YYYY-MM-DD; default today (read now, not stored). A finished day is stored once, as lead-digest@1.0, and read back'),
+}
+const LEAD_DIGEST_DESCRIPTION = 'The lead\'s digest of a day, from recorded data only: what landed (task, run, commit), what the lead decided on its own token, what waits on the operator with its brief and expiry, what failed and the task filed for it; and the day\'s measures: results landed by System and by hand (a commit on the branch with no landing decision), lead touches, reruns, red dev (a failed daily check of the branch tip), incidents. A finished day is stored as a lead-digest@1.0 record and read back as it was. Reads only.'
+const LEAD_HEALTH_INPUT: ToolSpec['inputSchema'] = {
+  projectId: zod.string().regex(ID).optional().describe('The project; a lead token\'s own project by default, and the only one it reaches'),
+}
+const LEAD_HEALTH_DESCRIPTION = 'The health table of a project: one row per source, each ok, degraded, or unknown with its reason: dispatch, the Workers, quota headroom, the notification and lead sinks, the live update, the landing queue, the worktrees held, and each enforce switch\'s mode. A source that cannot be read is unknown, never ok. Reads only.'
+const LEAD_READS = (ctx: Context) => ({ events: (filter: { type: string; since?: string }) => readEvents(ctx, filter) })
+
+/** The report tools: input and output checked against `mcp-report@1.7`; the text is the rendering. */
 function registerTool(ctx: Context): void {
+  ctx.mcp.tool('lead_digest', { scope: 'client', description: LEAD_DIGEST_DESCRIPTION, inputSchema: LEAD_DIGEST_INPUT }, async (args, context) => {
+    try {
+      schemas.assertDef('mcp-report@1.7', 'lead-digest-input', args)
+    } catch (error) {
+      return refused(`invalid input, nothing read: ${(error as Error).message}`)
+    }
+    const scoped = ownProject(args, context?.lead)
+    if (typeof scoped === 'string') return refused(scoped)
+    if (typeof scoped.projectId !== 'string') return refused('invalid: name the project (projectId); only a lead token has one by default')
+    try {
+      const { digest, artifact } = await leadDigest(ctx, LEAD_READS(ctx), { projectId: scoped.projectId, ...(typeof scoped.day === 'string' ? { day: scoped.day } : {}) })
+      return { content: [{ type: 'text' as const, text: `${renderDigest(digest)}${artifact ? `\nStored: ${artifact}\n` : ''}` }], structuredContent: { ...digest } }
+    } catch (error) {
+      return refused(error instanceof ReportError ? `${error.failure}: ${error.message}` : `lead_digest: ${(error as Error).message}`)
+    }
+  })
+  ctx.mcp.tool('lead_health', { scope: 'client', description: LEAD_HEALTH_DESCRIPTION, inputSchema: LEAD_HEALTH_INPUT }, async (args, context) => {
+    try {
+      schemas.assertDef('mcp-report@1.7', 'lead-health-input', args)
+    } catch (error) {
+      return refused(`invalid input, nothing read: ${(error as Error).message}`)
+    }
+    const scoped = ownProject(args, context?.lead)
+    if (typeof scoped === 'string') return refused(scoped)
+    if (typeof scoped.projectId !== 'string') return refused('invalid: name the project (projectId); only a lead token has one by default')
+    let health: Health
+    try {
+      health = await leadHealth(ctx, LEAD_READS(ctx), { projectId: scoped.projectId })
+      schemas.assertDef('mcp-report@1.7', 'lead-health-output', health)
+    } catch (error) {
+      return refused(error instanceof ReportError ? `${error.failure}: ${error.message}` : `lead_health: ${(error as Error).message}`)
+    }
+    return { content: [{ type: 'text' as const, text: renderHealth(health) }], structuredContent: { ...health } }
+  })
   ctx.mcp.tool('metrics', { scope: 'client', description: METRICS_DESCRIPTION, inputSchema: METRICS_INPUT }, async (args, context) => {
     try {
       schemas.assertDef('mcp-report@1.6', 'metrics-input', args)
@@ -490,5 +540,6 @@ function registerTool(ctx: Context): void {
 }
 
 export function apply(ctx: Context): void {
+  ctx.store.migrate('report', MIGRATIONS)
   ctx.inject(['mcp'], (c) => registerTool(c))
 }

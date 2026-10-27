@@ -1520,6 +1520,56 @@
         }
       },
       "additionalProperties": false
+    },
+    "lead-digest-input": {
+      "description": "1.7: the `lead_digest` tool's input: the project (a lead token's own by default) and the UTC day (default today). Its output is the `lead-digest@1.0` record.",
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "day": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "lead-health-input": {
+      "description": "1.7: the `lead_health` tool's input: the project (a lead token's own by default).",
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "lead-health-output": {
+      "description": "1.7: the `lead_health` tool's output (PROP-0019 section 2.10): one row per source, each ok, degraded, or unknown with its reason; a source that could not be read is unknown, never ok (INV-2). `state` is degraded when any row is, else unknown when any is, else ok.",
+      "type": "object",
+      "required": ["projectId", "asOf", "state", "rows"],
+      "properties": {
+        "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "asOf": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+        "state": { "enum": ["ok", "degraded", "unknown"] },
+        "rows": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "state", "reason"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 100 },
+              "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+              "state": { "enum": ["ok", "degraded", "unknown"] },
+              "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
     }
   }
 }
