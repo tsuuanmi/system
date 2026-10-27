@@ -74,8 +74,6 @@ where both families answered is unchanged
   [release checklist](../../../docs/validation/release-checklist.md).
 - `system research` and the MCP tool `research` run `research`; `--deep` (MCP
   `deep: true`) runs its `deep` variant
-  ([variants](../../../docs/design/workflow-engine.md#variants)). The
-  `research-deep` template is gone (PROP-0004); its earlier runs still produce
-  typed artifacts when the operator supersedes a step.
+  ([variants](../../../docs/design/workflow-engine.md#variants)).
 - **Injects:** `workflow`, `workers`, `artifacts`, `eventLog`.
 - **Conformance:** [`profiles`](../workflow/conformance/profiles.ts).

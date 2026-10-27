@@ -176,22 +176,16 @@ export function apply(ctx: Context): void {
     const { runId, nodeId } = event
     const typed = nodeId ? TYPED[nodeId] : undefined
     if ((event.type !== 'workflow.node.completed' && event.type !== 'workflow.node.superseded') || !typed || !runId || !nodeId) return
-    const run = ctx.workflow.get(runId)
-    // `research-deep` was the deep variant's template before PROP-0004; its runs can still be superseded.
-    if (!run || (run.template !== 'research' && run.template !== 'research-deep')) return
-    const record = ctx.workflow.records(runId).find((r) => r.nodeId === nodeId)
-    const result = record?.outputReceipt?.result
+    if (ctx.workflow.get(runId)?.template !== 'research') return
+    const result = ctx.workflow.records(runId).find((r) => r.nodeId === nodeId)?.outputReceipt?.result
     const answer = result ? ctx.artifacts.get(result) : undefined
     if (!answer) return
-    // The schema the run's own step asked for: an old run's step keeps its old version.
-    const schema = record?.requirement.acceptance.resultSchema ?? typed.schema
-    const parsed = typedBody(textOf(answer.body), schema)
+    const parsed = typedBody(textOf(answer.body), typed.schema)
     if (!parsed.ok) return
-    const schemaName = schema.slice(0, schema.indexOf('@') + 1)
-    const previous = ctx.artifacts.list({ kind: typed.kind, runId, nodeId }).filter((a) => a.bodySchema.startsWith(schemaName)).at(-1)
+    const previous = ctx.artifacts.list({ kind: typed.kind, runId, nodeId }).at(-1)
     if (previous?.inputs.includes(result!)) return
     ctx.artifacts.put({
-      kind: typed.kind, bodySchema: schema, body: parsed.body, inputs: [result!],
+      kind: typed.kind, bodySchema: typed.schema, body: parsed.body, inputs: [result!],
       ...(previous ? { lineage: { supersedes: [previous.id as ContentId] } } : {}),
       classification: answer.classification, producer: { type: 'system', ref: name }, runId, nodeId,
     })
