@@ -104,6 +104,45 @@ describe('web UI: the operator accepts or rejects a board review held for the op
     expect(ctx.artifacts.get(task.lastDecision!)!.body).toMatchObject({ outcome: { detail: { reason: 'checks-not-run', checksNotRun: [{ check: 'lint', note: 'no lint command is configured for this repository' }] } } })
   })
 
+  it('lists a result accepted and waiting for its landing as accepted, never as a review to decide, and leaves it out of the counts (T334)', async () => {
+    const { ctx, call } = await boot()
+    await activeProject(ctx)
+    // A real run gives the landing its row; the writing task below is served by that run's id.
+    const { task: carrier, run } = await reviewed(ctx, 'carrier')
+    const proposed = await ctx.board.propose({ projectId: 'p1', title: 'lands later', goal: 'change it', acceptance: [{ id: 'a1', statement: 'tests pass', check: 'tests' }], actionClass: 'workspace-write' })
+    await ctx.board.sweep(new Date())
+    const { generation } = await ctx.board.claim(proposed.taskId, 'lead', 600_000)
+    await ctx.board.start(proposed.taskId, generation, { runId: run.runId })
+    const subject = { type: 'git-head' as const, ref: 'a'.repeat(40), version: 'b'.repeat(64) }
+    const result = ctx.artifacts.put({
+      kind: 'report', bodySchema: 'agent-result@1.1', classification: 'operator-shared', producer: { type: 'worker', ref: 'test' },
+      body: { schema: 'agent-result@1.1', worker: 'w', runtime: 'fake', runId: 'r', promptHash: `sha256:${'0'.repeat(64)}`, sandbox: 'workspace-write', text: 'changed it', workspace: '/work/tree', subject },
+    }).id as ArtifactRef
+    await ctx.board.submit(proposed.taskId, generation, { artifacts: [result], subject })
+    const own = ctx.artifacts.recordDecision({
+      decisionType: 'acceptance', question: 'Does the run complete it?', inputs: [result],
+      candidates: [{ option: 'accept', selected: true, reasons: ['its steps were accepted'] }, { option: 'reject', selected: false, reasons: ['not reject'] }],
+      decider: { type: 'rule', id: 'workflow.task-acceptance', version: '4' }, outcome: { option: 'accept', detail: { taskId: proposed.taskId, subject, checks: { tests: true } } }, deterministic: true,
+    }, { producer: { type: 'system', ref: 'workflow' }, runId: run.runId }).id as ArtifactRef
+    expect(await ctx.board.accept(proposed.taskId, own)).toMatchObject({ state: 'review', waiting: { reason: 'operator-review' } })
+    // Held for the operator it is a review to decide, as before.
+    const held = await call('reviews')
+    expect((held.value.reviews as Array<{ taskId: string }>).map((r) => r.taskId)).toContain(proposed.taskId)
+    // The operator accepts it: it waits for its landing.
+    const decided = await call(`reviews/${proposed.taskId}/decide`, { verdict: 'accept', subject, checksNotRun: { lint: 'no lint command is configured' } })
+    expect(decided.status).toBe(200)
+    expect(await ctx.board.task(proposed.taskId)).toMatchObject({ state: 'review', waiting: { reason: 'landing' } })
+    ctx.store.db.prepare('UPDATE workflow_tasks SET landing = ? WHERE run_id = ?').run(JSON.stringify({ branch: `system/run/${run.runId}`, at: '2026-10-28T10:00:00.000Z', state: 'committed', head: 'b'.repeat(40), base: { branch: 'main', sha: 'a'.repeat(40) } }), run.runId)
+
+    const listed = await call('reviews')
+    const ids = (list: unknown) => (list as Array<{ taskId: string }>).map((r) => r.taskId)
+    expect(ids(listed.value.reviews)).toEqual([carrier.taskId])
+    expect(ids(listed.value.accepted)).toContain(proposed.taskId)
+    expect((listed.value.accepted as Array<{ taskId: string; landing: { state: string } }>).find((a) => a.taskId === proposed.taskId)!.landing.state).toBe('committed')
+    // Home's count and the held reviews' expiry leave it out: only the carrier's review is counted.
+    expect((await call('waiting')).value.reviews).toEqual({ value: 1, firstExpires: carrier.waiting!.expiresAt })
+  })
+
   it('takes the operator\'s rejection as another attempt, through the gate', async () => {
     const { ctx, call } = await boot()
     await activeProject(ctx)
