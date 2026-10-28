@@ -1730,7 +1730,8 @@ WantedBy=timers.target
 ```
 
 Enable them: `systemctl --user enable --now system.service system-health.timer system-backup.timer`.
-Prune old backup directories yourself; each one is a full snapshot.
+Prune old daily backup directories yourself; each one is a full snapshot. The live update prunes
+its own `<date>-before-base*` backups (see [update the live install](#update-the-live-install-from-e218ae7-to-the-base-release)).
 
 **Automatic update of the live install.** A timer runs one pass of the [automatic
 update](#update-the-live-install-automatically) every 15 minutes, from the check checkout:
@@ -1943,6 +1944,16 @@ check` (37 rows, checked on a copy, 2026-10-23).
    moment is needed, since each step the stop cuts resumes by itself. The unit starts the daemon with its
    environment file, never this shell's environment. Notes and the backup go to
    `~/system-backups/<date>-before-base/` (`-2`, `-3` for a later attempt).
+
+   **Backups are kept within a bound (T346).** Once an update verified (never one that rolled
+   back), the script drops that update's `after` snapshot and prunes the older
+   `<date>-before-base*` directories: it keeps the last `--keep` updates (default 3), the newest of
+   each of the last 4 weeks (counted back in 7-day spans from the newest backup), this update's
+   backup, and any backup an unfinished update refers to (a state file whose phase is not `done`,
+   so a backup a rollback or a re-run still needs is never removed). The backup of a rolled-back or
+   set-aside update counts for nothing and is removed. Each removal is logged and listed in
+   `<dir>/live-update.log`. A dry run (no `--apply`) lists, after the plan, `backup prune: keep …`
+   and `backup prune: would remove …` for the backups as they are now.
 4. **Read the outcome.**
    - Exit 0, `updated`: Base runs. `system plugins` lists each plugin's lifecycle, and `system
      health` names each agent Worker that cannot take work yet (`agent:codex-review

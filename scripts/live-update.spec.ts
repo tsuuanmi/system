@@ -395,6 +395,101 @@ describe('live-update.sh --stage (T323)', () => {
   })
 })
 
+describe('live-update.sh keeps its backups within a bound (T346)', () => {
+  /** 12 updates over 6 weeks, the newest on 2026-10-26: the weeks count back from it. */
+  const DATES = ['2026-09-14', '2026-09-16', '2026-09-21', '2026-09-28', '2026-09-30', '2026-10-05', '2026-10-08', '2026-10-12', '2026-10-14', '2026-10-19', '2026-10-22', '2026-10-26']
+  const name = (date: string): string => `${date}-before-base`
+
+  function backupsOf(f: Fixture, dates: string[], phase = 'done'): void {
+    for (const date of dates) {
+      const dir = join(f.backups, name(date))
+      mkdirSync(join(dir, 'after'), { recursive: true })
+      writeFileSync(join(dir, 'live-update.state'), `from=a\ntarget=b\nphase=${phase}\n`)
+    }
+  }
+  const lines = (output: string, what: string): string[] => [...output.matchAll(new RegExp(`backup prune: ${what} (\\S+)`, 'g'))].map((m) => m[1]!).sort()
+
+  it('a dry run lists what it would remove: the last 3 updates and the newest of each of 4 weeks are kept', () => {
+    const f = fixture()
+    backupsOf(f, DATES)
+    const before = snapshot(f.backups)
+    const { status, output } = run(f, f.target)
+    expect(status, output).toBe(0)
+    expect(lines(output, 'keep')).toEqual(['2026-10-05', '2026-10-12', '2026-10-19', '2026-10-22', '2026-10-26'].map(name))
+    expect(lines(output, 'would remove')).toEqual(['2026-09-14', '2026-09-16', '2026-09-21', '2026-09-28', '2026-09-30', '2026-10-08', '2026-10-14'].map(name))
+    expect(snapshot(f.backups)).toEqual(before)
+  })
+
+  it('--keep sets the number of updates kept, and takes a whole number of at least 1', () => {
+    const f = fixture()
+    backupsOf(f, DATES)
+    const { output } = run(f, f.target, '--keep', '6')
+    expect(lines(output, 'keep')).toEqual(['2026-10-05', '2026-10-08', '2026-10-12', '2026-10-14', '2026-10-19', '2026-10-22', '2026-10-26'].map(name))
+    for (const bad of ['0', 'many']) expect(run(f, f.target, '--keep', bad).status).toBe(2)
+  })
+
+  it('a backup an unfinished update refers to is kept, however old', () => {
+    const f = fixture()
+    backupsOf(f, DATES)
+    backupsOf(f, ['2026-08-01'], 'backed-up')
+    const { output } = run(f, f.target)
+    expect(lines(output, 'keep')).toContain(name('2026-08-01'))
+    expect(lines(output, 'would remove')).not.toContain(name('2026-08-01'))
+    expect(output).toContain('an unfinished update (phase backed-up)')
+    expect(lines(output, 'would remove')).toHaveLength(7)
+  })
+
+  it('an update that verified drops its after snapshot and removes the older backups, logging each', () => {
+    const f = fixture()
+    backupsOf(f, DATES)
+    // The update's own directory, as the script leaves it once its checks passed (phase verified); the live checkout is at the target.
+    const dir = attempt(f, 'verified')
+    mkdirSync(join(dir, 'after'))
+    writeFileSync(join(dir, 'after', 'system-backup.json'), '{}\n')
+    f.git('checkout', '-q', '--detach', f.target)
+    const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f))
+    expect(output, output).toContain('updated:')
+    expect(status).toBe(0)
+    const removed = ['2026-09-14', '2026-09-16', '2026-09-21', '2026-09-28', '2026-09-30', '2026-10-08', '2026-10-14'].map(name)
+    const kept = ['2026-10-05', '2026-10-12', '2026-10-19', '2026-10-22', '2026-10-26'].map(name)
+    expect(readdirSync(f.backups).filter((entry) => entry.includes('-before-base')).sort()).toEqual([...kept, '2026-10-01-before-base'].sort())
+    // Every kept backup is whole, and this update's after snapshot is dropped, the rest of it kept.
+    for (const entry of kept) expect(existsSync(join(f.backups, entry, 'after')), entry).toBe(true)
+    expect(existsSync(join(dir, 'after'))).toBe(false)
+    expect(readFileSync(join(dir, 'live-update.state'), 'utf8')).toContain('phase=done')
+    // The notes list each removal.
+    const notes = readFileSync(join(dir, 'live-update.log'), 'utf8')
+    expect(lines(notes, 'removed')).toEqual(removed)
+    expect(notes).toContain('(the checks passed)')
+    expect(lines(notes, 'keep')).toEqual([...kept, '2026-10-01-before-base'].sort())
+  })
+
+  it('a rolled-back update prunes nothing, and keeps its after snapshot as it was', () => {
+    const f = fixture()
+    backupsOf(f, DATES)
+    const system = fakeSystem(f.root, f.live, f.home)
+    execFileSync(join(f.bin, 'systemctl'), ['--user', 'start', 'system.service'])
+    waitForDaemon(f)
+    system.work([])
+    try {
+      const old = snapshot(f.backups)
+      const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-wait', '0')
+      // The fixture has no backup to take: the update rolls back.
+      expect(output, output).toContain('ROLLING BACK')
+      expect(status).toBe(1)
+      expect(output).not.toContain('backup prune')
+      // The backups a verified update would have removed are all there, with their after snapshots.
+      for (const date of ['2026-09-14', '2026-09-16', '2026-09-21', '2026-09-28', '2026-09-30', '2026-10-08', '2026-10-14']) {
+        expect(existsSync(join(f.backups, name(date), 'after')), date).toBe(true)
+      }
+      const now = snapshot(f.backups)
+      for (const [path, content] of Object.entries(old)) expect(now[path], path).toBe(content)
+    } finally {
+      f.unit.cleanup()
+    }
+  })
+})
+
 /** T223's develop step, the one the update to c2a45415 cut on 2026-10-26. */
 const T223: FakeWork = { runId: 'run_T223', nodeId: 'develop:1', worker: 'agent:codex-main/develop', since: '2026-10-26T09:00:00.000Z', taskId: 'T223' }
 const T223_LINE = /run run_T223 step develop:1 on agent:codex-main\/develop, for \d+ (s|min|h \d+ min) \(task T223, algorithm-development\)/
