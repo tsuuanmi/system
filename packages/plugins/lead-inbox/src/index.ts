@@ -12,14 +12,17 @@
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { SystemEvent } from '@tsuuanmi/system-ledger-core'
-import { readCapacity, reply, type RosterServices, type ToolContext, type ToolSpec } from '@tsuuanmi/system-gateway-core'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { leadId, readCapacity, reply, type RosterServices, type ToolContext, type ToolSpec } from '@tsuuanmi/system-gateway-core'
+import { SchemaError, SchemaRegistry } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-ledger-core'
 import { z as zod } from 'zod'
+import { type Brief, type BriefSources, buildBrief, renderBrief, UnknownProject } from './brief.ts'
+import { defaultSources } from './brief-sources.ts'
 import { type Closing, type Draft, KINDS, type Kind, type LeadNotice, makeNotice, readEvent, type Reading } from './notices.ts'
 import { commandSink, DEFAULT_TIMEOUT_SECONDS, fileSink, type Sink, type SinkConfig, sinkProblems, waitSink } from './sinks.ts'
 
 export { KINDS, type Kind, type LeadNotice, readEvent } from './notices.ts'
+export { type Brief, type BriefSources, buildBrief, LIST_MAX, renderBrief, UnknownProject } from './brief.ts'
 export { commandSink, fileSink, filePath, type Outcome, type Sink, type SinkConfig, sinkProblems } from './sinks.ts'
 
 export const name = 'lead-inbox'
@@ -32,6 +35,10 @@ declare module '@deepseek-ai/cordis' {
 
 /** The event every delivery outcome is recorded as. */
 export const DELIVERY_EVENT = 'lead-inbox.delivery'
+/** The one event a lead brief writes: who read it (`principal`) and for which project; the time is the event's. */
+export const BRIEF_EVENT = 'lead.brief-read'
+/** The brief's record, as MCP `lead_brief` returns it and `system lead brief --json` prints it (schemas/lead-brief.v1.json). */
+const BRIEF_SCHEMA = 'lead-brief@1.0'
 const PAGE = 1000
 const PAGES_PER_PASS = 10
 /** Open requests kept at most for `request.stale` (INV-9), and waiters of `system lead wait` at most. */
@@ -148,6 +155,8 @@ export class LeadInbox extends Service {
   static Config = Config
 
   readonly sources: Sources
+  /** What the lead brief reads, each replaceable by a test (the sources it reads through the optional rows by default). */
+  readonly brief: BriefSources
   private readonly kinds: ReadonlySet<Kind>
   private readonly dedupMs: number
   private readonly maxAgeMs: number
@@ -187,6 +196,7 @@ export class LeadInbox extends Service {
         return waitSink
       }))
     }
+    this.brief = defaultSources(ctx, this)
     this.sources = {
       projectOf: async (taskId) => {
         const board = ctx.get('board' as never) as { task?: (id: string) => Promise<{ projectId?: string } | undefined> } | undefined
@@ -236,6 +246,7 @@ export class LeadInbox extends Service {
     })
     ctx.inject(['mcp'], (c) => {
       c.mcp.tool('lead_inbox', TOOL, (args, context) => this.tool(args, context))
+      c.mcp.tool('lead_brief', BRIEF_TOOL, (args, context) => this.briefTool(args, context))
       c.mcp.tool('live_update_record', RECORD_TOOL, async (args) => {
         try {
           return reply(this.recordLiveUpdate(args), `recorded the live update as ${String(args.outcome)}`)
@@ -624,6 +635,60 @@ export class LeadInbox extends Service {
 
   // --- MCP ---
 
+  /** Replace what the lead brief reads (tests). */
+  useBrief(sources: Partial<BriefSources>): void {
+    Object.assign(this.brief, sources)
+  }
+
+  /** The time this principal last read the brief of the project, from the event it records; undefined for the first. */
+  private lastBrief(principal: string, project: string): string | undefined {
+    const events = this.ctx.eventLog.query({ type: BRIEF_EVENT, order: 'desc', limit: 200 })
+    return events.find((e) => (e.data as { principal?: string; project?: string } | undefined)?.principal === principal && (e.data as { project?: string }).project === project)?.at
+  }
+
+  /**
+   * The lead brief (PROP-0019 section 3): read-only but for one event, `lead.brief-read`. A lead's token
+   * reads its own project only; the operator names the project. The record is validated as
+   * `lead-brief@1.0` before anything is written or returned (INV-14): one that fails throws
+   * {@link SchemaError}, a defect, and no event is recorded.
+   */
+  async read(project: string, principal: string, options: { since?: string; now?: Date } = {}): Promise<Brief> {
+    const now = options.now ?? new Date()
+    const lastBrief = this.lastBrief(principal, project)
+    const since = options.since ?? lastBrief ?? new Date(now.getTime() - 86_400_000).toISOString()
+    const brief = await buildBrief({ project, principal, now, since, ...(lastBrief ? { lastBrief } : {}), sources: this.brief })
+    schemas.assert(BRIEF_SCHEMA, brief)
+    try {
+      this.ctx.eventLog.append({ type: BRIEF_EVENT, data: { principal, project } })
+    } catch (error) {
+      brief.couldNotRead.push({ section: 'the lead.brief-read event', reason: `it was not recorded: ${(error as Error).message}`.slice(0, 300) })
+      schemas.assert(BRIEF_SCHEMA, brief)
+    }
+    return brief
+  }
+
+  /** `lead_brief`. */
+  private async briefTool(args: Record<string, unknown>, context: ToolContext) {
+    const asked = typeof args.projectId === 'string' ? args.projectId : undefined
+    const refuse = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
+    if (context.lead !== undefined && asked !== undefined && asked !== context.lead) {
+      return refuse(`the lead token of project ${context.lead} reaches only project ${context.lead}'s brief; ${asked} is another project's, so nothing was read`)
+    }
+    if (context.lead === undefined && context.scope !== 'operator') return refuse('the lead brief is read with a project\'s lead token (or the operator\'s)')
+    const project = context.lead ?? asked
+    if (project === undefined) return refuse('name the project: projectId')
+    const since = typeof args.since === 'string' ? args.since : undefined
+    if (since !== undefined && Number.isNaN(Date.parse(since))) return refuse(`since is not a time: ${since.slice(0, 40)}`)
+    try {
+      const brief = await this.read(project, context.lead !== undefined ? leadId(context.lead) : 'operator', since === undefined ? {} : { since: new Date(since).toISOString() })
+      return reply(brief as unknown as Record<string, unknown>, renderBrief(brief))
+    } catch (error) {
+      if (error instanceof UnknownProject) return refuse(error.message)
+      if (error instanceof SchemaError) return refuse(`the brief is not a valid ${BRIEF_SCHEMA}, so it was not sent and nothing was recorded (a defect): ${error.message.slice(0, 500)}`)
+      throw error
+    }
+  }
+
   /** `lead_inbox`: a lead's token reads its own project; the operator names the project. */
   private async tool(args: Record<string, unknown>, context: ToolContext) {
     const asked = typeof args.projectId === 'string' ? args.projectId : undefined
@@ -642,6 +707,15 @@ export class LeadInbox extends Service {
     const lines = notices.length ? notices.map((n) => `${n.id}  ${n.kind}  ${n.title}\n  ${n.text}\n  → ${n.act.join('  |  ')}`) : ['no unread notice']
     return reply({ ...(project !== undefined ? { project } : {}), notices, ...(acked ?? {}), stats }, `${notices.length} unread notice(s)${project ? ` for lead:${project}` : ''}${acked ? `; acked ${acked.acked.length}, unknown ${acked.unknown.length}` : ''}\n${lines.join('\n')}`)
   }
+}
+
+const BRIEF_TOOL: ToolSpec = {
+  scope: 'client',
+  description: 'The lead brief: one read-only page a lead session reads at its start and whenever it is lost (PROP-0019 section 3): you (project, charter, dates), the inbox, what waits on the operator, what is held on you, pending decisions, running work (tasks, landing queues, worktrees), health, the last day, and the first moves. A section that cannot be read is named under "what I could not read" and shows no value, never an empty list; a list holds at most 20 entries and says how many it left out. It writes one event, lead.brief-read (who, when, which project). A lead token reads its own project only; the operator names `projectId`.',
+  inputSchema: {
+    projectId: zod.string().min(1).max(100).optional().describe('The project (the operator\'s token names it; a lead\'s is its own)'),
+    since: zod.string().min(1).max(40).optional().describe('The start of "the last day", as a time (ISO 8601); default the last brief this principal read, else a day ago'),
+  },
 }
 
 const TOOL: ToolSpec = {

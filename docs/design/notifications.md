@@ -179,6 +179,10 @@ replaces each lead's own polling script (`waiter.sh`) with one place every proje
   task, commit, and what it changed in one line, pushed per landing) and `task.digest` (the landings
   of each `digestMinutes`, extra). Ids, kinds, counts, times, and the command to act only (egress
   classification `operator-shared`).
+- **The brief:** `lead_brief` (MCP) and `system lead brief` are tools of the same row: one read-only
+  page of the inbox with what waits on the operator, what is held on the lead, running work, and what
+  could not be read ([PROP-0019 §3](../proposals/0019-lead-logic-in-system.md#3-system-lead-brief---project-id)).
+  It writes the event `lead.brief-read` only.
 - **Handled:** `lead_inbox` (MCP, client scope; a lead token reads its own project only, the operator
   names the project) lists the unread notices; `ack` marks ids handled. A notice handled through its
   subject closes by itself: a decided request closes its `merge.held`, `request.outside-rights`, and

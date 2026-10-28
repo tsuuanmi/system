@@ -516,11 +516,7 @@ export class StoreApprovals extends Approvals {
     for (const v of verdicts) {
       const request = this.read(v.requestId)?.request
       if (!request) continue
-      const may = leadMayDecide({
-        project, of: await this.projectOfRequest(request), action: request.action.class,
-        branch: request.action.class === 'merge' ? this.baseBranchOf(request) : undefined, devBranches: this.devBranches(project),
-        remediation: request.action.class === 'remediation' ? leadRemediationOf(request, (ref) => this.ctx.artifacts.get(ref as never)) : undefined,
-      })
+      const may = await this.leadMay(project, request)
       if (!may.ok) {
         refused.push(`${v.requestId} (${request.action.class}): ${may.reason}`)
         outside.push({ requestId: v.requestId, actionClass: request.action.class })
@@ -536,6 +532,19 @@ export class StoreApprovals extends Approvals {
     }
     if (refused.length) throw new ApprovalsError('forbidden', `${leadId(project)} may not give ${refused.length === 1 ? 'this verdict' : 'these verdicts'}; nothing was decided. ${refused.join(' | ')}`)
     return this.decideBy(verdicts, when, check, project)
+  }
+
+  /**
+   * Whether the lead of `project` may decide `request` (ADR-0076), by the closed list of its rights
+   * ({@link leadMayDecide}): the one test `decideAsLead` applies and the lead brief reads, so what the
+   * brief shows as held on the lead is what the lead's token would be let decide.
+   */
+  async leadMay(project: string, request: ApprovalRequest): Promise<ReturnType<typeof leadMayDecide>> {
+    return leadMayDecide({
+      project, of: await this.projectOfRequest(request), action: request.action.class,
+      branch: request.action.class === 'merge' ? this.baseBranchOf(request) : undefined, devBranches: this.devBranches(project),
+      remediation: request.action.class === 'remediation' ? leadRemediationOf(request, (ref) => this.ctx.artifacts.get(ref as never)) : undefined,
+    })
   }
 
   /**

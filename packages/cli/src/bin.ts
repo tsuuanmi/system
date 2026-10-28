@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, type EnforceView, formatEnforce, formatPluginRows, parseEnforce, parsePlugin, type PluginRowView,hostCapacity, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, type DispatchView, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, leadInbox, leadToken, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseLead, parseMetrics, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem, useProfile } from './index.ts'
+import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, type EnforceView, formatEnforce, formatPluginRows, parseEnforce, parsePlugin, type PluginRowView,hostCapacity, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, type DispatchView, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, leadBrief, leadInbox, leadToken, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseLead, parseMetrics, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem, useProfile } from './index.ts'
 import { bundlePlugins, bundleStudioPolicy, parseProjectNew, profileHost, type ProjectHost, projectNew } from './project.ts'
 
 const USAGE = `Usage: system <command> [--profile system|system-test]
@@ -163,6 +163,10 @@ const USAGE = `Usage: system <command> [--profile system|system-test]
   lead health [--project <id>] [--json]
                             the project's health table: dispatch, Workers, quota, sinks, live update, landing queue,
                             worktrees, enforce switches; each ok, degraded, or unknown with its reason
+  lead brief --project <id> [--json] [--since <time>]
+                            the one read-only page a lead session reads at its start and when it is lost (inbox, what waits
+                            on the operator or on you, running work, the last day, what could not be read); writes only the
+                            event lead.brief-read
   lead-token issue <project>   issue a project's lead token (lead-<project>.token beside operator.token, owner-only; replaces one
                             issued before): its holder decides as lead:<project>, within a closed list of rights System enforces
   lead-token revoke <project>  revoke it: requests with it are refused at once
@@ -804,7 +808,7 @@ async function main(args: string[]): Promise<number> {
       // The lead's inbox (D107): `wait` is the loop a lead runs instead of polling.
       const parsed = parseLead(rest)
       if (!parsed) break
-      return leadInbox(parsed)
+      return parsed.action === 'brief' ? leadBrief(parsed) : leadInbox(parsed)
     }
     case 'lead-token':
       // The operator's command (ADR-0076): a project's lead principal, with its own token and the decider lead:<project>.

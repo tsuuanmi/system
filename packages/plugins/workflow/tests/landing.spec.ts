@@ -710,6 +710,12 @@ describe('ctx.workflow keeps one landing queue per target branch (PROP-0016 I3)'
     expect(order.map((r) => landingOf(ctx, r.runId)!.queue!.seq)).toEqual([1, 2, 3])
     expect(landingOf(ctx, order[0]!.runId)!.state).toBe('asked')
     expect(ctx.workflow.explain(order[2]!.runId)!.landing).toMatchObject({ state: 'queued', position: 3, length: 3, holder: { runId: order[0]!.runId } })
+    // The lead brief reads the same queue, whole and in order (PROP-0019 section 3).
+    const open = ctx.workflow.openLandings()
+    expect(open.more).toBe(false)
+    expect(open.landings.map((l) => [l.runId, l.position, l.state])).toEqual([[order[0]!.runId, 1, 'asked'], [order[1]!.runId, 2, 'queued'], [order[2]!.runId, 3, 'queued']])
+    // Its target is the branch alone: the queue's key holds the repository's host path, which the brief never shows.
+    expect(new Set(open.landings.map((l) => l.branch))).toEqual(new Set([landingOf(ctx, order[0]!.runId)!.base!.branch]))
     for (const [k, run] of order.entries()) {
       await approve(ctx, run.runId)
       await until(ctx, run.runId, 'merged')

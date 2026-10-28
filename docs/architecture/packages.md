@@ -23,7 +23,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [gateway-core](../../packages/gateway-core/README.md) | gateways | defines `mcp` | — | — | `libs` |
 | [gateway-responses](../../packages/plugins/gateway-responses/README.md) | gateways | — | `gateway-responses` | `webServer`, `workflow`, `store` | `gateway-core`, `gateway-turns`, `libs` |
 | [gateway-turns](../../packages/gateway-turns/README.md) | gateways | — | — | — | `gateway-core`, `ledger-core`, `libs` |
-| [lead-inbox](../../packages/plugins/lead-inbox/README.md) | gateways | `leadInbox` | `lead-inbox` | `store`, `eventLog`, `accounts` (optional), `agentWorkers` (optional), `board` (optional), `mcp` (optional), `resources` (optional), `workers` (optional), `workflow` (optional) | `gateway-core`, `ledger-core`, `libs` |
+| [lead-inbox](../../packages/plugins/lead-inbox/README.md) | gateways | `leadInbox` | `lead-inbox` | `store`, `eventLog`, `accounts` (optional), `agentWorkers` (optional), `approvals` (optional), `board` (optional), `mcp` (optional), `resources` (optional), `workers` (optional), `workflow` (optional) | `gateway-core`, `ledger-core`, `libs` |
 | [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `accounts` (optional), `agentWorkers` (optional), `artifacts` (optional), `board` (optional), `browser` (optional), `credentials` (optional), `eventLog` (optional), `pluginHost` (optional), `providers` (optional), `resources` (optional), `store` (optional), `turns` (optional), `workers` (optional), `workflow` (optional) | `gateway-core`, `libs`, `plugin-host-core`, `resources-core` |
 | [notify](../../packages/plugins/notify/README.md) | gateways | — | `notify` | `store`, `eventLog`, `credentials` (optional), `egress` (optional), `mcp` (optional) | `gateway-core`, `ledger-core`, `libs`, `workers-core` |
 | [report](../../packages/plugins/report/README.md) | gateways | — | `report` | `artifacts`, `eventLog`, `store`, `agentWorkers` (optional), `approvals` (optional), `board` (optional), `digests` (optional), `mcp` (optional), `pluginHost` (optional), `resources` (optional), `workers` (optional), `workflow` (optional) | `approvals-core`, `board-core`, `digest-core`, `gateway-core`, `ledger-core`, `libs`, `resources-core` |
@@ -206,6 +206,7 @@ flowchart TB
   lead_inbox --> event_log
   lead_inbox -.-> accounts
   lead_inbox -.-> agent_workers
+  lead_inbox -.-> approvals
   lead_inbox -.-> board
   lead_inbox -.-> mcp_server
   lead_inbox -.-> resources

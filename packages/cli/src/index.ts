@@ -765,15 +765,16 @@ export interface LeadNoticeView { id: string; project: string; kind: string; tit
  * and `system lead health [--project <id>]` (PROP-0019 2.10), each with `--json`; undefined for an unknown
  * word, flag, or value. A timeout is a whole number of seconds from 1 to 86400.
  */
-export function parseLead(rest: readonly string[]): { action: 'wait' | 'inbox' | 'ack' | 'digest' | 'health'; json: boolean; project?: string; day?: string; timeoutSeconds?: number; ids: string[] } | undefined {
+export function parseLead(rest: readonly string[]): { action: 'wait' | 'inbox' | 'ack' | 'digest' | 'health' | 'brief'; json: boolean; project?: string; day?: string; timeoutSeconds?: number; since?: string; ids: string[] } | undefined {
   const [action, ...words] = rest
-  if (action !== 'wait' && action !== 'inbox' && action !== 'ack' && action !== 'digest' && action !== 'health') return undefined
-  const out: { action: 'wait' | 'inbox' | 'ack' | 'digest' | 'health'; json: boolean; project?: string; day?: string; timeoutSeconds?: number; ids: string[] } = { action, json: false, ids: [] }
+  if (action !== 'wait' && action !== 'inbox' && action !== 'ack' && action !== 'digest' && action !== 'health' && action !== 'brief') return undefined
+  const out: { action: 'wait' | 'inbox' | 'ack' | 'digest' | 'health' | 'brief'; json: boolean; project?: string; day?: string; timeoutSeconds?: number; since?: string; ids: string[] } = { action, json: false, ids: [] }
   for (let i = 0; i < words.length; i++) {
     const word = words[i]!
     if (word === '--json') out.json = true
     else if (word === '--project' && out.project === undefined && words[i + 1] && !words[i + 1]!.startsWith('--')) out.project = words[++i]!
     else if (word === '--day' && action === 'digest' && out.day === undefined && /^\d{4}-\d{2}-\d{2}$/.test(words[i + 1] ?? '')) out.day = words[++i]!
+    else if (word === '--since' && action === 'brief' && out.since === undefined && words[i + 1] && !Number.isNaN(Date.parse(words[i + 1]!))) out.since = words[++i]!
     else if (word === '--timeout' && action === 'wait' && out.timeoutSeconds === undefined && /^[1-9]\d{0,5}$/.test(words[i + 1] ?? '') && Number(words[i + 1]) <= 86_400) out.timeoutSeconds = Number(words[++i])
     else if (action === 'ack' && !word.startsWith('--')) out.ids.push(word)
     else return undefined
@@ -783,6 +784,18 @@ export function parseLead(rest: readonly string[]): { action: 'wait' | 'inbox' |
 
 /** One notice as lines: its kind and title, what happened, and the command to act. */
 export const formatLeadNotice = (n: LeadNoticeView): string[] => [`[${n.kind}] ${n.title}  (${n.id})`, `  ${n.text}`, ...n.act.map((line) => `  → ${line}`)]
+
+/**
+ * `system lead brief --project <id> [--json] [--since <time>]` (PROP-0019 section 3): the one page a
+ * lead session reads at its start and when it is lost, from the `lead_brief` tool; `--json` prints the
+ * brief's record, else the page as the tool renders it. A refusal is thrown with its reason.
+ */
+export async function leadBrief(parsed: NonNullable<ReturnType<typeof parseLead>>, call: typeof callTool = callTool, print: (line: string) => void = console.log): Promise<number> {
+  const outcome = await call('lead_brief', { ...(parsed.project !== undefined ? { projectId: parsed.project } : {}), ...(parsed.since !== undefined ? { since: parsed.since } : {}) })
+  if (outcome.isError) throw new Error(outcome.text)
+  print(parsed.json ? JSON.stringify(outcome.structured) : outcome.text)
+  return 0
+}
 
 /**
  * The lead's loop instead of polling: `wait` asks the inbox (`lead_inbox`, up to 55 s at a time) until a

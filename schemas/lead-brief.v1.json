@@ -1,0 +1,337 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:lead-brief:v1",
+  "title": "Lead brief",
+  "description": "The one read-only page a project's lead session reads at its start and whenever it is lost (PROP-0019 section 3; the lead-inbox plugin): what MCP `lead_brief` returns and `system lead brief --json` prints. Each part of a section is either read (`value`) or not (`unreadable`, with the reason, also named in `couldNotRead`): a part that could not be read, or not whole within its bound, shows no value, never an empty list (INV-2). Each list holds at most 20 entries and says how many it omitted (INV-9). It names only the project's own tasks, runs, requests, and worktrees (ADR-0076), and holds ids, kinds, counts, times, a request's summary, and commands: never a secret, a token, or a host path. Never persisted: reading it records the event `lead.brief-read` only. Egress classification: operator-shared.",
+  "type": "object",
+  "required": ["schema", "project", "principal", "at", "since", "sections", "couldNotRead", "firstMoves"],
+  "properties": {
+    "schema": { "const": "lead-brief@1.0" },
+    "project": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "principal": { "description": "Who read it: `lead:<project>` (a lead token, its own project only) or `operator`.", "$ref": "#/$defs/principal" },
+    "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "since": { "description": "The start of section 8's period: `--since`, else this principal's last brief of the project, else a day before `at`.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "lastBrief": { "description": "When this principal last read a brief of the project; absent for its first.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "sections": {
+      "type": "object",
+      "required": ["you", "inbox", "waitingOnOperator", "heldOnYou", "pendingDecisions", "runningWork", "health", "lastDay", "switches", "handover"],
+      "properties": {
+        "you": { "description": "1. The project, the principal, the charter's objective and constraints, dates, and the playbook's version.", "oneOf": [{ "$ref": "#/$defs/unreadable" }, { "type": "object", "required": ["value"], "properties": { "value": { "$ref": "#/$defs/you" } }, "additionalProperties": false }] },
+        "inbox": { "description": "2. Unread notices, oldest first.", "oneOf": [{ "$ref": "#/$defs/unreadable" }, { "type": "object", "required": ["value"], "properties": { "value": { "type": "object", "required": ["unread"], "properties": { "unread": { "$ref": "#/$defs/notices" } }, "additionalProperties": false } }, "additionalProperties": false }] },
+        "waitingOnOperator": {
+          "description": "3. Open requests outside the lead's rights, and reviews held for the operator (`operator-review`, `review-expired`; a heavy-tier result is held so), each by expiry.",
+          "type": "object", "required": ["requests", "reviews"],
+          "properties": { "requests": { "$ref": "#/$defs/readRequests" }, "reviews": { "$ref": "#/$defs/readReviews" } },
+          "additionalProperties": false
+        },
+        "heldOnYou": {
+          "description": "4. Requests the lead may decide (by `leadMayDecide`, the test its token's verdict is held to), and results under review it may accept, each by expiry.",
+          "type": "object", "required": ["requests", "results"],
+          "properties": { "requests": { "$ref": "#/$defs/readRequests" }, "results": { "$ref": "#/$defs/readReviews" } },
+          "additionalProperties": false
+        },
+        "pendingDecisions": {
+          "description": "5. The lead's open questions to the operator and the decisions recorded (operator-decision records), and the project's policy or charter changes awaiting approval.",
+          "type": "object", "required": ["asked", "changes"],
+          "properties": {
+            "asked": { "oneOf": [{ "$ref": "#/$defs/unreadable" }, { "type": "object", "required": ["value"], "properties": { "value": { "$ref": "#/$defs/decisions" } }, "additionalProperties": false }] },
+            "changes": { "$ref": "#/$defs/readRequests" }
+          },
+          "additionalProperties": false
+        },
+        "runningWork": {
+          "description": "6. Tasks running, ready, waiting (with what for), and blocked by a dependency; the runs of the open tasks and their steps; the landing queues the project's results are in; the run worktrees held.",
+          "type": "object", "required": ["tasks", "runs", "landingQueues", "worktrees"],
+          "properties": {
+            "tasks": { "oneOf": [{ "$ref": "#/$defs/unreadable" }, { "type": "object", "required": ["value"], "properties": { "value": { "type": "object", "required": ["running", "ready", "waiting", "blocked"], "properties": { "running": { "$ref": "#/$defs/tasks" }, "ready": { "$ref": "#/$defs/tasks" }, "waiting": { "$ref": "#/$defs/tasks" }, "blocked": { "$ref": "#/$defs/tasks" } }, "additionalProperties": false } }, "additionalProperties": false }] },
+            "runs": { "oneOf": [{ "$ref": "#/$defs/unreadable" }, { "type": "object", "required": ["value"], "properties": { "value": { "$ref": "#/$defs/runs" } }, "additionalProperties": false }] },
+            "landingQueues": { "oneOf": [{ "$ref": "#/$defs/unreadable" }, { "type": "object", "required": ["value"], "properties": { "value": { "$ref": "#/$defs/queues" } }, "additionalProperties": false }] },
+            "worktrees": { "oneOf": [{ "$ref": "#/$defs/unreadable" }, { "type": "object", "required": ["value"], "properties": { "value": { "$ref": "#/$defs/worktrees" } }, "additionalProperties": false }] }
+          },
+          "additionalProperties": false
+        },
+        "health": { "description": "7. The health table (`lead_health`).", "oneOf": [{ "$ref": "#/$defs/unreadable" }, { "type": "object", "required": ["value"], "properties": { "value": { "$ref": "#/$defs/health" } }, "additionalProperties": false }] },
+        "lastDay": { "description": "8. What landed, what the lead decided, and what failed since `since` (`lead_digest`).", "oneOf": [{ "$ref": "#/$defs/unreadable" }, { "type": "object", "required": ["value"], "properties": { "value": { "$ref": "#/$defs/lastDay" } }, "additionalProperties": false }] },
+        "switches": { "description": "9. Comes with a later task (PROP-0019 rank 3 and after).", "$ref": "#/$defs/notYet" },
+        "handover": { "description": "10. Comes with a later task (PROP-0019 rank 2).", "$ref": "#/$defs/notYet" }
+      },
+      "additionalProperties": false
+    },
+    "couldNotRead": {
+      "description": "11. Each section, or part of one, that could not be read, with the reason; it shows no value above.",
+      "type": "array", "maxItems": 20,
+      "items": {
+        "type": "object", "required": ["section", "reason"],
+        "properties": { "section": { "type": "string", "minLength": 1, "maxLength": 120 }, "reason": { "type": "string", "minLength": 1, "maxLength": 300 } },
+        "additionalProperties": false
+      }
+    },
+    "firstMoves": { "description": "12. The daily loop's commands, fixed text.", "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 300 } }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "principal": { "type": "string", "pattern": "^(operator|lead:[A-Za-z0-9][A-Za-z0-9._-]{0,99})$" },
+    "word": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "omitted": { "description": "How many entries the list left out.", "type": "integer", "minimum": 0 },
+    "unreadable": {
+      "description": "A part that could not be read, or not whole: the reason, and no value.",
+      "type": "object", "required": ["unreadable"],
+      "properties": { "unreadable": { "type": "string", "minLength": 1, "maxLength": 300 } },
+      "additionalProperties": false
+    },
+    "notYet": {
+      "type": "object", "required": ["status", "note"],
+      "properties": { "status": { "const": "not-yet-available" }, "note": { "type": "string", "minLength": 1, "maxLength": 300 } },
+      "additionalProperties": false
+    },
+    "you": {
+      "type": "object", "required": ["project", "principal", "objective", "constraints", "dates", "playbook"],
+      "properties": {
+        "project": {
+          "type": "object", "required": ["id", "title", "state"],
+          "properties": { "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }, "title": { "type": "string", "minLength": 1, "maxLength": 200 }, "state": { "$ref": "#/$defs/word" } },
+          "additionalProperties": false
+        },
+        "principal": { "$ref": "#/$defs/principal" },
+        "objective": { "description": "The charter's intent in a line (at most 200 characters).", "type": "string", "maxLength": 200 },
+        "constraints": { "description": "The charter's deadline and notes, a line each.", "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 200 } },
+        "dates": {
+          "type": "object", "required": ["createdAt", "now"],
+          "properties": {
+            "createdAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+            "updatedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+            "deadline": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+            "now": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+          },
+          "additionalProperties": false
+        },
+        "playbook": {
+          "description": "The playbook's version (a pointer: its text is read through `system handbook --role lead`) and the rule ids that changed since the last brief.",
+          "oneOf": [
+            { "$ref": "#/$defs/unreadable" },
+            {
+              "type": "object", "required": ["value"],
+              "properties": {
+                "value": {
+                  "type": "object", "required": ["version", "changed"],
+                  "properties": {
+                    "version": { "type": "string", "minLength": 1, "maxLength": 100 },
+                    "changed": { "type": "object", "required": ["items", "omitted"], "properties": { "items": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/word" } }, "omitted": { "$ref": "#/$defs/omitted" } }, "additionalProperties": false }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "notices": {
+      "type": "object", "required": ["items", "omitted"],
+      "properties": {
+        "items": {
+          "type": "array", "maxItems": 20,
+          "items": {
+            "type": "object", "required": ["id", "kind", "subject", "ageSeconds", "act"],
+            "properties": {
+              "id": { "description": "The notice's id, as `lead_inbox` `ack` takes it.", "type": "string", "minLength": 1, "maxLength": 300 },
+              "kind": { "$ref": "#/$defs/word" },
+              "subject": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+              "ageSeconds": { "type": "integer", "minimum": 0 },
+              "act": { "type": "array", "maxItems": 4, "items": { "type": "string", "minLength": 1, "maxLength": 300 } }
+            },
+            "additionalProperties": false
+          }
+        },
+        "omitted": { "$ref": "#/$defs/omitted" }
+      },
+      "additionalProperties": false
+    },
+    "request": {
+      "type": "object", "required": ["requestId", "class", "summary", "expiresAt"],
+      "properties": {
+        "requestId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "class": { "$ref": "#/$defs/word" },
+        "summary": { "description": "The request's own one-line brief.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" },
+        "expiresAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+      },
+      "additionalProperties": false
+    },
+    "readRequests": {
+      "oneOf": [
+        { "$ref": "#/$defs/unreadable" },
+        { "type": "object", "required": ["value"], "properties": { "value": { "type": "object", "required": ["items", "omitted"], "properties": { "items": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/request" } }, "omitted": { "$ref": "#/$defs/omitted" } }, "additionalProperties": false } }, "additionalProperties": false }
+      ]
+    },
+    "review": {
+      "type": "object", "required": ["taskId", "title", "reason"],
+      "properties": {
+        "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "reason": { "description": "Why it waits (the board's wait reason), or `review`.", "$ref": "#/$defs/word" },
+        "expiresAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+      },
+      "additionalProperties": false
+    },
+    "readReviews": {
+      "oneOf": [
+        { "$ref": "#/$defs/unreadable" },
+        { "type": "object", "required": ["value"], "properties": { "value": { "type": "object", "required": ["items", "omitted"], "properties": { "items": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/review" } }, "omitted": { "$ref": "#/$defs/omitted" } }, "additionalProperties": false } }, "additionalProperties": false }
+      ]
+    },
+    "decisions": {
+      "type": "object", "required": ["items", "omitted"],
+      "properties": {
+        "items": {
+          "type": "array", "maxItems": 20,
+          "items": {
+            "type": "object", "required": ["id", "question", "at"],
+            "properties": { "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }, "question": { "type": "string", "minLength": 1, "maxLength": 500 }, "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" } },
+            "additionalProperties": false
+          }
+        },
+        "omitted": { "$ref": "#/$defs/omitted" }
+      },
+      "additionalProperties": false
+    },
+    "tasks": {
+      "type": "object", "required": ["items", "omitted"],
+      "properties": {
+        "items": {
+          "type": "array", "maxItems": 20,
+          "items": {
+            "type": "object", "required": ["taskId", "title", "state"],
+            "properties": {
+              "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+              "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+              "state": { "$ref": "#/$defs/word" },
+              "waitingFor": { "$ref": "#/$defs/word" },
+              "blockedBy": { "description": "The dependencies not done yet, at most 5.", "type": "array", "maxItems": 5, "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" } },
+              "runId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "omitted": { "$ref": "#/$defs/omitted" }
+      },
+      "additionalProperties": false
+    },
+    "runs": {
+      "type": "object", "required": ["items", "omitted"],
+      "properties": {
+        "items": {
+          "type": "array", "maxItems": 20,
+          "items": {
+            "type": "object", "required": ["runId", "taskId", "status", "steps"],
+            "properties": {
+              "runId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+              "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+              "status": { "$ref": "#/$defs/word" },
+              "waitsFor": { "description": "What the run is blocked on: a `gate`, a `tie`, or a deferred `tool-call`.", "$ref": "#/$defs/word" },
+              "steps": {
+                "description": "The run's nodes and each one's state.",
+                "type": "object", "required": ["items", "omitted"],
+                "properties": {
+                  "items": { "type": "array", "maxItems": 20, "items": { "type": "object", "required": ["nodeId", "state"], "properties": { "nodeId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }, "state": { "$ref": "#/$defs/word" } }, "additionalProperties": false } },
+                  "omitted": { "$ref": "#/$defs/omitted" }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "omitted": { "$ref": "#/$defs/omitted" }
+      },
+      "additionalProperties": false
+    },
+    "queues": {
+      "type": "object", "required": ["items", "omitted"],
+      "properties": {
+        "items": {
+          "type": "array", "maxItems": 20,
+          "items": {
+            "type": "object", "required": ["target", "depth", "ofProject", "firstPosition"],
+            "properties": {
+              "target": { "description": "The queue's target branch; never the repository's host path.", "type": "string", "minLength": 1, "maxLength": 200 },
+              "depth": { "type": "integer", "minimum": 1 },
+              "ofProject": { "description": "How many of its entries are the project's.", "type": "integer", "minimum": 1 },
+              "firstPosition": { "description": "The place (from 1) of the project's first entry in it.", "type": "integer", "minimum": 1 },
+              "head": {
+                "description": "The queue's head, only when it is the project's own: another project's task is never named (ADR-0076).",
+                "type": "object", "required": ["taskId", "state"],
+                "properties": { "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }, "state": { "$ref": "#/$defs/word" } },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "omitted": { "$ref": "#/$defs/omitted" }
+      },
+      "additionalProperties": false
+    },
+    "worktrees": {
+      "type": "object", "required": ["items", "omitted"],
+      "properties": {
+        "items": {
+          "type": "array", "maxItems": 20,
+          "items": {
+            "type": "object", "required": ["runId", "state", "changes"],
+            "properties": { "runId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }, "state": { "$ref": "#/$defs/word" }, "changes": { "$ref": "#/$defs/word" } },
+            "additionalProperties": false
+          }
+        },
+        "omitted": { "$ref": "#/$defs/omitted" }
+      },
+      "additionalProperties": false
+    },
+    "health": {
+      "type": "object", "required": ["state", "checks"],
+      "properties": {
+        "state": { "$ref": "#/$defs/word" },
+        "checks": {
+          "type": "array", "maxItems": 200,
+          "items": {
+            "type": "object", "required": ["name", "state"],
+            "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 100 }, "state": { "$ref": "#/$defs/word" }, "detail": { "type": "string", "maxLength": 1000 } },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "lastDay": {
+      "type": "object", "required": ["landed", "decided", "failed"],
+      "properties": {
+        "landed": {
+          "type": "object", "required": ["items", "omitted"],
+          "properties": {
+            "items": { "type": "array", "maxItems": 20, "items": { "type": "object", "required": ["taskId", "at"], "properties": { "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }, "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }, "commit": { "type": "string", "pattern": "^[0-9a-f]{4,64}$" } }, "additionalProperties": false } },
+            "omitted": { "$ref": "#/$defs/omitted" }
+          },
+          "additionalProperties": false
+        },
+        "decided": {
+          "type": "object", "required": ["items", "omitted"],
+          "properties": {
+            "items": { "type": "array", "maxItems": 20, "items": { "type": "object", "required": ["id", "what", "at"], "properties": { "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }, "what": { "type": "string", "minLength": 1, "maxLength": 500 }, "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" } }, "additionalProperties": false } },
+            "omitted": { "$ref": "#/$defs/omitted" }
+          },
+          "additionalProperties": false
+        },
+        "failed": {
+          "type": "object", "required": ["items", "omitted"],
+          "properties": {
+            "items": { "type": "array", "maxItems": 20, "items": { "type": "object", "required": ["kind", "subject", "at"], "properties": { "kind": { "$ref": "#/$defs/word" }, "subject": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }, "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" } }, "additionalProperties": false } },
+            "omitted": { "$ref": "#/$defs/omitted" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

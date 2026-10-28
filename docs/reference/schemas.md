@@ -790,6 +790,27 @@ guesses.
   Examples: [`notification.approval-opened.json`](../../schemas/examples/notification.approval-opened.json),
   [`notification.run-user-action.json`](../../schemas/examples/notification.run-user-action.json).
 
+### `lead-brief`
+
+- The one read-only page a project's lead session reads at its start and whenever it is lost
+  ([PROP-0019 §3](../proposals/0019-lead-logic-in-system.md#3-system-lead-brief---project-id)): what
+  MCP `lead_brief` returns as structured content and `system lead brief --json` prints. Never
+  persisted; reading it records only the event `lead.brief-read` (`principal`, `project`).
+- Each part of a section is `{ "value": … }` or `{ "unreadable": "<reason>" }`, and every unreadable
+  part is named in `couldNotRead` with the same reason. A part is unreadable when its row is not
+  loaded, when its source is not built yet (the playbook's version, `decisions`, `lead_health`,
+  `lead_digest`), and when its source cannot be read whole within its bound: a list filtered from a
+  truncated read would read as "nothing to do" (INV-2), so it is never given.
+- Each list is `{ items, omitted }`: at most 20 entries and how many it left out.
+- It names only the project's own tasks, runs, requests, and worktrees (ADR-0076). A landing queue
+  shared with another project shows its depth, how many of its entries are the project's and the
+  first one's place, and its `head` only when the head is the project's own; its `target` is the
+  branch, never the repository's host path.
+- Section 9 (`switches`) and 10 (`handover`) are `not-yet-available` until their tasks land.
+- Validated before it is returned or the event is recorded; one that fails its schema is a defect,
+  refused with the reason, and nothing is recorded. Egress classification `operator-shared`.
+  Example: [`lead-brief.busy.json`](../../schemas/examples/lead-brief.busy.json).
+
 ### `limit-state`
 
 - The body of an `evidence` artifact: one reading of one window of a resource pool. Pools and

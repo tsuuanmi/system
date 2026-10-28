@@ -29,6 +29,31 @@ export function entries(e: Engine, key: string): Entry[] {
   return rows.map((row) => ({ row, landing: JSON.parse(row.landing!) as TaskLanding }))
 }
 
+/** Open landings `openLandings` reads at most (INV-9). */
+const OPEN_MAX = 500
+
+/** One open landing as the lead brief reads it: its queue and the queue's target branch, the result, its state, and its place (from 1). */
+export interface OpenLanding { key: string; branch: string; runId: string; taskId: string; state: TaskLanding['state']; position: number }
+
+/**
+ * Every open landing of every queue, queue by queue in the order they entered it; at most
+ * {@link OPEN_MAX}, and `more` when there are more than that, so a reader never takes the read for
+ * the whole of the queues (INV-2).
+ */
+export function openLandings(e: Engine): { landings: OpenLanding[]; more: boolean } {
+  const rows = e.ctx.store.db.prepare(`SELECT run_id, task_id, landing FROM workflow_tasks WHERE json_extract(landing, '$.queue.key') IS NOT NULL AND json_extract(landing, '$.state') IN (${OPEN.map(() => '?').join(', ')})
+    ORDER BY json_extract(landing, '$.queue.key'), json_extract(landing, '$.queue.seq') LIMIT ${OPEN_MAX + 1}`).all(...OPEN) as Array<{ run_id: string; task_id: string; landing: string }>
+  const places = new Map<string, number>()
+  const landings = rows.slice(0, OPEN_MAX).map((r) => {
+    const landing = JSON.parse(r.landing) as TaskLanding
+    const key = landing.queue!.key
+    const position = (places.get(key) ?? 0) + 1
+    places.set(key, position)
+    return { key, branch: landing.base?.branch ?? key.slice(key.lastIndexOf('#') + 1), runId: r.run_id, taskId: r.task_id, state: landing.state, position }
+  })
+  return { landings, more: rows.length > OPEN_MAX }
+}
+
 /** The next place in a queue: after every landing it ever held, so an order is never reused. */
 export function nextSeq(e: Engine, key: string): number {
   const last = e.ctx.store.db.prepare(`SELECT MAX(json_extract(landing, '$.queue.seq')) AS seq FROM workflow_tasks WHERE json_extract(landing, '$.queue.key') = ?`).get(key) as { seq: number | null } | undefined

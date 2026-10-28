@@ -1,0 +1,74 @@
+{
+  "schema": "lead-brief@1.0",
+  "project": "system",
+  "principal": "lead:system",
+  "at": "2026-10-28T12:00:00.000Z",
+  "since": "2026-10-27T12:00:00.000Z",
+  "lastBrief": "2026-10-27T12:00:00.000Z",
+  "sections": {
+    "you": {
+      "value": {
+        "project": { "id": "system", "title": "System", "state": "active" },
+        "principal": "lead:system",
+        "objective": "Build system toward the base release, developed through System itself.",
+        "constraints": ["deadline 2026-11-01T00:00:00Z", "main is the operator's"],
+        "dates": { "createdAt": "2026-10-01T00:00:00.000Z", "deadline": "2026-11-01T00:00:00Z", "now": "2026-10-28T12:00:00.000Z" },
+        "playbook": { "unreadable": "the playbook's version is read through the handbook (I1 part 3), which is not built yet" }
+      }
+    },
+    "inbox": {
+      "value": {
+        "unread": {
+          "items": [{ "id": "system:task.landed:task-6755c1d17c2d:7410", "kind": "task.landed", "subject": "task-6755c1d17c2d", "ageSeconds": 3600, "act": ["system lead wait --project system"] }],
+          "omitted": 0
+        }
+      }
+    },
+    "waitingOnOperator": {
+      "requests": { "value": { "items": [{ "requestId": "apr-2f1c9a", "class": "deploy", "summary": "deploy the dev live update", "expiresAt": "2026-10-29T00:00:00.000Z" }], "omitted": 0 } },
+      "reviews": { "value": { "items": [{ "taskId": "task-3ee6960d857c", "title": "A heavy-tier result", "reason": "operator-review", "expiresAt": "2026-10-29T00:00:00.000Z" }], "omitted": 0 } }
+    },
+    "heldOnYou": {
+      "requests": { "value": { "items": [{ "requestId": "apr-7d02be", "class": "command", "summary": "git status", "expiresAt": "2026-10-28T13:00:00.000Z" }], "omitted": 0 } },
+      "results": { "value": { "items": [], "omitted": 0 } }
+    },
+    "pendingDecisions": {
+      "asked": { "unreadable": "the decisions row (operator-decision records: your open questions and the decisions recorded since the last digest) is not built yet (PROP-0019 rank 4)" },
+      "changes": { "value": { "items": [], "omitted": 0 } }
+    },
+    "runningWork": {
+      "tasks": {
+        "value": {
+          "running": { "items": [{ "taskId": "task-a1b2c3", "title": "Running", "state": "running", "runId": "run_45431f1a0ca806bf" }], "omitted": 0 },
+          "ready": { "items": [{ "taskId": "task-d4e5f6", "title": "Ready", "state": "ready" }], "omitted": 24 },
+          "waiting": { "items": [{ "taskId": "task-0a0b0c", "title": "Waits", "state": "waiting-for-input", "waitingFor": "question" }], "omitted": 0 },
+          "blocked": { "items": [{ "taskId": "task-0d0e0f", "title": "Blocked", "state": "proposed", "blockedBy": ["task-a1b2c3"] }], "omitted": 0 }
+        }
+      },
+      "runs": {
+        "value": {
+          "items": [{ "runId": "run_45431f1a0ca806bf", "taskId": "task-a1b2c3", "status": "RUNNING", "steps": { "items": [{ "nodeId": "develop:1", "state": "COMPLETED" }, { "nodeId": "review:1", "state": "RUNNING" }], "omitted": 0 } }],
+          "omitted": 0
+        }
+      },
+      "landingQueues": { "value": { "items": [{ "target": "dev", "depth": 3, "ofProject": 1, "firstPosition": 2 }], "omitted": 0 } },
+      "worktrees": { "unreadable": "the host holds 140 run worktrees, more than one read (100); read them with system worktrees" }
+    },
+    "health": { "unreadable": "the health table (lead_health) is not built yet (PROP-0019 rank 10)" },
+    "lastDay": { "unreadable": "the digest (lead_digest: what landed, what you decided, what failed) is not built yet (PROP-0019 rank 10)" },
+    "switches": { "status": "not-yet-available", "note": "the lead mechanisms and their modes come with their own tasks (PROP-0019 rank 3 and after)" },
+    "handover": { "status": "not-yet-available", "note": "the handover note (lead-handover@1.0) comes with PROP-0019 rank 2" }
+  },
+  "couldNotRead": [
+    { "section": "1 You (the playbook)", "reason": "the playbook's version is read through the handbook (I1 part 3), which is not built yet" },
+    { "section": "5 Pending decisions (your questions and the decisions recorded)", "reason": "the decisions row (operator-decision records: your open questions and the decisions recorded since the last digest) is not built yet (PROP-0019 rank 4)" },
+    { "section": "6 Running work (worktrees held)", "reason": "the host holds 140 run worktrees, more than one read (100); read them with system worktrees" },
+    { "section": "7 Health", "reason": "the health table (lead_health) is not built yet (PROP-0019 rank 10)" },
+    { "section": "8 The last day", "reason": "the digest (lead_digest: what landed, what you decided, what failed) is not built yet (PROP-0019 rank 10)" }
+  ],
+  "firstMoves": [
+    "system lead wait --project system   (block until a notice is unread; the loop you run instead of polling)",
+    "system lead ack --project system <notice id>...   (mark a notice handled; MCP lead_inbox with ack)",
+    "system handbook --role lead   (the playbook, whole; or docs/operations/lead-playbook.md)"
+  ]
+}

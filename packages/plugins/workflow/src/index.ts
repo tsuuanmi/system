@@ -34,6 +34,7 @@ import type { NodeTemplate } from './spec.ts'
 import { leftOutOfTeams, teamContracts, vote } from './teams.ts'
 import { registerTools } from './tools.ts'
 import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, TaskLanding, TaskStartInput, TemplateStep, UsageDraws, UsageFilter } from './types.ts'
+import { type OpenLanding, openLandings } from './landing-queue.ts'
 import { draws, explain, usage } from './views.ts'
 
 export { renderReport as renderScheduledReviewReport, SCHEDULED_REVIEW, SCHEDULED_REVIEW_NODES, scheduledReviewProblems, scheduledReviewSettings } from './scheduled-review.ts'
@@ -439,6 +440,11 @@ export class Workflow extends Service {
   landing(runId: string): TaskLanding | undefined {
     const row = this.engine.tasks.row(runId)
     return row ? this.engine.tasks.landings.view(row) : undefined
+  }
+
+  /** Every open landing of every target's queue, queue by queue in order (the lead brief's landing queue, PROP-0019); at most 500, `more` when there are more. */
+  openLandings(): { landings: OpenLanding[]; more: boolean } {
+    return openLandings(this.engine)
   }
 
   /**

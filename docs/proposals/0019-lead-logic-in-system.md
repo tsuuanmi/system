@@ -572,3 +572,20 @@ clean; it records its commit here and in the [roadmap](roadmap.md) when it lands
   row (`landing-publish` is rank 9), and "decisions left for tomorrow" beyond what waits on the
   operator. A landing by hand is a first-parent commit on a branch the project landed on that no
   merged landing names.
+- **Rank 1, `system lead brief` and MCP `lead_brief` (T327, this task's commit).** A tool of the
+  `lead-inbox` row (`packages/plugins/lead-inbox/src/brief.ts`, `brief-sources.ts`), so it appears with
+  the row. Sections 1 to 8, 11, and 12 are built; 9 (switches) and 10 (handover note) read *not yet
+  available*. Sources that do not exist yet are named in section 11 and show no value: the playbook's
+  version (waits for I1 part 3), the `decisions` row (rank 4: section 5's questions and decisions),
+  `lead_health` (section 7), and `lead_digest` (rank 10: the whole of section 8, which is never filled
+  from another source). A source that cannot be read whole within its bound (the board read page by
+  page up to ten pages, at most 1,000 open requests, 500 open landings, 100 run worktrees) is
+  unreadable too, never a list filtered from a truncated read. Section 3 and 4's split of the
+  approval queue is `approvals.leadMay`, the one test `decideAsLead` applies; section 6 reads the
+  runs and their steps through `workflow.get` and the landing queues through
+  `workflow.openLandings()`, showing a shared queue's head only when it is the project's own and its
+  target branch, never the repository's path. The record is `lead-brief@1.0`
+  (`schemas/lead-brief.v1.json`), validated before it is returned. The one event is
+  `lead.brief-read` (`principal`, `project`); a project the board does not know is refused, not
+  briefed empty. Tests: `lead-inbox/tests/brief.spec.ts`, `cli/tests/lead-brief.spec.ts`,
+  `system-bundle/tests/lead-brief-seams.spec.ts`.
