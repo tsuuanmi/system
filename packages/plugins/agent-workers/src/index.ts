@@ -42,7 +42,7 @@ import { webAccessOf } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-ledger-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-board-core'
 import {
-  type AccountSetting, accountSettings, ASSIGNED, bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, currentProcess, DESCRIPTION, drawEntries, dshHome, LABEL, type LeaseProbe, type Liveness, LIVENESS_RULE, livenessOf, MAX_DESCRIPTION, MAX_LABEL,
+  type AccountSetting, accountSettings, ASSIGNED, bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, currentProcess, DESCRIPTION, drawEntries, dshHome, type EnforceMode, enforceMode, type EnforceSource, LABEL, type LeaseProbe, type Liveness, LIVENESS_RULE, livenessOf, MAX_DESCRIPTION, MAX_LABEL,
   type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, pooledTermsDecision, probeProcess, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDraw, sha256, USAGE_UNKNOWN_EVENT, type UsageUnknown, usageUnknown,
 } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
@@ -70,6 +70,7 @@ import { type WebProof, WebProbes } from './web-probe.ts'
 import { CHECKS_MIGRATION, DEFAULT_MAX_CONCURRENT_CHECKS, RunChecks } from './checks.ts'
 import { type RunReport, type RunReported, runReport } from './run-report.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
+import { VERIFICATION_MIGRATION } from './verification.ts'
 import { registerAccountTools, registerRunTools } from './tools.ts'
 import { CARRY_MIGRATION, FORK_MIGRATION, notKnownGone, RUN_ID, type RepositoryCheck, type RunWorktree, type RunWorktreeRelease, type SweepOutcome, USED_MIGRATION, type WorktreeRelease, Worktrees } from './worktrees.ts'
 
@@ -249,6 +250,14 @@ export interface Config {
    * (default the host's cores shared among `maxConcurrent`).
    */
   checks?: { maxConcurrent?: number; maxWorkers?: number }
+  /**
+   * The start mode of the gate-like mechanisms this source owns (ADR-0078; the plugin host's live
+   * override wins). `lockfileVerification` (unset: `warn`, the mechanism's start mode, T333): `on`
+   * opens one approval request per lockfile digest for its supply-chain verification, run on the
+   * host's network once approved; `warn` records the request it would open and opens none; `off` does
+   * not look.
+   */
+  enforce?: { lockfileVerification?: EnforceMode }
 }
 
 interface RunRow {
@@ -583,6 +592,10 @@ export class AgentWorkers extends Service {
       dependencyFiles: z.array(z.string()).description('File names (at any depth) that say what the setup installs, default package.json, pnpm-lock.yaml, pnpm-workspace.yaml, .npmrc, .pnpmfile.cjs: when a result changes any of them, the setup runs again, offline and confined, on the result\'s tree before its checks (T235)'),
       checkScratch: z.array(z.string()).description('Paths inside the worktree (relative, each ignored by git and holding nothing tracked) its checks see as fresh private writable directories, such as a test runner\'s cache (node_modules/.vite); the checks see the rest of the worktree read-only'),
       // An omitted object comes back as {}: read as none declared when loaded (src/setup.ts).
+      lockfileVerification: z.object({
+        registry: z.string().description('The registry (https:// URL) a new lockfile\'s supply-chain verification talks to: the one host its approval request names, the registry its command is told to use, and the only one the result\'s own files may name'),
+        cacheDir: z.string().description('The directory (absolute, outside every path hidden from agents) where pnpm keeps registry metadata: every setup run sees it read-only and the verification alone writes it, so a lockfile it verified passes the offline install after it'),
+      }).description('Lets a setup that lacks only the lockfile\'s supply-chain verification (pnpm 12, ERR_PNPM_NO_OFFLINE_META) have it run once on the host\'s network, on one approval per lockfile digest, with its scripts and pnpmfile off and only this registry configured (T333); the mechanism lockfile-verification (enforce.lockfileVerification) switches it'),
       generated: z.object({
         paths: z.array(z.string()).description('1 to 32 repository-relative paths of generated files; a * stands for any characters within one path segment, for example packages/*/plugin-manifest.json'),
         commands: z.array(z.string()).description('1 to 16 commands that regenerate them, run in order, each its words split on single spaces (no shell), each judged by the autonomy policy as a command with that exact argv and run only when it allows it unasked'),
@@ -592,6 +605,9 @@ export class AgentWorkers extends Service {
       maxConcurrent: z.natural().min(1).max(32).default(2).description('How many acceptance check runs the host runs at once, across every workflow run; the rest wait their turn, in order, and never fail for the wait (T292)'),
       maxWorkers: z.natural().min(1).max(256).description('The test workers each check run gets (the vitest config reads SYSTEM_CHECK_MAX_WORKERS); default the host\'s cores less one, shared among maxConcurrent checks, at most 32 each (T292)'),
     }).description('The load acceptance checks put on the host (T292)'),
+    enforce: z.object({
+      lockfileVerification: z.union(['off', 'warn', 'on']).description('The supply-chain verification of a new lockfile (default warn, the mechanism\'s start mode): on opens one approval request per lockfile digest and runs the verification once on the host\'s network when approved; warn records the request it would open and opens none; off does not look (T333)'),
+    }).description('Each gate-like mechanism\'s start mode (ADR-0078); the plugin host\'s live override (system enforce set) wins, read at each use'),
     workspaceReads: z.object(Object.fromEntries(Object.entries(WORKSPACE_READ_BOUNDS).map(([name, bound]) => [
       name, z.natural().min(bound.min).max(bound.max).default(bound.default).description(`${bound.description} (${bound.min} to ${bound.max})`),
     ]))).description('The bounds of the workspace reads server a runtime gives its agent to read its workspace without a shell (read_file, list_dir, search; T200b), each within its range'),
@@ -662,7 +678,8 @@ export class AgentWorkers extends Service {
     // A setup is for the worktrees of a repository a worktreePerRun Worker works in; any other is refused at load.
     this.setups = loadSetups(config.worktreeSetup, [...this.workers.values()].filter((w) => w.worktreePerRun).map((w) => w.workspace))
     // Its private views are made beside the worktrees (a name no repository's directory there takes).
-    this.worktreeSetups = new WorktreeSetups(ctx, join(worktreeRoot, '.setup'))
+    // The lockfile verification's mode is read at each use, so the operator moves it without a restart (ADR-0078).
+    this.worktreeSetups = new WorktreeSetups(ctx, join(worktreeRoot, '.setup'), () => enforceMode(ctx.get('pluginHost' as never) as EnforceSource | undefined, 'lockfile-verification', config.enforce?.lockfileVerification))
     // Each writing run's report file is made there too, outside every worktree (T265).
     this.reportDir = join(worktreeRoot, '.setup')
     this.runChecks = new RunChecks(ctx, this.worktrees, this.setups, join(worktreeRoot, '.setup'), { setups: this.worktreeSetups, hostStopped: this.stopped.signal, ...checkBoundsOf(config.checks) })
@@ -808,7 +825,7 @@ export class AgentWorkers extends Service {
       // Who the run's brief selected its handbook slice for (brief@1.6 handbook.selection): the lessons it is given follow it.
       version: 22,
       sql: 'ALTER TABLE agent_runs ADD COLUMN handbook TEXT;',
-    }, USED_MIGRATION])
+    }, USED_MIGRATION, VERIFICATION_MIGRATION])
     this.cutover = new Cutover(ctx)
     // Once the operator applied the move, the hand-named rows are refused: one implementation, no second path.
     const applied = config.workers?.length ? this.cutover.state() : undefined
@@ -1169,13 +1186,15 @@ export class AgentWorkers extends Service {
   private rowOf(plan: MigrationPlan): Record<string, unknown> {
     const { workers: _, providers: __, roles: ___, assignments: ____, ...settings } = this.config
     // A setting at its default (an empty worktreeSetup among them) is left out.
-    const { workspaceReads, checks, ...rest } = settings
+    const { workspaceReads, checks, enforce, ...rest } = settings
     const kept = Object.fromEntries(Object.entries(rest).filter(([key, value]) => value !== undefined && value !== SETTING_DEFAULTS[key] && !(Array.isArray(value) && !value.length)))
     // So is each workspace reads bound at its default, and the setting when all are (T200b).
     const reads = Object.fromEntries(Object.entries(workspaceReads ?? {}).filter(([name, value]) => value !== WORKSPACE_READ_BOUNDS[name as keyof WorkspaceReadBounds]?.default))
     // And each checks bound at its default (or unset), and the setting when all are (T292).
     const bounds = Object.fromEntries(Object.entries(checks ?? {}).filter(([name, value]) => value !== undefined && !(name === 'maxConcurrent' && value === DEFAULT_MAX_CONCURRENT_CHECKS)))
-    return { ...kept, ...(Object.keys(reads).length ? { workspaceReads: reads } : {}), ...(Object.keys(bounds).length ? { checks: bounds } : {}), providers: plan.providers, roles: plan.roles, assignments: plan.assignments }
+    // And the enforce modes the row set (none when it set none, the mechanism's start mode then).
+    const modes = Object.fromEntries(Object.entries(enforce ?? {}).filter(([, value]) => value !== undefined))
+    return { ...kept, ...(Object.keys(modes).length ? { enforce: modes } : {}), ...(Object.keys(reads).length ? { workspaceReads: reads } : {}), ...(Object.keys(bounds).length ? { checks: bounds } : {}), providers: plan.providers, roles: plan.roles, assignments: plan.assignments }
   }
 
   /** The ledger a metered Worker's runs go through, or undefined for a Worker with no pool. */

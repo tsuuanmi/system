@@ -325,7 +325,7 @@ export class RunChecks {
       const refreshed = await this.worktreeSetups.refresh({
         workflowRunId: step.runId, classification: step.classification, worktree: found.path, repository: found.repository, subject: subjectId({ type: 'git-head', ...step.subject }),
       }, setup!, signal ?? new AbortController().signal)
-      if (refreshed.outcome === 'refused') return { outcome: 'refused', cause: refreshed.cause, reason: refreshed.reason }
+      if (refreshed.outcome === 'refused') return { outcome: 'refused', cause: refreshed.cause, reason: refreshed.reason, ...(refreshed.requests ? { requests: refreshed.requests } : {}) }
       if (refreshed.outcome === 'ran') {
         again = refreshed.decision as ArtifactRef
         // INV-5: the setup could write the worktree; its checks run only while it is still the result's tree.

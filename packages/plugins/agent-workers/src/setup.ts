@@ -21,12 +21,16 @@ import type { Context } from '@deepseek-ai/cordis'
 import { childEnvironment, confinedCommand, type Confinement, proveConfinement } from '@tsuuanmi/system-agent-runtime-core'
 import { type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, SHELL_METACHARACTER } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-ledger-core'
-import { type ContentId, contentId, ensurePrivateDir, globMatches, globProblem, ignoredPath } from '@tsuuanmi/system-libs'
+import { type ContentId, contentId, type EnforceMode, ensurePrivateDir, globMatches, globProblem, ignoredPath } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { RUN_CHECKS, type RunCheck } from '@tsuuanmi/system-workers-core'
-import { changedFiles, DEFAULT_DEPENDENCY_FILES, type Dependencies, dependenciesOf, KEPT_FILES, missingPackages } from './dependencies.ts'
+import { changedFiles, DEFAULT_DEPENDENCY_FILES, type Dependencies, dependenciesOf, KEPT_FILES, lockfileVerificationOnly, missingPackages, verificationArgv, verificationProblems } from './dependencies.ts'
 import { CHECKS } from './gate.ts'
+import { type LockfileVerificationConfig, LockfileVerifications, type Verification } from './verification.ts'
 import { repositoryKey } from './worktrees.ts'
+
+/** The lockfile whose digest a verification is keyed on: the repository root's. */
+const LOCKFILE = 'pnpm-lock.yaml'
 
 /**
  * Package manager settings as environment variables, each under both prefixes: pnpm 11 and later
@@ -44,6 +48,19 @@ function packageManagerSettings(settings: Readonly<Record<string, string>>): Rec
  */
 export function setupEnvironment(): Record<string, string> {
   return childEnvironment([], packageManagerSettings({ offline: 'true' }))
+}
+
+/**
+ * The environment a lockfile's verification runs in (T333): online, against the one registry the
+ * repository names, with pnpm's metadata cache where it says, no lifecycle script and no pnpmfile
+ * (beside the argv's own flags), never an install before a script, and corepack forbidden to download
+ * a package manager (a result's `packageManager` field could name one).
+ */
+function verificationEnvironment(config: LockfileVerificationConfig): Record<string, string> {
+  return childEnvironment([], {
+    ...packageManagerSettings({ offline: 'false', registry: config.registry, cache_dir: config.cacheDir, verify_deps_before_run: 'false', ignore_scripts: 'true', ignore_pnpmfile: 'true' }),
+    COREPACK_ENABLE_NETWORK: '0',
+  })
 }
 
 /**
@@ -109,6 +126,13 @@ export interface WorktreeSetupConfig {
    * setup's confinement, instead of refusing (./regenerate.ts).
    */
   generated?: WorktreeGeneratedConfig
+  /**
+   * What lets a lockfile's supply-chain verification run online, once, on an approval (T333): the
+   * registry it talks to (the one host its request names) and pnpm's metadata cache directory, which
+   * every setup run sees read-only and the verification alone writes. Without it, a setup that lacks
+   * only that verification is refused as before.
+   */
+  lockfileVerification?: LockfileVerificationConfig
 }
 
 /** Files a repository generates, and how (`worktreeSetup[].generated`). */
@@ -146,6 +170,8 @@ export interface Setup {
   checkScratch: string[]
   /** The repository's generated files, when declared; not part of the setup's hash, since the setup does not run their commands. */
   generated?: Generated
+  /** Where and how its lockfile's verification may run online, when declared; not part of the setup's hash, since the setup does not run it. */
+  lockfileVerification?: LockfileVerificationConfig
 }
 
 /**
@@ -250,10 +276,28 @@ export function loadSetups(setups: readonly WorktreeSetupConfig[] | undefined, w
     const overlapping = checkScratch.find((p, i) => checkScratch.some((q, j) => i !== j && (p === q || p.startsWith(`${q}/`))))
     if (overlapping) fail(`${repository}: checkScratch names ${overlapping} and another that holds it, or names it twice`)
     const generated = loadGenerated(repository, entry.generated)
+    const lockfileVerification = loadVerification(repository, entry.lockfileVerification)
     const definition = { repository, commands: [...lines], views, timeoutSeconds }
-    loaded.set(repository, { ...definition, lines: [...lines], commands: lines.map((line) => line.split(' ')), hash: contentId(definition), checks, checkTimeoutSeconds, checkStallSeconds, dependencyFiles: [...dependencyFiles], checkScratch: [...checkScratch], ...(generated ? { generated } : {}) })
+    loaded.set(repository, { ...definition, lines: [...lines], commands: lines.map((line) => line.split(' ')), hash: contentId(definition), checks, checkTimeoutSeconds, checkStallSeconds, dependencyFiles: [...dependencyFiles], checkScratch: [...checkScratch], ...(generated ? { generated } : {}), ...(lockfileVerification ? { lockfileVerification } : {}) })
   }
   return loaded
+}
+
+/** A setup's `lockfileVerification` as loaded, checked: an `https://` registry and an absolute, normalized cache directory; none when both are omitted. */
+function loadVerification(repository: string, config: LockfileVerificationConfig | undefined): LockfileVerificationConfig | undefined {
+  if (config === undefined) return undefined
+  if (typeof config !== 'object' || config === null || Array.isArray(config)) fail(`${repository}: lockfileVerification holds a registry and a cacheDir`)
+  // The config schema gives an omitted object with both fields absent: none declared.
+  if (config.registry === undefined && config.cacheDir === undefined) return undefined
+  let registry: URL | undefined
+  try {
+    registry = new URL(config.registry)
+  } catch {
+    registry = undefined
+  }
+  if (!registry || registry.protocol !== 'https:' || registry.username || registry.password || SHELL_METACHARACTER.test(config.registry)) fail(`${repository}: lockfileVerification.registry must be an https:// URL, with no credentials`)
+  if (typeof config.cacheDir !== 'string' || !isAbsolute(config.cacheDir) || normalize(config.cacheDir) !== config.cacheDir || config.cacheDir === '/' || config.cacheDir.endsWith(sep)) fail(`${repository}: lockfileVerification.cacheDir needs an absolute, normalized path, not the root`)
+  return { registry: config.registry, cacheDir: config.cacheDir }
 }
 
 /** A setup's `generated` as loaded, checked: 1 to 32 path patterns, distinct, and 1 to 16 commands a policy can match word for word. */
@@ -340,7 +384,7 @@ export interface RefreshRun {
 export type Refreshed =
   | { outcome: 'current' }
   | { outcome: 'ran'; decision: ContentId; changed: string[] | undefined }
-  | { outcome: 'refused'; decision?: ContentId; cause: 'dependency_unavailable' | 'failed'; reason: string; missing?: string[] }
+  | { outcome: 'refused'; decision?: ContentId; cause: 'dependency_unavailable' | 'failed'; reason: string; missing?: string[]; requests?: string[] }
 
 /** The rule of the decision a setup run again for a result's checks records (T235). */
 const AGAIN_RULE = { type: 'rule', id: 'agent-workers.worktree-setup-again', version: '1' } as const
@@ -362,7 +406,15 @@ export class WorktreeSetups {
   private readonly queues = new Map<string, Promise<unknown>>()
 
   /** `runDir`: an owner-only directory (`<worktreeRoot>/.setup`) where each setup's private views are made, and removed after it. */
-  constructor(private readonly ctx: Context, private readonly runDir: string) {}
+  private readonly verifications: LockfileVerifications
+
+  /**
+   * `runDir`: an owner-only directory (`<worktreeRoot>/.setup`) where each setup's private views are made, and removed after it.
+   * `lockfileMode`: the mode of the `lockfile-verification` mechanism now (read at each use; `warn` unless told).
+   */
+  constructor(private readonly ctx: Context, private readonly runDir: string, private readonly lockfileMode: () => EnforceMode = () => 'warn') {
+    this.verifications = new LockfileVerifications(ctx)
+  }
 
   /**
    * Make sure `setup` has run in the run's worktree, once per worktree and definition: a worktree
@@ -520,7 +572,7 @@ export class WorktreeSetups {
       const refuse = (cause: 'dependency_unavailable' | 'failed', reason: string, more: Record<string, unknown> = {}, missing?: string[]): Refreshed => {
         const decision = this.decideAgain(run, setup, 'refuse', [`${why}, and its setup could not run again on the result: ${reason}`], inputs, { ...detail, cause, ...more })
         this.eventAgain(run, setup, 'refused', decision)
-        return { outcome: 'refused', decision, cause, reason: `${why}; its setup run again on the result ${cause === 'dependency_unavailable' ? 'needs the network' : 'did not complete'}: ${reason} (decision ${decision})`, ...(missing ? { missing } : {}) }
+        return { outcome: 'refused', decision, cause, reason: `${why}; its setup run again on the result ${cause === 'dependency_unavailable' ? 'needs the network' : 'did not complete'}: ${reason} (decision ${decision})`, ...(missing ? { missing } : {}), ...(Array.isArray(more.requests) ? { requests: more.requests as string[] } : {}) }
       }
       const approvals = this.ctx.get('approvals')
       if (!approvals) return refuse('failed', 'no approval queue (ctx.approvals) is loaded, and no setup command runs without its autonomy decision')
@@ -532,19 +584,27 @@ export class WorktreeSetups {
           return refuse('failed', `the autonomy policy does not let its command ${i + 1} (${setup.lines[i]}) run unasked (${String(verdict.mode)}); a setup run again for a result's checks runs only commands the policy allows unasked, such as lines on the studio policy's commands list`)
         }
       }
-      try {
-        await this.execute(run.worktree, setup, signal)
-      } catch (error) {
-        if (signal.aborted) throw error
-        const message = (error as Error).message
-        const missing = error instanceof Refusal && error.output !== undefined ? missingPackages(error.output) : undefined
-        if (missing) {
-          return refuse('dependency_unavailable', `${missing.length ? `the packages ${missing.join(', ')} are not in the store it installs from` : 'it could not reach a registry'}, and it runs with no network: ${message}`, { missing }, missing)
+      // A setup that lacked only the lockfile's supply-chain verification has it run online once, on an approval, and runs again (T333).
+      let verified = false
+      for (;;) {
+        try {
+          await this.execute(run.worktree, setup, signal)
+          break
+        } catch (error) {
+          if (signal.aborted) throw error
+          const message = (error as Error).message
+          const missing = error instanceof Refusal && error.output !== undefined ? missingPackages(error.output) : undefined
+          if (!missing) return refuse('failed', message, error instanceof Refusal ? error.detail : {})
+          const lockfile = !verified && error instanceof Refusal ? await this.verifyLockfile(run, setup, now, error, inputs, signal) : undefined
+          if (lockfile && 'again' in lockfile) {
+            verified = true
+            continue
+          }
+          return refuse('dependency_unavailable', `${missing.length ? `the packages ${missing.join(', ')} are not in the store it installs from` : 'it could not reach a registry'}, and it runs with no network: ${message}${lockfile ? `; ${lockfile.note}` : verified ? `; its lockfile ${now.files[LOCKFILE] ?? ''} was verified online (now or before), so nothing is asked again, yet its setup still needs the registry's metadata offline` : ''}`, { missing, ...(lockfile ? { ...lockfile.more, ...(lockfile.requests ? { requests: lockfile.requests } : {}) } : {}) }, missing)
         }
-        return refuse('failed', message, error instanceof Refusal ? error.detail : {})
       }
       const after = await this.dependencies(run.worktree, row.gitdir, setup) ?? now
-      const decision = this.decideAgain(run, setup, 'run', [`${why}: its setup ${setup.hash} ran again on the result, ${setup.commands.length} command(s), each allowed by the autonomy policy unasked and exited 0, confined (the host read-only but the worktree, no network)`], inputs, { ...detail, dependencies: keptDependencies(after) })
+      const decision = this.decideAgain(run, setup, 'run', [`${why}: its setup ${setup.hash} ran again on the result, ${setup.commands.length} command(s), each allowed by the autonomy policy unasked and exited 0, confined (the host read-only but the worktree, no network)${verified ? ', after its lockfile\'s verification ran once on the host\'s network on the approval its decision names' : ''}`], inputs, { ...detail, dependencies: keptDependencies(after) })
       this.ctx.store.transaction((db) => {
         db.prepare('UPDATE agent_worktrees SET setup_decision = ? WHERE path = ? AND removed_at IS NULL AND setup_hash = ?').run(decision, run.worktree, setup.hash)
       })
@@ -552,6 +612,84 @@ export class WorktreeSetups {
       this.ctx.logger.info(`agent Workers: the setup ${setup.hash} of ${run.worktree} ran again for the dependencies of ${run.subject} (decision ${decision})`)
       return { outcome: 'ran', decision, changed }
     })
+  }
+
+  /**
+   * A setup run again that lacked only its lockfile's supply-chain verification (T333,
+   * ./verification.ts): `again` once the verification ran (now, on the approval, or before, from this
+   * or another worktree with this lockfile) and the setup should run again; else the note that says what
+   * stands in the way, with what the refusal records and the approval requests the checks wait on.
+   * Undefined when it does not apply: the mechanism is off, the repository declares no
+   * `lockfileVerification`, or the failure is anything but missing metadata. A failed command that is
+   * not pnpm's own frozen install ({@link verificationArgv}) is said so and never run online. The
+   * decisions it records are added to `inputs`.
+   */
+  private async verifyLockfile(run: RefreshRun, setup: Setup, now: Dependencies, failed: Refusal, inputs: ArtifactRef[], signal: AbortSignal): Promise<{ again: true } | { note: string; more: Record<string, unknown>; requests?: string[] } | undefined> {
+    const mode = this.lockfileMode()
+    const config = setup.lockfileVerification
+    const index = typeof failed.detail.command === 'number' ? failed.detail.command - 1 : -1
+    const argv = setup.commands[index]
+    const digest = now.files[LOCKFILE]
+    if (mode === 'off' || !config || !argv || failed.output === undefined || !lockfileVerificationOnly(failed.output) || !digest?.startsWith('sha256:')) return undefined
+    // The exact argv of the verification: the setup's command only when it is pnpm's own frozen install (never a script or another program,
+    // whatever flags it carries), not offline, and running none of the result's own code (no lifecycle script, no pnpmfile hook).
+    const verification = verificationArgv(argv)
+    if (!verification) {
+      return { note: `its lockfile's verification is not asked for: its command ${index + 1} (${setup.lines[index]}) is not pnpm's own frozen install (pnpm or corepack pnpm, install --frozen-lockfile, and only the options a verification takes), so it is never run with the network`, more: { verification: { state: 'refused', digest, command: setup.lines[index] } } }
+    }
+    // The confinement has the host's network or none: the result's own files may configure nothing that reaches past the registry (INV-12).
+    const worktree = real(run.worktree)
+    const problems = worktree ? verificationProblems(worktree, now.files, config.registry) : [`its worktree ${run.worktree} cannot be read`]
+    if (problems.length) {
+      return { note: `its lockfile's verification is not asked for: online, it could reach more than ${config.registry}, since ${problems.join('; ')}; the result's checks stay not run`, more: { verification: { state: 'refused', digest, problems } } }
+    }
+    let outcome: Verification
+    try {
+      outcome = await this.verifications.resolve(mode, {
+        repository: run.repository, key: repositoryKey(run.repository), digest, argv: verification, line: verification.join(' '), config, workflowRunId: run.workflowRunId,
+        ...(run.sessionId ? { sessionId: run.sessionId } : {}), worktree: run.worktree, classification: run.classification, timeoutSeconds: setup.timeoutSeconds,
+      }, () => this.verifyOnline(run.worktree, setup, config, verification, signal))
+    } catch (error) {
+      if (signal.aborted || !(error instanceof Refusal)) throw error
+      return { note: `its lockfile's verification could not run: ${error.message}`, more: { verification: { state: 'unavailable', digest } } }
+    }
+    const more = { verification: { state: outcome.state, digest, mode, ...('decision' in outcome && outcome.decision ? { decision: outcome.decision } : {}) } }
+    if ('decision' in outcome && outcome.decision) inputs.push(outcome.decision as ArtifactRef)
+    switch (outcome.state) {
+      case 'verified': return { again: true }
+      // Verified meanwhile from another worktree with this lockfile (one request per digest): its setup runs again once, offline.
+      case 'already': return { again: true }
+      case 'waits': return { note: `its lockfile ${digest} is not verified: it waits for the operator's approval of its verification (approval request ${outcome.requestId}); once resolved, the setup and then the checks run again by themselves`, more, requests: [outcome.requestId] }
+      case 'denied': return { note: `its lockfile's verification was not approved: ${outcome.reason}; the checks stay not run`, more }
+      case 'failed': return { note: `its lockfile's verification ran and failed: ${outcome.reason}`, more }
+      case 'forbidden': return { note: `its lockfile's verification does not run: ${outcome.reason}`, more }
+      case 'warned': return { note: `its lockfile ${digest} is not verified; the lockfile-verification mechanism is in warn mode, so the approval request it would open is only recorded${outcome.decision ? ` (decision ${outcome.decision})` : ''}`, more }
+    }
+  }
+
+  /**
+   * The lockfile's verification, run on the host once approved: `argv` (the setup's frozen install, no
+   * `--offline`, with `--ignore-scripts` and `--ignore-pnpmfile`) in the setup's confinement, the
+   * worktree and the metadata cache `config.cacheDir` writable, and the host's network shared while it
+   * runs: a bubblewrap confinement has the host's network or none, never one host. What keeps it to
+   * `config.registry` is that it runs none of the result's code, its environment names that registry,
+   * and the worktree was found to configure no other ({@link verificationProblems}). Throws a
+   * {@link Refusal} when it cannot be confined, and the signal's reason when it stopped it; a command
+   * that ran and failed is `ok: false`.
+   */
+  private async verifyOnline(stored: string, setup: Setup, config: LockfileVerificationConfig, argv: string[], signal: AbortSignal): Promise<{ ok: boolean; detail: string }> {
+    const worktree = real(stored)
+    if (!worktree) throw new Refusal(`its worktree ${stored} cannot be read`)
+    const confined = await confineIn(this.ctx, setup, worktree, this.runDir, 'verify')
+    try {
+      const deadline = AbortSignal.timeout(setup.timeoutSeconds * 1000)
+      const ended = await runBounded(confined.command(argv), verificationEnvironment(config), AbortSignal.any([signal, deadline]))
+      if (signal.aborted) throw signal.reason ?? new ProviderError('aborted', 'stopped')
+      if (deadline.aborted) return { ok: false, detail: `it did not finish within the setup's ${setup.timeoutSeconds} s; it was stopped${tail(ended.output)}` }
+      return { ok: ended.code === 0, detail: ended.code === 0 ? '' : `${ended.code === null ? `ended on signal ${ended.signal ?? 'unknown'}` : `exited with code ${ended.code}`}${tail(ended.output)}` }
+    } finally {
+      confined.dispose()
+    }
   }
 
   /** The worktree's dependency files now, or undefined when they cannot be read. */
@@ -726,7 +864,10 @@ export const launcherArgs = (argv: readonly string[]): string[] => ['-e', LAUNCH
 /**
  * The confinement a repository's commands run in, in its worktree `worktree` (its real path): the
  * host read-only but the setup's private views, no network. A setup (`mode` `setup`) can write the
- * worktree. A check (`check`) sees it read-only, so it cannot change what it checks even for a while
+ * worktree, and sees the metadata cache its `lockfileVerification` declares read-only (never a path
+ * hidden from agents: the host's temporary directories are); a lockfile's verification (`verify`,
+ * T333) is a setup's confinement with that cache writable and the host's network shared, the one mode
+ * with a network. A check (`check`) sees it read-only, so it cannot change what it checks even for a while
  * (INV-5): only the setup's `checkScratch` paths are writable to it, each a fresh private directory
  * (git-ignored, so never in the subject), its private `/tmp`, and its report file
  * ({@link reportChannel}); and each check's command starts through {@link LAUNCHER} (System's own
@@ -737,12 +878,26 @@ export const launcherArgs = (argv: readonly string[]): string[] => ['-e', LAUNCH
  * views made in a fresh owner-only directory under `runDir`. Throws, naming the cause, when any of it
  * cannot be: nothing has run then.
  */
-export async function confineIn(ctx: Context, setup: Setup, worktree: string, runDir: string, mode: 'setup' | 'check' = 'setup'): Promise<Confined> {
+export async function confineIn(ctx: Context, setup: Setup, worktree: string, runDir: string, mode: 'setup' | 'check' | 'verify' = 'setup'): Promise<Confined> {
   // The launcher's Node, at its real path: what is bound back is what runs.
   const node = real(process.execPath) ?? process.execPath
-  const confinement = ctx.agentRuntimes.confinement(mode === 'check' ? { readOnly: [worktree, node] } : { writable: [worktree] })
+  // pnpm's metadata cache of a setup that declares a lockfile's verification (T333): every setup run reads it (the offline install
+  // finds there what the verification wrote); only the verification writes it.
+  const declared = mode === 'check' ? undefined : setup.lockfileVerification?.cacheDir
+  const cache = declared === undefined ? undefined : real(declared)
+  if (declared !== undefined && cache !== undefined && !statSync(cache).isDirectory()) throw new Refusal(`its metadata cache ${declared} is not a directory on this host`)
+  if (mode === 'verify' && !cache) throw new Refusal(`its metadata cache ${declared ?? '(none declared)'} is not a directory on this host`)
+  const confinement = ctx.agentRuntimes.confinement(mode === 'check' ? { readOnly: [worktree, node] }
+    : mode === 'verify' ? { writable: [worktree, cache!] } : { writable: [worktree], ...(cache ? { readOnly: [cache] } : {}) })
   const scratchPaths = mode === 'check' ? setup.checkScratch.map((entry) => scratchPoint(worktree, entry)) : []
   const hidden = confinement.hide.map((h) => real(h)).filter((h): h is string => !!h)
+  if (cache) {
+    const exposed = hidden.find((h) => within(cache, h) || within(h, cache))
+    const view = setup.views.find((v) => within(cache, v.path) || within(v.path, cache))
+    if (exposed || view || within(cache, worktree) || within(worktree, cache)) {
+      throw new Refusal(`its metadata cache ${declared} ${exposed ? `lies inside, or holds, ${exposed}, which is hidden from agents` : view ? `overlaps its view ${view.path}` : `overlaps the worktree ${worktree}`}`)
+    }
+  }
   // A view shows the commands a private copy of host files: never of a path hidden from agents, nor over the worktree.
   for (const view of setup.views) {
     const path = real(view.path)
@@ -783,8 +938,9 @@ export async function confineIn(ctx: Context, setup: Setup, worktree: string, ru
       mkdirSync(dir, { mode: 0o700 })
       return { source: dir, path, writable: true }
     })
-    const options = { readOnly: true, network: false, chdir: worktree, views: [...views, ...scratchViews] } as const
-    if (mode === 'setup') {
+    // A verification shares the host's network (all of it: bubblewrap has no host filter); every other command has none.
+    const options = { readOnly: true, ...(mode === 'verify' ? {} : { network: false as const }), chdir: worktree, views: [...views, ...scratchViews] } as const
+    if (mode !== 'check') {
       return {
         command: (argv) => confinedCommand(argv[0]!, argv.slice(1), confinement, options),
         dispose: () => rmSync(scratch, { recursive: true, force: true }),

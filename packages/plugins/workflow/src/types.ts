@@ -316,9 +316,11 @@ export interface TaskLanding {
   told?: boolean
   /**
    * The required checks a result held for the operator left pending, run on its exact tree by the
-   * landing's watch (T293), once per subject: the version they ran on, and what they came to.
+   * landing's watch (T293), once per subject: the version they ran on, and what they came to. `requests`:
+   * the approval requests a `not-run` waits on (a new lockfile's verification, T333): the watch asks
+   * again once none is open, and the checks run then.
    */
-  held?: { version: string; outcome: 'checked' | 'not-run'; reason?: string; acceptance?: ArtifactRef }
+  held?: { version: string; outcome: 'checked' | 'not-run'; reason?: string; acceptance?: ArtifactRef; requests?: string[] }
   /** When it last changed or was looked at. */
   at: string
 }

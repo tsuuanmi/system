@@ -294,14 +294,24 @@ export class TaskLandings {
   private async checkHeld(row: TaskRow, board: Board, task: BoardTask, landing: TaskLanding): Promise<TaskLanding | undefined> {
     const pending = (task.waiting?.pendingChecks ?? []).filter((c): c is RunCheck => (RUN_CHECKS as readonly string[]).includes(c))
     const tree = landing.subject
-    if (!pending.length || !tree || !landing.workspace || landing.held?.version === tree.version) return this.touch(row, landing)
+    if (!pending.length || !tree || !landing.workspace) return this.touch(row, landing)
+    // Once per subject, but for checks not run on an approval they wait for (a new lockfile's verification, T333): asked again once none is open.
+    if (landing.held?.version === tree.version && !(landing.held.outcome === 'not-run' && await this.resolved(landing.held.requests))) return this.touch(row, landing)
     const result = task.result
     if (!result || result.subject.type !== 'git-head' || result.subject.ref !== tree.ref || result.subject.version !== tree.version) return this.touch(row, landing)
     const classification = this.e.runRow(row.run_id)?.classification ?? this.e.ctx.egress.defaultClassification
     const ran = await runChecksOn(this.e, row.run_id, { subject: { type: 'git-head', ...tree }, workspace: landing.workspace }, pending, classification, this.e.stopped.signal)
-    if (!Object.keys(ran.checks).length) return { ...landing, held: { version: tree.version, outcome: 'not-run', reason: ran.notes.join('; ').slice(0, 500) }, at: now() }
+    if (!Object.keys(ran.checks).length) return { ...landing, held: { version: tree.version, outcome: 'not-run', reason: ran.notes.join('; ').slice(0, 500), ...(ran.requests?.length ? { requests: ran.requests } : {}) }, at: now() }
     const acceptance = await this.e.tasks.recheckHeld(row, board, ran)
     return { ...landing, held: { version: tree.version, outcome: 'checked', ...(acceptance ? { acceptance } : {}) }, at: now() }
+  }
+
+  /** Whether the approval requests some checks wait on (there are some) are all resolved: none is open or batched, or one cannot be read (asked again, never waited on forever). */
+  private async resolved(requests: readonly string[] | undefined): Promise<boolean> {
+    const approvals = queueOf(this.e)
+    if (!requests?.length || !approvals) return false
+    const states = await Promise.all(requests.map(async (id) => (await approvals.get(id).catch(() => undefined))?.state))
+    return states.every((state) => state !== 'open' && state !== 'batched')
   }
 
   /** Have the source that holds the worktree commit the accepted tree on its branch. */

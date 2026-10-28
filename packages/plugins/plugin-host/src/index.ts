@@ -462,10 +462,10 @@ export class StorePluginHost extends PluginHost {
   }
 
   /** The owning row's configured mode (`enforce.<key>` of its configuration), when the mechanism takes it; else `on`. */
-  private configured(mechanism: { row: string; key?: string; modes: readonly EnforceMode[] }): EnforceMode {
+  private configured(mechanism: { row: string; key?: string; modes: readonly EnforceMode[]; start?: EnforceMode }): EnforceMode {
     const config = mechanism.key ? this.entry(mechanism.row)?.options.config : undefined
     const value = (config as { enforce?: Record<string, unknown> } | undefined)?.enforce?.[mechanism.key!]
-    return typeof value === 'string' && (mechanism.modes as readonly string[]).includes(value) ? value as EnforceMode : 'on'
+    return typeof value === 'string' && (mechanism.modes as readonly string[]).includes(value) ? value as EnforceMode : mechanism.start ?? 'on'
   }
 
   enforcement(): EnforceState[] {

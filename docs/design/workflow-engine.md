@@ -1647,7 +1647,11 @@ check never installs.
   `ERR_PNPM_NO_OFFLINE_TARBALL`, `ERR_PNPM_NO_OFFLINE_META`, a registry it could not reach) refuses
   the checks as `dependency_unavailable`, the packages named in the reason and the decision's
   `missing`; any other failure refuses them as `failed`. Either way no check runs, and each stays
-  pending (INV-2).
+  pending (INV-2). A refusal for only the new lockfile's supply-chain verification
+  (`ERR_PNPM_NO_OFFLINE_META` alone) can have one approval request, named in the refusal's
+  `requests` ([a lockfile's verification](agent-runtimes.md#a-lockfiles-verification), T333): a result
+  held with checks `not-run` on it is asked again by its landing's watch (`held.requests`) once no
+  such request is open or batched, never while one is, and the checks run then by themselves.
 - **No install inside a check.** A check's command runs with pnpm's verify-deps-before-run off
   (`pnpm_config_verify_deps_before_run=false`, and the `npm_config_` name too) and offline: pnpm never
   starts an install before a script. pnpm 11 and later ignore an `npm_config_` setting, so the

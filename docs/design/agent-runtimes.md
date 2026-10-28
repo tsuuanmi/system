@@ -579,6 +579,90 @@ the tree the previous attempt's writing step left. One change at a time per repo
 Never a force, a reset of a branch, a deletion, or a push. The earlier worktree is clean afterwards,
 and the retention removes it as any other; its branch keeps the carry commit, which is never merged.
 
+### A lockfile's verification
+
+> T333 (D112). Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (`src/verification.ts`, `src/setup.ts` `refresh`, `src/dependencies.ts`); switch: the
+> `lockfile-verification` mechanism.
+
+pnpm 12 verifies each new lockfile against its supply-chain policy, which reads the registry's full
+metadata. The setup run again for a result's checks (below) has no network, so a result that changes
+`pnpm-lock.yaml` fails it with `ERR_PNPM_NO_OFFLINE_META` and would never have its checks run. Once a
+lockfile has been verified online on the host, the same offline install passes. A setup refused
+`dependency_unavailable` for **only that** (its output holds `ERR_PNPM_NO_OFFLINE_META` and no missing
+tarball and no unreachable registry) is not the end when the repository declares
+`worktreeSetup[].lockfileVerification`: `registry`, an `https://` URL, and `cacheDir`, pnpm's
+metadata cache (an absolute path, outside every path hidden from agents: the host's temporary
+directories are hidden, so a cache there is refused). **Every setup run of that repository sees
+`cacheDir` read-only**, so the offline install finds there what the verification wrote; only the
+verification writes it.
+
+- **One request per lockfile digest.** The digest is the hash of the worktree's `pnpm-lock.yaml`;
+  the ledger (`agent_lockfile_verifications`, migration 24) is keyed by repository and digest. The
+  request is class `command`, judged by the policy as the exact argv of the verification: the
+  setup's failed install command, which must be pnpm's own frozen install: the host's `pnpm` or
+  `corepack pnpm` by name (never a path, so never a file the result wrote), `install` (or `i`) with
+  `--frozen-lockfile`, and no other word but the options a verification takes (`--offline`,
+  `--prefer-offline`, `--store-dir=<absolute path>`, `--package-import-method=<word>`, `--reporter=<word>`,
+  `--silent`, and the two below). Any other command, a script of the worktree among them, whatever
+  flags it carries, is said so in the refusal and never run online. The verification is that install
+  without `--offline`, with `--ignore-scripts` and `--ignore-pnpmfile` added: none of the result's own
+  code (its lifecycle scripts, its pnpmfile hooks) runs while the network is open; the offline setup
+  after it runs them, with no network. Its subject is the exact execution (`lockfile-verification:<repository
+  key>/<digest>`, version the content id of the digest, the argv, the registry, the cache directory, and
+  the deadline, INV-5): an approval runs only the execution it names; one a reloaded setup gives the same
+  digest is asked about anew, never run on it. The worktree is not part of it: every held result with
+  this lockfile, in any run worktree of the repository, waits on the one request of its digest (none
+  replaces another's), and the first of them checked after the approval runs it, its own files read
+  first; the others find the digest verified and set up again offline. Its summary and consequences
+  name the argv, the registry it is meant to reach, that the host's network is shared while it runs,
+  the one host path it writes, and what rejection means (INV-12). The policy decides as for any
+  command: `ask` opens the request, `forbid` refuses, a listed line (`auto`) runs it unasked.
+- **Nothing the result configures reaches past the registry.** Before it asks, and again before it
+  runs, the source reads the result's `.npmrc` files, `pnpm-workspace.yaml` files, and lockfiles (the
+  root's always, the others the dependency files name) against allowlists, never a list of what to
+  refuse, so a setting spelled in a way the scan does not know refuses the verification instead of
+  passing it (INV-2). An `.npmrc` may set only layout settings (`save-exact`, `node-linker`, … ; names
+  read case-blind, `_` as `-`, as pnpm reads them) and `registry` equal to the verification's; no
+  section. A `pnpm-workspace.yaml` may hold at the top level only plain keys of a fixed list
+  (`packages`, `catalog`, `overrides`, `allowBuilds`, … ; quotes and spaces before the colon read
+  through), and no flow mapping, document marker, complex key, indented root mapping, or any other
+  top-level shape. A lockfile may name no URL off the registry and no git host, hold no anchor, alias,
+  tag, escaped string, or complex key but pnpm's own for a long package id, and each resolution must be
+  pnpm's one-line `{…}` of a registry package's (`integrity`, a `tarball` under the registry) or a
+  local directory's. A bare carriage return in any of the three (a line break for pnpm's readers, not
+  for the scan) refuses it too. Anything else refuses the verification, naming each finding; nothing
+  is asked, and the checks stay not run as before.
+- **Approved, the host runs it, on the host's network**: in the setup's confinement (the host
+  read-only but the worktree, the setup's views, and `cacheDir`, writable), the network shared for
+  this one command, its environment naming the registry (`pnpm_config_registry`), scripts and pnpmfile
+  off (`pnpm_config_ignore_scripts`, `pnpm_config_ignore_pnpmfile`), `offline` off,
+  verify-deps-before-run off, and corepack forbidden to download a package manager
+  (`COREPACK_ENABLE_NETWORK=0`), within the setup's deadline. A bubblewrap confinement has the host's
+  network or none; it cannot filter by host, so what keeps the command to the registry is that it runs
+  none of the result's code, that its environment names the registry, and that the result configures
+  no other; the host's own pnpm configuration (the daemon's home) is the operator's. The operator
+  filters the host's egress if that is not enough. The outcome is a `gate` decision of rule
+  `agent-workers.lockfile-verification` (`verify`, `fail`, `deny`, or `warn`), citing the policy's
+  verdict and the approval (INV-13). The approval is used once: the ledger row moves from `asked` to
+  `running` in one statement, and only while it still holds that request for that execution.
+- **Then by themselves:** on `verify`, the setup runs again offline on the result's tree, and its
+  checks run (the `agent-workers.worktree-setup-again` decision names the verification's). The held
+  result's landing watch asks the checks again once none of the requests the refusal named
+  (`Checked.requests`, `held.requests`) is open or batched ([the workflow's side](workflow-engine.md#a-result-that-changes-its-dependencies)).
+- **Denied or expired:** the checks stay not run, with a reason that names the request and how it
+  ended. A rejection is final for that digest; an expiry or a withdrawal is told once, and the next
+  check on that lockfile asks anew. A verification that ran and exited non-zero is `failed`, final for
+  the digest, with its output's end in the decision.
+- **Never again:** a digest `verified` is never asked about again, from any worktree or run; a setup
+  that still fails offline after it says so (`verified online, now or before`) and is refused as before.
+  Any other failure (a missing tarball, an unreachable registry) is `dependency_unavailable` or
+  `failed` as before, and nothing runs online.
+- **The switch** (`enforce.lockfileVerification`, live override `system enforce set
+  lockfile-verification <mode>`, ADR-0078): `on` as above; `warn` (the start, D108) records, once per
+  digest, the request it would open (`option: warn`) and opens none, so the refusal is as it was;
+  `off` does not look. How to run it: [a lockfile change](../operations/runbooks.md#a-lockfile-change).
+
 ### A run's checks
 
 > Decision: [ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)

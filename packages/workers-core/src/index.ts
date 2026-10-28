@@ -664,11 +664,12 @@ export type CheckRefusal = 'moved' | 'gone' | 'busy' | 'dependency_unavailable' 
  * What a run's checks came to (T151):
  * - `checked`: one result per check asked, in its order; `evidence`, the `check-run@1.0` evidence
  *   artifact that records what ran, when any command was started;
- * - `refused`: nothing ran, and why; every check stays pending.
+ * - `refused`: nothing ran, and why; every check stays pending. `requests`: the approval requests it
+ *   waits on (a new lockfile's verification, T333): once each is resolved, asking again runs the checks.
  */
 export type Checked =
   | { outcome: 'checked'; results: CheckResult[]; evidence?: string }
-  | { outcome: 'refused'; cause: CheckRefusal; reason: string }
+  | { outcome: 'refused'; cause: CheckRefusal; reason: string; requests?: string[] }
 
 /**
  * Contributes Workers and runs work on them (the Worker's three questions: can it accept

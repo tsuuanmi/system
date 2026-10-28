@@ -78,6 +78,8 @@ export interface RanChecks {
   notes: string[]
   /** Each failed check's failing lines (its tests' names and assertions), as its source read them, bounded: for the task's dossier (T270). */
   failures?: Partial<Record<RunCheck, string[]>>
+  /** The approval requests the source refused them on, which they wait for (a new lockfile's verification, T333): asked again once each is resolved. */
+  requests?: string[]
   /** What the acceptance decision's detail records of them. */
   detail: Record<string, unknown>
 }
@@ -227,7 +229,10 @@ export async function runChecksOn(
     return pending(`the workers seam could not run them (${(error as Error).message.slice(0, 200)})`)
   }
   if (!checked) return pending(`no Worker source holds the worktree ${tree.workspace} of run ${runId}`)
-  if (checked.outcome === 'refused') return { ...pending(`source ${checked.source} refused (${checked.cause}): ${checked.reason}`), detail: { asked: required, source: checked.source, outcome: 'refused', cause: checked.cause } }
+  if (checked.outcome === 'refused') {
+    const requests = checked.requests?.length ? { requests: checked.requests } : {}
+    return { ...pending(`source ${checked.source} refused (${checked.cause}): ${checked.reason}`), detail: { asked: required, source: checked.source, outcome: 'refused', cause: checked.cause, ...requests }, ...requests }
+  }
   const checks: Partial<Record<RunCheck, boolean>> = {}
   const notes: string[] = []
   const failures: Partial<Record<RunCheck, string[]>> = {}

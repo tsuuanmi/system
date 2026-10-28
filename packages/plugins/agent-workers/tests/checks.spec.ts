@@ -4,9 +4,11 @@
 // unasked. A check passes on exit 0 and fails on any other code, only while the tree is unchanged
 // after it; anything else is an error, neither passed nor failed. What ran is one check-run@1.0.
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRuntimeRegistry, { type AgentRuntimeProvider, type RunSpec } from '@tsuuanmi/system-agent-runtimes'
 import StoreApprovals from '@tsuuanmi/system-approvals'
@@ -19,8 +21,8 @@ import { captureGitSubject, CLEAN_VERSION, SchemaRegistry } from '@tsuuanmi/syst
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type RunCheck, type WorkRequirement } from '@tsuuanmi/system-workers'
 import type { Checked } from '@tsuuanmi/system-workers-core'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cannotWrite, needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
 import { CheckQueue } from '../src/check-queue.ts'
 import { RunChecks, type RunChecksOptions } from '../src/checks.ts'
 import { missingPackages } from '../src/dependencies.ts'
@@ -174,7 +176,7 @@ type Setup = NonNullable<Config['worktreeSetup']>[number]
 /** Where a booted daemon keeps its store and worktrees: a second boot on the same ones is its restart. */
 type Home = { db: string; root: string }
 
-async function boot(repo: string, setup: Partial<Setup>, listed: string[] | null, restartOf?: Home) {
+async function boot(repo: string, setup: Partial<Setup>, listed: string[] | null, restartOf?: Home, extra: Partial<Config> = {}) {
   if (!restartOf) {
     // The setup copies the dependency from the repository's own untracked file, so no view is needed.
     writeFileSync(join(repo, 'dep.js'), "export const ok = 'dep ok'\n")
@@ -184,7 +186,7 @@ async function boot(repo: string, setup: Partial<Setup>, listed: string[] | null
   const home: Home = restartOf ?? { db: join(temp('system-checks-'), 'system.db'), root: temp('system-worktrees-') }
   const ctx = new Context()
   const agent = new WritingAgent()
-  const config: Config = { workers: [writer(repo)], worktreeRoot: home.root, worktreeSetup: [{ repository: repo, commands: SETUP, ...setup }] }
+  const config: Config = { workers: [writer(repo)], worktreeRoot: home.root, worktreeSetup: [{ repository: repo, commands: SETUP, ...setup }], ...extra }
   const fibers = [
     ctx.plugin(Store, { path: home.db }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
     ...(listed ? [ctx.plugin(StoreApprovals, { policies: [policy(listed)] })] : []),
@@ -341,6 +343,183 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
       })
       // Nothing of the checks ran: none is stored on the subject.
       expect(ctx.store.db.prepare('SELECT 1 FROM agent_check_runs WHERE workflow_run_id = ?').get('run_pad')).toBeUndefined()
+    })
+
+    describe('a new lockfile\'s supply-chain verification (T333, D112)', () => {
+      // Outside every path hidden from agents (the host's temporary directories are: a cache or a program there is never seen by a
+      // setup), as setup.spec.ts keeps its store; inside a run's check this may not be writable, and the tests skip with why.
+      const VISIBLE = fileURLToPath(new URL('../node_modules/.cache/', import.meta.url))
+      const NO_VISIBLE = cannotWrite(VISIBLE)
+      beforeEach((context) => {
+        if (NO_VISIBLE) context.skip(`needs a metadata cache and a pnpm outside the hidden paths: ${NO_VISIBLE}`)
+      })
+      const visible = (prefix: string): string => {
+        mkdirSync(VISIBLE, { recursive: true })
+        const dir = mkdtempSync(join(VISIBLE, prefix))
+        cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+        return dir
+      }
+
+      // The setup's install is pnpm's own frozen install, as the live setup's is: only such a command is ever verified online.
+      const REGISTRY = 'https://registry.example.test/'
+      const VERIFY = 'pnpm install --frozen-lockfile --offline'
+      const VERIFICATION = 'pnpm install --frozen-lockfile --ignore-scripts --ignore-pnpmfile'
+      const lock = (text: string): Record<string, string> => ({ 'pnpm-lock.yaml': text })
+      const digestOf = (text: string): string => createHash('sha256').update(text).digest('hex')
+
+      /**
+       * A pnpm-like install that, like pnpm 12, verifies each lockfile against the registry's metadata, which an offline
+       * install lacks until a verification ran online and left its mark in the metadata cache `cache`, a host directory the
+       * setups read: no mark, offline, fails as ERR_PNPM_NO_OFFLINE_META does; online, it leaves the mark with what it was run with.
+       */
+      const installer = (cache: string): string => [
+        `#!${process.execPath}`,
+        "const { createHash } = require('node:crypto')",
+        "const { existsSync, readFileSync, writeFileSync } = require('node:fs')",
+        "const digest = createHash('sha256').update(readFileSync('pnpm-lock.yaml')).digest('hex')",
+        `const mark = \`${cache}/verified-\${digest}\``,
+        'if (!existsSync(mark)) {',
+        "  if (process.env.pnpm_config_offline === 'true') {",
+        "    console.error(' ERR_PNPM_NO_OFFLINE_META  Failed to resolve @openai/codex-sdk@1.0.0 in package mirror /cache/metadata-full')",
+        '    process.exit(1)',
+        '  }',
+        "  writeFileSync(mark, JSON.stringify({ registry: process.env.pnpm_config_registry, offline: process.env.pnpm_config_offline, scripts: process.env.pnpm_config_ignore_scripts, args: process.argv.slice(2) }))",
+        '}',
+        "console.log('install: verified')",
+        '',
+      ].join('\n')
+
+      /**
+       * A repository whose first lockfile is verified, the metadata cache, and the host's `pnpm`: the installer above, first on
+       * the daemon's PATH for this test. Both are host directories agents see (read-only to a setup; the cache writable to the
+       * verification alone).
+       */
+      function lockedRepository(): { repo: string; cache: string; marked: (text: string) => string | undefined } {
+        const cache = visible('cache-')
+        const bin = visible('bin-')
+        writeFileSync(join(bin, 'pnpm'), installer(cache), { mode: 0o755 })
+        const path = process.env.PATH
+        process.env.PATH = `${bin}:${path ?? ''}`
+        cleanups.push(() => void (process.env.PATH = path))
+        const repo = repository()
+        writeFileSync(join(repo, 'pnpm-lock.yaml'), 'lock: 1\n')
+        git(repo, 'add', '.')
+        git(repo, 'commit', '-q', '-m', 'lockfile')
+        writeFileSync(join(cache, `verified-${digestOf('lock: 1\n')}`), '{}')
+        const mark = (text: string): string => join(cache, `verified-${digestOf(text)}`)
+        return { repo, cache, marked: (text) => existsSync(mark(text)) ? readFileSync(mark(text), 'utf8') : undefined }
+      }
+
+      const boots = (locked: { repo: string; cache: string }, mode?: 'on' | 'warn' | 'off', install = VERIFY) => boot(locked.repo, {
+        commands: [...SETUP, install], checks: { tests: TESTS }, lockfileVerification: { registry: REGISTRY, cacheDir: locked.cache },
+      }, [...SETUP, install, TESTS], undefined, mode ? { enforce: { lockfileVerification: mode } } : {})
+      const verifications = (ctx: Context) => ctx.artifacts.list({ kind: 'decision', decisionType: 'gate' }).filter((a) => (a.body as { decider?: { id?: string } }).decider?.id === 'agent-workers.lockfile-verification')
+      const opened = (ctx: Context) => ctx.approvals.list({ states: ['open', 'approved', 'rejected'] })
+
+      it('asks once, for the verification\'s exact argv with its registry named, and on the approval runs it, then sets the worktree up again and runs the checks by itself; a second result with the same lockfile asks nothing (INV-12, INV-13)', async () => {
+        const locked = lockedRepository()
+        const { marked } = locked
+        const { ctx, write, check } = await boots(locked, 'on')
+        const at = await write('run_lock', `files ${JSON.stringify(lock('lock: 2\n'))}`)
+        const waiting = await check('run_lock', at, ['tests'])
+        expect(waiting).toMatchObject({ outcome: 'refused', cause: 'dependency_unavailable', requests: [expect.any(String)], reason: expect.stringContaining('waits for the operator\'s approval of its verification') })
+        // One request, of class command, for the exact argv (the frozen install, not offline, none of the result's code run), naming the registry.
+        const [request] = await opened(ctx)
+        expect(await opened(ctx)).toHaveLength(1)
+        expect(request).toMatchObject({ state: 'open', action: { class: 'command', summary: expect.stringContaining(VERIFICATION) }, subject: { type: 'content', ref: expect.stringContaining(`/sha256:${digestOf('lock: 2\n')}`), version: expect.stringMatching(/^sha256:/) } })
+        expect(request!.action.summary).not.toContain('--offline')
+        expect(request!.action.consequences).toContain(`meant to reach ${REGISTRY} only`)
+        expect(waiting).toMatchObject({ requests: [request!.requestId] })
+        // Asked again while it is open, it opens no second one, and nothing ran online.
+        expect(await check('run_lock', at, ['tests'])).toMatchObject({ outcome: 'refused', requests: [request!.requestId] })
+        expect(await opened(ctx)).toHaveLength(1)
+        expect(marked('lock: 2\n')).toBeUndefined()
+        expect(ctx.store.db.prepare('SELECT 1 FROM agent_check_runs WHERE workflow_run_id = ?').get('run_lock')).toBeUndefined()
+
+        await ctx.approvals.decide([{ requestId: request!.requestId, subject: request!.subject, verdict: 'approved' }])
+        const checked = await check('run_lock', at, ['tests'])
+        expect(checked).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed', exitCode: 0 }] })
+        // It ran online (not offline), against the named registry, as the exact argv, its scripts off.
+        expect(JSON.parse(marked('lock: 2\n')!)).toEqual({ registry: REGISTRY, offline: 'false', scripts: 'true', args: ['install', '--frozen-lockfile', '--ignore-scripts', '--ignore-pnpmfile'] })
+        // What it came to is a decision; the tree is still the result's.
+        expect(verifications(ctx).map((a) => (a.body as { outcome: { option: string; detail: Record<string, unknown> } }).outcome)).toMatchObject([{ option: 'verify', detail: { digest: `sha256:${digestOf('lock: 2\n')}`, registry: REGISTRY, requestId: request!.requestId } }])
+        expect(captureGitSubject(at.workspace)!.subject).toMatchObject(at.subject)
+        expect(ctx.eventLog.query({ type: 'agent-workers.worktree.setup', runId: 'run_lock' }).filter((e) => (e.data as { for?: string }).for === 'checks').map((e) => (e.data as { outcome: string }).outcome)).toEqual(['refused', 'refused', 'ran'])
+
+        // Another result with the same lockfile digest: verified once, never asked again.
+        const again = await write('run_lock_again', `files ${JSON.stringify(lock('lock: 2\n'))}`)
+        expect(await check('run_lock_again', again, ['tests'])).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed' }] })
+        expect(await opened(ctx)).toHaveLength(1)
+        expect(verifications(ctx)).toHaveLength(1)
+      })
+
+      it('leaves the checks not run, naming the denial, when the operator rejects the request, and never asks again for that lockfile (INV-2)', async () => {
+        const locked = lockedRepository()
+        const { marked } = locked
+        const { ctx, write, check } = await boots(locked, 'on')
+        const at = await write('run_denied', `files ${JSON.stringify(lock('lock: 3\n'))}`)
+        await check('run_denied', at, ['tests'])
+        const [request] = await opened(ctx)
+        await ctx.approvals.decide([{ requestId: request!.requestId, subject: request!.subject, verdict: 'rejected' }])
+        const denied = await check('run_denied', at, ['tests'])
+        expect(denied).toMatchObject({ outcome: 'refused', cause: 'dependency_unavailable', reason: expect.stringContaining(`approval request ${request!.requestId} for the verification of the lockfile sha256:${digestOf('lock: 3\n')}`) })
+        expect(denied).toMatchObject({ reason: expect.stringContaining('rejected by the operator') })
+        // No request that waits is named: the checks do not run again by themselves.
+        expect(denied).not.toHaveProperty('requests')
+        expect(marked('lock: 3\n')).toBeUndefined()
+        expect(ctx.store.db.prepare('SELECT 1 FROM agent_check_runs WHERE workflow_run_id = ?').get('run_denied')).toBeUndefined()
+        // Asked once more, it says the same and opens nothing.
+        expect(await check('run_denied', at, ['tests'])).toMatchObject({ outcome: 'refused', reason: expect.stringContaining('rejected by the operator') })
+        expect(await opened(ctx)).toHaveLength(1)
+        expect(verifications(ctx).map((a) => (a.body as { outcome: { option: string } }).outcome.option)).toEqual(['deny'])
+      })
+
+      it('in warn, the default, records the request it would open, once per lockfile digest, and opens none: the refusal is as it was (D108)', async () => {
+        const locked = lockedRepository()
+        const { marked } = locked
+        const { ctx, write, check } = await boots(locked)
+        const at = await write('run_warn', `files ${JSON.stringify(lock('lock: 4\n'))}`)
+        for (let i = 0; i < 2; i++) {
+          expect(await check('run_warn', at, ['tests'])).toMatchObject({ outcome: 'refused', cause: 'dependency_unavailable', reason: expect.stringContaining('warn mode') })
+        }
+        expect(await opened(ctx)).toEqual([])
+        expect(marked('lock: 4\n')).toBeUndefined()
+        expect(verifications(ctx).map((a) => (a.body as { outcome: { option: string; detail: { command: string; registry: string } } }).outcome)).toMatchObject([{ option: 'warn', detail: { command: VERIFICATION, registry: REGISTRY } }])
+      })
+
+      it('asks nothing, and runs nothing online, for a result whose own files would send the install past the registry: a scoped registry in its .npmrc (INV-12)', async () => {
+        const locked = lockedRepository()
+        const { marked } = locked
+        const { ctx, write, check } = await boots(locked, 'on')
+        const at = await write('run_scoped', `files ${JSON.stringify({ ...lock('lock: 6\n'), '.npmrc': '@x:registry=https://elsewhere.example.test/\n' })}`)
+        expect(await check('run_scoped', at, ['tests'])).toMatchObject({ outcome: 'refused', cause: 'dependency_unavailable', reason: expect.stringContaining('.npmrc sets @x:registry') })
+        expect(await opened(ctx)).toEqual([])
+        expect(marked('lock: 6\n')).toBeUndefined()
+      })
+
+      it('asks nothing, and runs nothing online, when the setup\'s install is a script of the worktree, not pnpm\'s own frozen install, whatever flags it carries (INV-12)', async () => {
+        const locked = lockedRepository()
+        // The same installer, as a file of the repository (so of every result's tree), called with pnpm's flags.
+        writeFileSync(join(locked.repo, 'verify.cjs'), installer(locked.cache))
+        git(locked.repo, 'add', '.')
+        git(locked.repo, 'commit', '-q', '-m', 'a script')
+        const script = 'node verify.cjs --frozen-lockfile --offline'
+        const { ctx, write, check } = await boots(locked, 'on', script)
+        const at = await write('run_script', `files ${JSON.stringify(lock('lock: 7\n'))}`)
+        expect(await check('run_script', at, ['tests'])).toMatchObject({ outcome: 'refused', cause: 'dependency_unavailable', reason: expect.stringContaining(`(${script}) is not pnpm's own frozen install`) })
+        expect(await opened(ctx)).toEqual([])
+        expect(locked.marked('lock: 7\n')).toBeUndefined()
+        expect(verifications(ctx)).toEqual([])
+      })
+
+      it('does nothing of it when the mechanism is off: the setup is refused as before, nothing asked or recorded (INV-2)', async () => {
+        const locked = lockedRepository()
+        const { ctx, write, check } = await boots(locked, 'off')
+        const at = await write('run_off', `files ${JSON.stringify(lock('lock: 5\n'))}`)
+        expect(await check('run_off', at, ['tests'])).toMatchObject({ outcome: 'refused', cause: 'dependency_unavailable', reason: expect.not.stringContaining('verification') })
+        expect(await opened(ctx)).toEqual([])
+        expect(verifications(ctx)).toEqual([])
+      })
     })
 
     it('reports a check that prints nothing for its bound as stalled, and its end, while it goes on to its deadline (T235)', async () => {

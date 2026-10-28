@@ -21,6 +21,8 @@ export interface Mechanism {
   key?: string
   /** The modes it takes; any other is refused with {@link Mechanism.why}. */
   modes: readonly EnforceMode[]
+  /** The mode it runs in when its row configures none and no override is set (default `on`): a new mechanism may start in `warn` (D108). */
+  start?: EnforceMode
   /** What it does, and why it takes only the modes it takes. */
   what: string
 }
@@ -44,6 +46,10 @@ export const MECHANISMS: readonly Mechanism[] = [
     what: 'the selection of the REVIEW.md guides of the areas a review\'s change touches (T267): off gives a review no guides; it refuses nothing, so it has no warn',
   },
   {
+    id: 'lockfile-verification', row: 'agent-workers', key: 'lockfileVerification', modes: ['off', 'warn', 'on'], start: 'warn',
+    what: 'the supply-chain verification of a new lockfile that a result\'s setup lacks offline (T333, D112): on opens one approval request per lockfile digest and runs the verification once on the host\'s network, none of the result\'s code run, when approved; warn records the request it would open and opens none; off does not look',
+  },
+  {
     id: 'lead-rights', row: 'approvals', modes: ['on'],
     what: 'the lead\'s closed list of rights (ADR-0076): every refusal is a bound of authority, so it is only on (INV-6); to stop a lead deciding, revoke its token (system lead-token revoke)',
   },
@@ -60,7 +66,7 @@ export interface EnforceSource {
 
 /**
  * The mode `mechanism` runs in now: the live override the plugin host holds, when the mechanism takes
- * it, else the owning row's `configured` value, when it takes it, else `on`. Read at each use, never
+ * it, else the owning row's `configured` value, when it takes it, else its start mode (`on` unless it names one). Read at each use, never
  * cached, so a change takes effect at the next decision.
  */
 export function enforceMode(host: EnforceSource | undefined, mechanism: string, configured?: EnforceMode): EnforceMode {
@@ -69,5 +75,5 @@ export function enforceMode(host: EnforceSource | undefined, mechanism: string, 
   const set = host?.enforced?.(mechanism)
   if (set && m.modes.includes(set)) return set
   if (configured && m.modes.includes(configured)) return configured
-  return 'on'
+  return m.start ?? 'on'
 }

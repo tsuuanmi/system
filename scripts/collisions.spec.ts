@@ -112,8 +112,8 @@ describe('store migrations', () => {
   it('reads every plugin\'s list in the real tree, imported constants included, and finds no collision', () => {
     const { lists } = migrationLists(root)
     const versions = (owner: string) => lists.find((l) => l.owner === owner)?.versions
-    // 23: when a check on a tip last used its worktree (T305b); 22: the handbook slice's source half (T259); 21: a run the host's stop cut (T283); 20: the tier a run runs at (T261, ADR-0073).
-    expect(versions('agent-workers')).toEqual(Array.from({ length: 23 }, (_, i) => i + 1))
+    // 24: the ledger of lockfile verifications (T333); 23: when a check on a tip last used its worktree (T305b); 22: the handbook slice's source half (T259); 21: a run the host's stop cut (T283); 20: the tier a run runs at (T261, ADR-0073).
+    expect(versions('agent-workers')).toEqual(Array.from({ length: 24 }, (_, i) => i + 1))
     expect(versions('workflow')?.slice(0, 3)).toEqual([1, 2, 3])
     expect(versions('turns')).toContain(7)
     expect(checkMigrations(root)).toEqual([])

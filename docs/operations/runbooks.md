@@ -3625,6 +3625,7 @@ What a check that did not pass means:
 | `… (the worktree … was not set up under … setup as loaded now …)` | the setup changed after the worktree was made, or never ran there: the next attempt's worktree is set up again |
 | `… did not finish within 1800 s` | raise `checkTimeoutSeconds`, or find what hangs; `…, having printed nothing since <time>` says it went quiet then. While it runs, `system explain <runId>` lists it under `checks` as `stalled` (and the run's page under **Checks**) once it printed nothing for `checkStallSeconds` |
 | `… did not run: source agents refused (dependency_unavailable): … the packages <name> are not in the store it installs from …` (each `name` or `name@version`, as pnpm said) | the result changed its dependencies and needs a package the host's store lacks; the setup ran again offline and failed at once. Fetch it into the store on the host (`corepack pnpm install` in the repository's main working tree, or `pnpm fetch`), then decide the held result, or let the next attempt run its checks. `system artifact <decision>` (the `agent-workers.worktree-setup-again` decision named in the reason) shows the files that changed and the packages missing |
+| `… did not run: source agents refused (dependency_unavailable): … its lockfile sha256:… is not verified: it waits for the operator's approval of its verification (approval request …)` | the result changed `pnpm-lock.yaml`: see [a lockfile change](#a-lockfile-change) |
 | `… did not run: source agents refused (failed): … its setup run again on the result did not complete …` | the setup run again for the result's changed dependencies failed another way (`ERR_PNPM_OUTDATED_LOCKFILE`: the result changed a manifest without its lockfile), or its command is not on the policy's `commands` list: the result waits for you |
 | `the run's own tests check failed …`, its output naming `EROFS` (a read-only file system) | the command writes into the worktree, which a check sees read-only: name the git-ignored path it writes (a cache under `node_modules/`) in `checkScratch` |
 | `… its check scratch … is not ignored by git, or holds a tracked file` | a scratch path must be ignored by git: add it to `.gitignore`, or name another |
@@ -3635,6 +3636,72 @@ What a check that did not pass means:
 | `… did not run: source agents refused (busy) …` or `(moved)` | an agent run of the workflow run had not ended, or the tree changed after the last step: the result waits for you; check its worktree |
 
 A pending check is never failed: the review waits for you as before, and your Accept applies it.
+
+## A lockfile change
+
+pnpm 12 verifies each new lockfile against its supply-chain policy, which reads the registry's full
+metadata. The setup that runs again for a result's checks has no network, so for a result that
+changes `pnpm-lock.yaml` it fails with `ERR_PNPM_NO_OFFLINE_META` (for example for
+`@openai/codex-sdk`), and its checks would never run. Once a lockfile has been verified online on the
+host, the same offline install passes. System can do that one verification for you, once per lockfile
+digest, on your approval ([a lockfile's verification](../design/agent-runtimes.md#a-lockfiles-verification), T333, D112).
+
+1. **Name the registry and the cache** in the repository's `worktreeSetup` entry, and the mechanism's
+   start mode in the row's own `enforce` (a key of the row's `config`, not of the setup entry):
+
+   ```yaml
+   - id: agent-workers
+     config:
+       worktreeSetup:
+         - repository: /home/me/src/system
+           commands: [ ... corepack pnpm install --frozen-lockfile --offline ... ]   # pnpm's own frozen install: only it is ever verified online
+           lockfileVerification:
+             registry: https://registry.npmjs.org/          # the one host its request names, and the only registry the result may configure
+             cacheDir: /home/me/.cache/pnpm                # pnpm's metadata cache: every setup run sees it read-only; the verification writes it
+       enforce:
+         lockfileVerification: warn                         # off | warn | on; starts warn
+   ```
+
+   `cacheDir` must be the directory pnpm reads its metadata from in the setup's commands (its
+   default is `$XDG_CACHE_HOME/pnpm`, or `~/.cache/pnpm`). It must not lie inside a path hidden from
+   agents (the temporary directories, DSH's home, the credential stores), a view, or the worktree.
+   Once named, every setup run of the repository binds it read-only (the setup is refused, naming it,
+   when it is not a directory or lies in such a place).
+2. **warn (the start):** a result that changes the lockfile is refused as before, its checks `not run`
+   (the reason says `warn mode`), and System records, once per digest, a `gate` decision of rule
+   `agent-workers.lockfile-verification` (`option: warn`) with the request it would open. No request
+   is made. Read them with `system explain <runId>` or `system artifact <decision>`. Move it live with
+   `system enforce set lockfile-verification on --reason …` (`configured` clears the override).
+3. **on:** the first time a digest needs it, one approval request appears in **Approvals** (class
+   `command`). It names the exact argv (the setup's frozen install, without `--offline` and with
+   `--ignore-scripts --ignore-pnpmfile`: it verifies the lockfile and runs none of the result's own
+   code), the registry, that the host's network is shared while it runs, and the one host path it
+   writes. Only `pnpm install --frozen-lockfile` (or `corepack pnpm …`) with the options a verification
+   takes qualifies; a setup whose install is a script or another program is told so and never asked
+   about. Your approval runs exactly the execution it names (argv, registry, cache, deadline); if a
+   reloaded setup changes any of them before it runs, a new request is opened for that one. Results in
+   other worktrees with the same lockfile wait on the same one request, and one approval verifies it
+   for all of them. The result's `.npmrc`, `pnpm-workspace.yaml`, and lockfile are read against
+   allowlists (layout settings only, no registry but this one, every package from the registry or a
+   local directory): a result whose files set anything else, in any spelling, is not asked about at
+   all; its checks stay `not run`, and the reason names each file and setting. The result's checks
+   wait, `not run`, naming the request. **Approve** it: the host runs it once, then the setup and then
+   the checks run again by themselves (the held result's landing watch asks again once the request is
+   resolved), and the outcome is a `gate` decision (`option: verify`, or `fail` when the command exited
+   non-zero). The same digest is never asked again, from any run. **Reject** it, or let it expire: the
+   checks stay `not run` and the reason names the request; a rejection stays for that lockfile (a new
+   lockfile is another digest), an expiry is told once and the next check on that lockfile asks anew.
+4. **off:** nothing of this runs; a result that changes the lockfile is refused as before.
+
+The request is for a command with the network, so the studio policy's `commands` list should not
+hold the verification argv unless you want it to run unasked. A forbidden verification is not run.
+System cannot filter the network of a confined command by host: while it runs, the command has the
+host's network, and what keeps it to the registry is that it runs none of the result's code (scripts
+and pnpmfile off), its environment (`pnpm_config_registry`, and corepack may not download), and the
+check that the result configures no other; your own pnpm configuration in the daemon's home applies
+too. Filter the host's egress if that is not enough. If the offline setup still fails after a
+verification, the reason says the lockfile was verified online yet its setup still needs the
+registry's metadata: the cause is not the verification, and nothing is asked again.
 
 ## Regenerate generated files on a landing
 

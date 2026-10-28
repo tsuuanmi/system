@@ -342,6 +342,28 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
     expect(failing.steps).toHaveLength(2)
   })
 
+  it('asks again the checks a result was held with on an approval they wait for (a new lockfile\'s verification, T333) once that request is resolved, never while it is open, and runs them by itself (INV-2)', async () => {
+    const checker = new Checker()
+    const { ctx, task } = await boot(checker)
+    const verdict = await ctx.approvals.check({ class: 'merge' })
+    const opened = await ctx.approvals.request({
+      subject: { type: 'content', ref: 'lockfile-verification:repo/sha256:0', version: 'sha256:0' }, action: { class: 'merge', summary: 'verify the lockfile' },
+      requester: { component: 'workflow', runId: 'run_lockfile' }, verdict, classification: 'public',
+    })
+    // The source refuses every ask, naming the request, until the test lets it run them.
+    checker.refuse = { outcome: 'refused', cause: 'dependency_unavailable', reason: 'its lockfile is not verified: it waits for the operator\'s approval', requests: [opened.requestId] }
+    const { taskId } = await task()
+    // The run's own ask and the landing's watch's: held for the operator, naming what it waits for; the watch asks no more while the request is open.
+    await vi.waitFor(() => expect(checker.steps).toHaveLength(2), { timeout: 30_000, interval: 25 })
+    expect(await settled(ctx, taskId)).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: ['tests', 'lint'] } })
+    expect(checker.steps).toHaveLength(2)
+    // Approved, the watch asks again by itself, and the checks pass on the held tree.
+    checker.refuse = undefined
+    await ctx.approvals.decide([{ requestId: opened.requestId, subject: opened.subject, verdict: 'approved' }])
+    await vi.waitFor(async () => expect((await ctx.board.task(taskId))!.waiting?.reason).toBe('landing'), { timeout: 30_000, interval: 25 })
+    expect(checker.steps).toHaveLength(3)
+  })
+
   it('holds for the operator a result whose checks could not start, an infrastructure error, and never sends it back as a failed attempt (INV-2)', async () => {
     const checker = new Checker()
     checker.outcomes = { tests: 'error', lint: 'error' }
