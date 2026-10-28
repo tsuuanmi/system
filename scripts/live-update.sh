@@ -46,7 +46,12 @@ usage: scripts/live-update.sh <target sha> [--stage | --apply] [--check-with <bu
          [--patch <candidate cordis.patch.yml>] [--from <sha>] [--live <checkout>] [--dsh-home <dir>]
          [--node-dir <dir>] [--pnpm-dir <dir>] [--backups <dir>] [--new-workers <prefix,...>]
          [--workers-wait <seconds>] [--runs-wait <minutes>] [--runs-every <seconds>] [--cut-running | --no-cut]
-         [--cut-deadline <seconds>]
+         [--cut-deadline <seconds>] [--keep <updates>]
+
+After an update verified (never a rolled-back one), it prunes the older backups under --backups: it
+keeps the last --keep updates (3) and the newest of each of the last 4 weeks, every backup an
+unfinished update refers to, and this one's; it drops this update's `after` snapshot; the notes list
+what it removed. A dry run lists what it would remove now.
 
 A dry run unless --apply. --stage <commit> is the way to update the live install (T323): it updates
 and checks the system-test profile first, with the target's code and the same patch (the test
@@ -88,6 +93,8 @@ RUNS_WAIT=5         # minutes: how long the update waits for the steps in flight
 RUNS_EVERY=30       # seconds between two reads of what runs
 CUT_RUNNING=1       # at the wait's bound, cut (T269); --no-cut stops the update there instead
 CUT_DEADLINE=60     # seconds: the drain of the stop when it cuts, then the daemon stops
+KEEP=3              # updates whose backups are kept after a verified update (besides the newest of each of 4 weeks)
+KEEP_WEEKS=4
 CHECK_WITH=''
 PATCH_CANDIDATE=''
 
@@ -97,7 +104,7 @@ while (($#)); do
     --stage) STAGE=1; APPLY=1 ;;
     --cut-running) CUT_RUNNING=1 ;;
     --no-cut) CUT_RUNNING=0 ;;
-    --check-with | --patch | --from | --live | --dsh-home | --node-dir | --pnpm-dir | --backups | --new-workers | --workers-wait | --runs-wait | --runs-every | --cut-deadline)
+    --check-with | --patch | --from | --live | --dsh-home | --node-dir | --pnpm-dir | --backups | --new-workers | --workers-wait | --runs-wait | --runs-every | --cut-deadline | --keep)
       if (($# < 2)); then usage >&2; exit 2; fi
       case $1 in
         --check-with) CHECK_WITH=$2 ;;
@@ -121,6 +128,9 @@ while (($#)); do
         --cut-deadline)
           if [[ ! $2 =~ ^[0-9]+$ ]] || ((10#$2 > 600)); then usage >&2; exit 2; fi
           CUT_DEADLINE=$((10#$2)) ;;
+        --keep)
+          if [[ ! $2 =~ ^[0-9]+$ ]] || ((10#$2 < 1)); then usage >&2; exit 2; fi
+          KEEP=$((10#$2)) ;;
       esac
       shift ;;
     -h | --help) usage; exit 0 ;;
@@ -908,6 +918,87 @@ rollback() {
   exit 1
 }
 
+# --- pruning old backups (T346) -----------------------------------------------------------------
+
+# Every update leaves a full snapshot under the backups; they are kept within a bound. Of the
+# <date>-before-base[-n] directories, newest first, a backup is kept when it is one of the last $KEEP,
+# or the newest of one of the last $KEEP_WEEKS weeks (counted back, in 7-day spans, from the newest
+# backup's date), or this update's, or one a running or unfinished update refers to (its phase is not
+# done, rolled-back, or set-aside: the lock admits one update at a time, so that is any other one).
+# Sets PRUNE_KEEP and PRUNE_REMOVE (lines "<name> <why>" and "<name>").
+PRUNE_KEEP=()
+PRUNE_REMOVE=()
+BACKUP_NAME_RE='^([0-9]{4}-[0-9]{2}-[0-9]{2})-before-base(-[0-9]+)?$'
+
+prune_plan() {
+  local dir name day anchor='' phase count=0 week why
+  local -a names=()
+  local -A seen=()
+  PRUNE_KEEP=()
+  PRUNE_REMOVE=()
+  shopt -s nullglob
+  for dir in "$BACKUPS"/*-before-base*/; do
+    name=${dir%/}
+    name=${name##*/}
+    if [[ $name =~ $BACKUP_NAME_RE && ! -L ${dir%/} ]]; then names+=("$name"); fi
+  done
+  shopt -u nullglob
+  ((${#names[@]})) || return 0
+  # Newest first: date, then the attempt's number (-2 after the first of that day).
+  mapfile -t names < <(printf '%s\n' "${names[@]}" | sed -E 's/^(.{10}-before-base)$/\1-1/' | LC_ALL=C sort -r | sed -E 's/^(.{10}-before-base)-1$/\1/')
+  for name in "${names[@]}"; do
+    [[ $name =~ $BACKUP_NAME_RE ]]
+    phase=$( (STATE=$BACKUPS/$name/live-update.state; state_get phase) )
+    # A rolled-back or set-aside update's backup is the store it never changed: it counts for nothing.
+    if [[ $phase == rolled-back || $phase == set-aside ]]; then
+      PRUNE_REMOVE+=("$name")
+      continue
+    fi
+    day=$(($(date -u -d "${BASH_REMATCH[1]}" +%s) / 86400))
+    if [[ -z $anchor ]]; then anchor=$day; fi
+    week=$(((anchor - day) / 7))
+    why=''
+    if [[ -n $ATTEMPT && $BACKUPS/$name == "$ATTEMPT" ]]; then
+      why='this update'
+    elif [[ -f $BACKUPS/$name/live-update.state && $phase != done ]]; then
+      why="an unfinished update (phase ${phase:-unknown})"
+    elif ((count < KEEP)); then
+      why="one of the last $KEEP updates"
+    elif ((week < KEEP_WEEKS)) && [[ -z ${seen[$week]:-} ]]; then
+      why="the newest of week $((week + 1)) back"
+    fi
+    if ((week < KEEP_WEEKS)); then seen[$week]=1; fi
+    count=$((count + 1))
+    if [[ -n $why ]]; then PRUNE_KEEP+=("$name $why"); else PRUNE_REMOVE+=("$name"); fi
+  done
+}
+
+# List what pruning keeps and removes, and with $1 = remove, remove it. A backup is removed by its
+# exact name under the backups only, never by a path read from anywhere else.
+prune_backups() {
+  local mode=$1 line name
+  prune_plan
+  for line in ${PRUNE_KEEP[@]+"${PRUNE_KEEP[@]}"}; do
+    log "backup prune: keep ${line%% *} (${line#* })"
+  done
+  for name in ${PRUNE_REMOVE[@]+"${PRUNE_REMOVE[@]}"}; do
+    if [[ $mode == remove ]]; then
+      if rm -rf -- "${BACKUPS:?}/$name"; then log "backup prune: removed $name"; else log "note: backup prune: $name could not be removed"; fi
+    else
+      log "backup prune: would remove $name"
+    fi
+  done
+  if ((${#PRUNE_REMOVE[@]} == 0)); then log "backup prune: nothing to remove"; fi
+}
+
+# After an update verified: its `after` snapshot has done its work, and the older backups are pruned.
+# A failure here is a note: the update's outcome stands.
+after_verified() {
+  if [[ -d $ATTEMPT/after ]]; then
+    rm -rf -- "$ATTEMPT/after" && log "dropped $ATTEMPT/after (the checks passed)"
+  fi
+  prune_backups remove || log "note: backup prune failed (above)"
+}
 # --- preflight: read-only, in a dry run too -----------------------------------------------------
 
 preflight() {
@@ -1047,7 +1138,11 @@ Plan for --apply (this dry run changed nothing):
   A failure after step 2 rolls back: $UNIT stopped, the profile's files put back, ${FROM:0:12}
   checked out, installed, and built, system restore <that directory>/store --yes when the updated
   code started, $UNIT started, system health. Exit 1; 2 if the rollback fails too.
+  9. once it verified (never a rolled-back one): drop <that directory>/after, and prune the older
+     backups, keeping the last $KEEP updates (--keep) and the newest of each of $KEEP_WEEKS weeks
+     (below, what it would remove now, counting no new backup)
 EOF
+  prune_backups list
 }
 
 # --- main ---------------------------------------------------------------------------------------
@@ -1193,4 +1288,5 @@ report_cuts
 record_outcome done "$FROM" "$TARGET"
 
 set_phase done
+after_verified
 log "updated: $LIVE runs ${TARGET:0:12} (pid $DAEMON_PID); backup and notes in $ATTEMPT"
