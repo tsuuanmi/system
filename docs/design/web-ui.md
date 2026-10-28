@@ -25,6 +25,19 @@ checks it.
   when there are any). Then the cards: approvals, reviews, runs needing attention, starts awaiting
   approval; then what happened since you last looked, the Workers' capacity, and the recent runs
   (5 rows, then **Show all N**). The Workers' counts are said once.
+- **Held for you** (T336) is the first section of the reviews on Home: every result held for the
+  operator (one project's, when Home is filtered), the one that expires first on top. A row says the
+  task (a link to its full card, which stays below as before), why it is held (the hold decision's
+  words: heavy with its risk reason, the checks pending or not run, or the auto-accept rule's
+  checks passed without their browser tests), its checks, each reviewer's verdict with the provider
+  family of its Worker (from the roster), the first lines of the run's digest, and its change size.
+  Select rows and **Accept N selected** or **Send back N selected**: each is still its own decision
+  on the exact result shown (INV-5), sent one after another with the same *Note for all*. An accept
+  of a row with a check not run asks in its row for why, and is not sent without it; the other rows
+  go. The server's reason for a refusal shows on its row, which stays (and stays selected); a
+  recorded row and its card leave at once, the outcome lists each row, and Home's counts follow on
+  the refresh. The one-by-one logic is `client/heldbatch.ts` (no page in it), the section `client/held.ts`
+  (`tests/held.spec.ts`).
 - **Started by itself** (dispatch's own starts, T256) is the last section of Home: a table with the
   columns *Task · State · Worker · Run time · Started*. Each task has one row, its newest attempt's
   run state as a chip. Its attempts are folded into the row (*2 attempts*), each with how it was let
@@ -162,7 +175,7 @@ beside it. The modules are split by page and concern, each under 600 lines, none
 chip, fold, copy button, table, decision button and its tooltip, times), `state.ts` (the token and the API client, the
 state the address names, `show` and `report`), `router.ts` (the links and the pages they open), `boot.ts` (navigation and
 the refresh), `glossary.ts` and `help.ts`, `describe.ts` and `queue.ts` (the approval queue's cards), `evidence.ts` and
-`reviews.ts`, `runwords.ts` and `runpage.ts`, `home.ts`, `since.ts`, `dispatch.ts`, `board.ts` (with the lead panel),
+`reviews.ts` (with `held.ts` and `heldbatch.ts`), `runwords.ts` and `runpage.ts`, `home.ts`, `since.ts`, `dispatch.ts`, `board.ts` (with the lead panel),
 `roster.ts` and `workers.ts`, `policy.ts` and `changeview.ts`, and `reports.ts`. The API's response types are one
 declaration file, `src/api.d.ts`, imported with `import type` by the server (which checks what it sends against them)
 and by the client (a declaration file, so the build emits nothing of it). Tests build the client into a temporary
