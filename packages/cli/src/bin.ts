@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, type EnforceView, formatEnforce, formatPluginRows, parseEnforce, parsePlugin, type PluginRowView,hostCapacity, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, type DispatchView, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, leadBrief, leadInbox, leadToken, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseLead, parseMetrics, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem, useProfile } from './index.ts'
+import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, type EnforceView, formatEnforce, formatPluginRows, parseEnforce, parsePlugin, type PluginRowView,hostCapacity, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, type DispatchView, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, leadBrief, leadInbox, leadToken, parseDecisions, runDecisions, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseLead, parseMetrics, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem, useProfile } from './index.ts'
 import { bundlePlugins, bundleStudioPolicy, parseProjectNew, profileHost, type ProjectHost, projectNew } from './project.ts'
 
 const USAGE = `Usage: system <command> [--profile system|system-test]
@@ -167,6 +167,14 @@ const USAGE = `Usage: system <command> [--profile system|system-test]
                             the one read-only page a lead session reads at its start and when it is lost (inbox, what waits
                             on the operator or on you, running work, the last day, what could not be read); writes only the
                             event lead.brief-read
+  decisions list [--state asked|answered] [--project <id>] [--studio] [--after <n>] [--limit <n>] [--json]
+                            the operator's decisions in number order (needs the decisions row)
+  decisions show D<n>       one decision, with the decisions that supersede it
+  decisions ask <question> [--project <id>] [--option <text>]... [--recommend <text>] [--link <text>]... [--supersedes D<n>]
+                            record a question: the store gives it the studio's next number
+  decisions answer D<n> <answer> [--source <text>]
+                            record the operator's answer to a question that waits
+  decisions import <file>   import the lead's decisions.json, once: refuses a gap or a duplicated number, a second run changes nothing
   lead-token issue <project>   issue a project's lead token (lead-<project>.token beside operator.token, owner-only; replaces one
                             issued before): its holder decides as lead:<project>, within a closed list of rights System enforces
   lead-token revoke <project>  revoke it: requests with it are refused at once
@@ -809,6 +817,13 @@ async function main(args: string[]): Promise<number> {
       const parsed = parseLead(rest)
       if (!parsed) break
       return parsed.action === 'brief' ? leadBrief(parsed) : leadInbox(parsed)
+    }
+    case 'decisions': {
+      // The operator's decisions as records (D109): the `decisions` row is off in the bundle.
+      const parsed = parseDecisions(rest)
+      if (!parsed) break
+      requireRow('decisions')
+      return runDecisions(parsed)
     }
     case 'lead-token':
       // The operator's command (ADR-0076): a project's lead principal, with its own token and the decider lead:<project>.

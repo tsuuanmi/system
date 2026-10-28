@@ -27,7 +27,7 @@ const shipped = (dir: string, edit: (m: Record<string, any>) => void): string =>
 
 describe('the manifests the workspace ships (REQ-HOST-7)', () => {
   it('has one for every plugin and every seam definition, each valid as the host reads it, and all agreeing with the code', () => {
-    expect(derived.map((d) => d.path).filter((p) => p.startsWith('packages/plugins/')).length).toBe(42)
+    expect(derived.map((d) => d.path).filter((p) => p.startsWith('packages/plugins/')).length).toBe(43)
     expect(derived.filter((d) => d.manifest.defines).map((d) => d.dir).sort()).toEqual([
       'agent-runtime-core', 'approvals-core', 'board-core', 'decision-core', 'digest-core', 'feedback-core', 'gateway-core', 'landing-core', 'ledger-core', 'models-core', 'plugin-host-core', 'provider-core',
       'resources-core', 'workers-core',
@@ -60,7 +60,9 @@ describe('the manifests the workspace ships (REQ-HOST-7)', () => {
     expect(of('plugin-host').manifest.config).toEqual([{ key: 'allowWithoutManifest', sensitive: false }, { key: 'optionalWithoutManifest', sensitive: false }, { key: 'quiesceSeconds', sensitive: false }])
     expect(of('store').manifest.config?.map((c) => c.key)).toEqual(['path', 'busyTimeoutMs', 'synchronous'])
     expect(of('report').manifest.config).toBeUndefined()
-    expect(derived.filter((d) => d.manifest.config).length).toBe(37)
+    expect(derived.filter((d) => d.manifest.config).length).toBe(38)
+    // The decisions row (T328): a surface with no seam of its own, and its one key.
+    expect(of('decisions').manifest).toMatchObject({ class: { kind: 'family', family: 'surface' }, provides: [], config: [{ key: 'pageSize', sensitive: false }] })
     expect(of('profile-software-development').manifest.config).toEqual([{ key: 'kinds', sensitive: false }])
     // The notifier's webhook URL is a credential reference's value, never configuration.
     expect(of('notify').manifest.config?.find((c) => c.key === 'webhook')).toEqual({ key: 'webhook', sensitive: false })

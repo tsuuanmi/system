@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:operator-decision:v1",
+  "title": "Operator decision",
+  "description": "One question put to the operator and, once answered, the operator's answer (the decisions row, docs/proposals/0019-lead-logic-in-system.md section 2.7, D109). `id` is the studio's next number, one sequence for the whole studio, taken by the store when the question is recorded and never reused: a record is never deleted, and a correction is a new record whose `supersedes` names the old one. An `asked` record has no answer; an `answered` one has it, who recorded it, and when. A lead may record an answer only on the operator's word, naming where the operator said it in `source`. It is evidence of what the operator said, not a grant of authority (INV-6). Egress classification: operator-shared.",
+  "type": "object",
+  "required": ["schema", "id", "state", "question", "askedAt", "askedBy", "revision"],
+  "properties": {
+    "schema": { "const": "operator-decision@1.0" },
+    "id": { "description": "`D<n>`: the studio's decision number, from one sequence, never reused.", "type": "string", "pattern": "^D[1-9][0-9]{0,8}$" },
+    "projectId": { "description": "The board project the question is about; absent: a studio-wide decision, read by every lead.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "state": { "description": "asked: waits for the operator; answered: the answer is recorded and the record no longer changes.", "enum": ["asked", "answered"] },
+    "question": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "options": {
+      "description": "The choices put to the operator, at most 20.",
+      "type": "array", "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    },
+    "recommendation": { "description": "What the one asking recommends, and why, in a few words.", "type": "string", "minLength": 1, "maxLength": 1000 },
+    "links": {
+      "description": "Where the question comes from: an ADR, a task id, a commit, a document path, at most 20.",
+      "type": "array", "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+    },
+    "askedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "askedBy": { "description": "Who recorded the question: `operator`, `lead:<project>`, or `import` (the one-time import of the lead's registry).", "$ref": "#/$defs/writer" },
+    "answeredAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "answer": { "description": "The operator's answer, in the operator's words as far as they are known.", "type": "string", "minLength": 1, "maxLength": 8000 },
+    "answeredBy": { "description": "Who recorded the answer: `operator` (the operator gave it) or `lead:<project>` (a lead wrote down the operator's word, with its `source`), or `import`.", "$ref": "#/$defs/writer" },
+    "source": { "description": "Where the operator said it: a message, `/ui`, a review. Required when `answeredBy` is a lead.", "type": "string", "minLength": 1, "maxLength": 500 },
+    "supersedes": { "description": "The decision this one corrects; the old record stays as it was.", "type": "string", "pattern": "^D[1-9][0-9]{0,8}$" },
+    "importedFrom": { "description": "The file a record of the one-time import was read from: present exactly when `askedBy` is `import`.", "type": "string", "minLength": 1, "maxLength": 200 },
+    "revision": { "description": "0 when asked; 1 once answered.", "type": "integer", "minimum": 0, "maximum": 1 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "state": { "const": "answered" } }, "required": ["state"] },
+      "then": { "required": ["answer", "answeredAt", "answeredBy"], "properties": { "answer": true, "answeredAt": true, "answeredBy": true, "revision": { "const": 1 } } },
+      "else": { "properties": { "answer": false, "answeredAt": false, "answeredBy": false, "source": false, "revision": { "const": 0 } } }
+    },
+    {
+      "description": "An answer a lead recorded names where the operator said it.",
+      "if": { "properties": { "answeredBy": { "type": "string", "pattern": "^lead:" } }, "required": ["answeredBy"] },
+      "then": { "required": ["source"], "properties": { "source": true } }
+    },
+    {
+      "description": "A question or answer recorded by the import is a record of the import, which names its file.",
+      "if": { "anyOf": [{ "properties": { "askedBy": { "const": "import" } }, "required": ["askedBy"] }, { "properties": { "answeredBy": { "const": "import" } }, "required": ["answeredBy"] }] },
+      "then": { "required": ["importedFrom"], "properties": { "importedFrom": true } }
+    },
+    {
+      "description": "Only a record of the import names a file, and its question was recorded by the import.",
+      "if": { "properties": { "importedFrom": true }, "required": ["importedFrom"] },
+      "then": { "properties": { "askedBy": { "const": "import" }, "importedFrom": true } }
+    }
+  ],
+  "$defs": {
+    "writer": { "type": "string", "pattern": "^(operator|import|lead:[A-Za-z0-9][A-Za-z0-9._-]{0,99})$" }
+  },
+  "additionalProperties": false
+}

@@ -724,6 +724,31 @@ importers:
         specifier: 3.18.5-alpha.1
         version: 3.18.5-alpha.1
 
+  packages/plugins/decisions:
+    dependencies:
+      '@tsuuanmi/system-gateway-core':
+        specifier: workspace:*
+        version: link:../../gateway-core
+      '@tsuuanmi/system-ledger-core':
+        specifier: workspace:*
+        version: link:../../ledger-core
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../../libs
+      zod:
+        specifier: ^4.6.6
+        version: 4.6.7
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5-alpha.1
+        version: 3.18.5-alpha.1
+      '@tsuuanmi/system-store':
+        specifier: workspace:*
+        version: link:../store
+
   packages/plugins/digest:
     dependencies:
       '@tsuuanmi/system-board-core':
@@ -2000,6 +2025,9 @@ importers:
       '@tsuuanmi/system-credentials-vault':
         specifier: workspace:*
         version: link:../plugins/credentials-vault
+      '@tsuuanmi/system-decisions':
+        specifier: workspace:*
+        version: link:../plugins/decisions
       '@tsuuanmi/system-digest':
         specifier: workspace:*
         version: link:../plugins/digest

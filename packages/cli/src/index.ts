@@ -834,6 +834,79 @@ export async function leadInbox(parsed: NonNullable<ReturnType<typeof parseLead>
   }
 }
 
+/** A decision as much as the CLI prints (`operator-decision@1.0`). */
+export interface DecisionView { id: string; state: string; projectId?: string; question: string; options?: string[]; recommendation?: string; links?: string[]; answer?: string; answeredBy?: string; source?: string; supersedes?: string }
+
+type DecisionsParsed = { json: boolean; tool: 'decisions_list' | 'decisions_show' | 'decisions_ask' | 'decisions_answer' | 'decisions_import'; args: Record<string, unknown>; file?: string }
+
+/**
+ * `system decisions list|show|ask|answer|import` (D109), each with `--json`; undefined for an unknown
+ * word, flag, or value. `list [--state asked|answered] [--project <id>] [--studio] [--after <n>] [--limit <n>]`,
+ * `show D<n>`, `ask <question> [--project <id>] [--option <text>]... [--recommend <text>] [--link <text>]... [--supersedes D<n>]`,
+ * `answer D<n> <answer> [--source <text>]`, `import <file>`.
+ */
+export function parseDecisions(rest: readonly string[]): DecisionsParsed | undefined {
+  const [action, ...words] = rest
+  const ID = /^D[1-9][0-9]{0,8}$/
+  const out: DecisionsParsed = { json: false, tool: 'decisions_list', args: {} }
+  const options: string[] = []
+  const links: string[] = []
+  const positional: string[] = []
+  const value = (i: number): string | undefined => (words[i + 1] !== undefined && !words[i + 1]!.startsWith('--') ? words[i + 1] : undefined)
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i]!
+    const v = value(i)
+    if (word === '--json') out.json = true
+    else if (word === '--studio' && action === 'list') out.args['studio'] = true
+    else if (word === '--state' && action === 'list' && (v === 'asked' || v === 'answered')) { out.args['state'] = v; i++ }
+    else if (word === '--project' && (action === 'list' || action === 'ask') && v !== undefined) { out.args['projectId'] = v; i++ }
+    else if ((word === '--after' || word === '--limit') && action === 'list' && /^[0-9]{1,9}$/.test(v ?? '')) { out.args[word.slice(2)] = Number(v); i++ }
+    else if (word === '--option' && action === 'ask' && v !== undefined) { options.push(v); i++ }
+    else if (word === '--link' && action === 'ask' && v !== undefined) { links.push(v); i++ }
+    else if (word === '--recommend' && action === 'ask' && v !== undefined) { out.args['recommendation'] = v; i++ }
+    else if (word === '--supersedes' && action === 'ask' && ID.test(v ?? '')) { out.args['supersedes'] = v; i++ }
+    else if (word === '--source' && action === 'answer' && v !== undefined) { out.args['source'] = v; i++ }
+    else if (!word.startsWith('--')) positional.push(word)
+    else return undefined
+  }
+  if (action === 'list' && !positional.length) return out
+  if (action === 'show' && positional.length === 1 && ID.test(positional[0]!)) return { ...out, tool: 'decisions_show', args: { id: positional[0] } }
+  if (action === 'ask' && positional.length === 1) return { ...out, tool: 'decisions_ask', args: { ...out.args, question: positional[0], ...(options.length ? { options } : {}), ...(links.length ? { links } : {}) } }
+  if (action === 'answer' && positional.length === 2 && ID.test(positional[0]!)) return { ...out, tool: 'decisions_answer', args: { ...out.args, id: positional[0], answer: positional[1] } }
+  if (action === 'import' && positional.length === 1) return { ...out, tool: 'decisions_import', args: {}, file: positional[0]! }
+  return undefined
+}
+
+/** One decision as lines: its number, state, and question; the answer under it. */
+export const formatDecision = (d: DecisionView): string[] => [
+  `${d.id}  ${d.state}  ${d.projectId ?? 'studio'}  ${d.question}`,
+  ...(d.options?.length ? d.options.map((o) => `    - ${o}`) : []),
+  ...(d.recommendation ? [`    recommends: ${d.recommendation}`] : []),
+  ...(d.answer !== undefined ? [`  → ${d.answer}${d.answeredBy ? `  (${d.answeredBy}${d.source ? `, ${d.source}` : ''})` : ''}`] : []),
+]
+
+/**
+ * The operator's decisions: `list` and `show` read, `ask` and `answer` record, `import` reads the lead's
+ * `decisions.json` and hands it to the row, once. Exit 0 when the tool answered; a refusal throws with its
+ * reason, so a registry with a gap or a duplicate names it and nothing is imported.
+ */
+export async function runDecisions(parsed: DecisionsParsed, call: typeof callTool = callTool, print: (line: string) => void = console.log, read: (file: string) => string = (file) => readFileSync(file, 'utf8')): Promise<number> {
+  const args = parsed.tool === 'decisions_import' ? { registry: JSON.parse(read(parsed.file!)) as unknown, file: parsed.file!.split('/').at(-1)! } : parsed.args
+  const outcome = await call(parsed.tool, args)
+  if (outcome.isError) throw new Error(outcome.text)
+  const result = outcome.structured as { decision?: DecisionView; decisions?: DecisionView[]; supersededBy?: string[]; next?: number; imported?: number; unchanged?: number; highest?: number }
+  if (parsed.json) print(JSON.stringify(outcome.structured))
+  else if (result.decisions) {
+    for (const d of result.decisions) for (const line of formatDecision(d)) print(line)
+    if (!result.decisions.length) print('no decision')
+    if (result.next !== undefined) print(`more: --after ${result.next}`)
+  } else if (result.decision) {
+    for (const line of formatDecision(result.decision)) print(line)
+    if (result.supersededBy?.length) print(`  superseded by ${result.supersededBy.join(', ')}`)
+  } else print(outcome.text)
+  return 0
+}
+
 /** One line per event: sequence, time, type, where, and its data. */
 export function formatEvents(events: readonly EventLine[]): string[] {
   return events.map((e) => [e.seq, e.at, e.type, e.runId ? `run=${e.runId}${e.nodeId ? `/${e.nodeId}` : ''}` : '', e.sessionId ? `session=${e.sessionId}` : '', e.data ? JSON.stringify(e.data) : '']

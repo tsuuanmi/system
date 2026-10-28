@@ -2285,6 +2285,36 @@ What the token is refused (a policy or charter change, `main`, a deploy, an exte
 token, every other tool and route) answers `403` with the reason. Decisions the lead made on the
 operator's token before this are not migrated: `/ui` and the metrics say "before the lead principal".
 
+## Record a decision
+
+The operator's decisions live in System as `operator-decision@1.0` records
+([schema](../../schemas/operator-decision.v1.json), [PROP-0019 section 2.7](../proposals/0019-lead-logic-in-system.md#27-the-decision-log--an-operator-decision-record-rank-4)),
+not in the lead's `decisions.json`. The row is off in the bundle: with it off, System is healthy and the
+lead keeps its file.
+
+1. **Turn the row on:** `system plugin on decisions` (no restart; the turn is kept in your profile's
+   patch). `system decisions` is refused while the row is off, saying so.
+2. **Import the lead's registry, once:** `system decisions import ~/workspaces/system-coordination/decisions.json`.
+   The numbers must be exactly D1 to Dn, none twice and none skipped, and every entry needs its question,
+   status (`asked` or `answered`), asked time, and (answered) its answer and answered time. A gap or a
+   duplicate refuses the whole file, naming each one, and nothing is written: fix the file and run it
+   again. A second run of a file that went in changes nothing, also after questions were answered or
+   asked here since. Do not start the lead on System's numbers before the import: the sequence continues
+   after the highest number it read.
+3. **Ask:** `system decisions ask "<question>" [--project <id>] [--option <text>]... [--recommend <text>]
+   [--link <text>]...`. The store gives it the studio's next number (`D<n>`), so two sessions never take
+   the same one. No `--project`: a studio-wide decision, which every lead reads.
+4. **Answer:** `system decisions answer D<n> "<the operator's answer>"`. The record keeps the question's
+   number and says `answeredBy: operator`. `system decisions list --state asked` is what waits.
+5. **Correct:** an answered record never changes and is never deleted. Ask a new decision with
+   `--supersedes D<n>`; `system decisions show D<n>` then lists what supersedes it.
+
+A project's lead, on its own token (MCP `decisions_ask`, `decisions_answer`, `decisions_list`,
+`decisions_show`), asks about its own project and reads its project's and the studio-wide decisions. It
+records an answer only on the operator's word: `source` says where the operator said it, and the record
+says `answeredBy: lead:<project>`, never `operator`. It never answers a studio-wide question or
+another project's, never corrects one, and never imports: those are the operator's.
+
 ## A Worker source does not answer
 
 `system health` shows `workers` degraded or down, naming a Worker source, for example

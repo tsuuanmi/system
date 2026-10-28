@@ -1,0 +1,12 @@
+{
+  "schema": "operator-decision@1.0",
+  "id": "D111",
+  "state": "asked",
+  "question": "How many days in warn before a mechanism moves to enforce?",
+  "options": ["3 days", "7 days"],
+  "recommendation": "7 days: a week holds every weekday once.",
+  "links": ["docs/architecture/plugin-model.md#turning-a-plugin-off"],
+  "askedAt": "2026-10-27T09:00:00.000Z",
+  "askedBy": "operator",
+  "revision": 0
+}

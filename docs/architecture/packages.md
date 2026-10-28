@@ -19,6 +19,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | Package | Layer | Defines / provides | Bundle row | Consumes | Imports |
 |---|---|---|---|---|---|
 | [cli](../../packages/cli/README.md) | gateways | — | — | — | `browser-patchright`, `libs`, `system-bundle` |
+| [decisions](../../packages/plugins/decisions/README.md) | gateways | — | `decisions` | `store`, `mcp` (optional) | `gateway-core`, `ledger-core`, `libs` |
 | [gateway-anthropic](../../packages/plugins/gateway-anthropic/README.md) | gateways | — | `gateway-anthropic` | `webServer`, `workflow`, `store` | `gateway-core`, `gateway-turns`, `libs` |
 | [gateway-core](../../packages/gateway-core/README.md) | gateways | defines `mcp` | — | — | `libs` |
 | [gateway-responses](../../packages/plugins/gateway-responses/README.md) | gateways | — | `gateway-responses` | `webServer`, `workflow`, `store` | `gateway-core`, `gateway-turns`, `libs` |
@@ -95,6 +96,7 @@ of DSH core appear under host and libraries.
 ```mermaid
 flowchart TB
   subgraph gateways ["gateways"]
+    decisions["decisions"]
     gateway_anthropic["gateway-anthropic"]
     gateway_responses["gateway-responses"]
     lead_inbox["lead-inbox<br/>ctx.leadInbox"]
@@ -182,6 +184,8 @@ flowchart TB
   board -.-> mcp_server
   browser_patchright --> display_virtual
   browser_patchright -.-> event_log
+  decisions --> store
+  decisions -.-> mcp_server
   digest --> store
   digest --> artifacts
   digest --> leases
@@ -377,6 +381,7 @@ almost every package, is not drawn.
 flowchart TB
   subgraph gateways ["gateways"]
     cli["cli"]
+    decisions["decisions"]
     gateway_anthropic["gateway-anthropic"]
     gateway_core["gateway-core<br/>defines mcp"]
     gateway_responses["gateway-responses"]
@@ -469,6 +474,8 @@ flowchart TB
   browser_patchright --> provider_core
   cli --> browser_patchright
   cli --> system_bundle
+  decisions --> gateway_core
+  decisions --> ledger_core
   digest --> board_core
   digest --> digest_core
   digest --> gateway_core

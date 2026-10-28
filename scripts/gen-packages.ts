@@ -90,6 +90,7 @@ export const LAYER_OF: Record<string, Layer> = {
   'report': 'gateways',
   'notify': 'gateways',
   'lead-inbox': 'gateways',
+  decisions: 'gateways',
   'cli': 'gateways',
 }
 

@@ -187,6 +187,14 @@
     # the row configures per project (a command's stdin, a line of a file). Reads only; decides nothing. ---
     - id: lead-inbox
       name: '@tsuuanmi/system-lead-inbox'            # MCP lead_inbox; system lead wait
+    # --- the operator's decisions (D109, surface): operator-decision@1.0, a question recorded and later
+    # answered, numbered D<n> by the store from one sequence per studio, never deleted; MCP decisions_*,
+    # system decisions. A lead token acts for its own project and reads the studio-wide ones. Off by
+    # default: the lead keeps its decisions.json until the operator turns it on and imports it once
+    # (docs/operations/runbooks.md#record-a-decision). ---
+    - id: decisions
+      name: '@tsuuanmi/system-decisions'             # no seam; MCP decisions_ask/answer/list/show/import (mcp-decisions@1.0)
+      disabled: true
     - id: profile-software-development
       name: '@tsuuanmi/system-profile-software-development'  # agent-review, for agent Workers; off until the operator turns it on
       disabled: true

@@ -1,0 +1,37 @@
+{
+  "name": "@tsuuanmi/system-decisions",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The operator's decisions as records in System: operator-decision@1.0, a question recorded and later answered, numbered D<n> by the store from one sequence per studio and never reused, never deleted (a correction is a new record that supersedes); MCP decisions_ask, decisions_answer, decisions_list, decisions_show, decisions_import and system decisions; a lead token acts for its own project and reads studio-wide ones",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib",
+    "plugin-manifest.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@tsuuanmi/system-gateway-core": "workspace:*",
+    "@tsuuanmi/system-ledger-core": "workspace:*",
+    "@tsuuanmi/system-libs": "workspace:*",
+    "zod": "^4.1.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1",
+    "@tsuuanmi/system-store": "workspace:*"
+  }
+}

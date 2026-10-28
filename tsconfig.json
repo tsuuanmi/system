@@ -159,6 +159,9 @@
       "@tsuuanmi/system-digest-extractive": [
         "packages/plugins/digest-extractive/src/index.ts"
       ],
+      "@tsuuanmi/system-decisions": [
+        "packages/plugins/decisions/src/index.ts"
+      ],
       "@tsuuanmi/system-lead-inbox": [
         "packages/plugins/lead-inbox/src/index.ts"
       ],
