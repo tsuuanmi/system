@@ -1,5 +1,5 @@
 import type { ChildProcess } from 'node:child_process'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn as nodeSpawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -92,6 +92,41 @@ describe('startXvfb (ported from tsuuanmi/internet)', () => {
     expect(calls[0]!.child.kills).toEqual(['SIGTERM'])
   })
 
+  it('tries a startup that only timed out once more, and succeeds when the second try is up in time', async () => {
+    let n = 0
+    const { spawn, calls } = fakeSpawner((c) => { if (++n === 2) setImmediate(() => c.ready('7')) })
+    const xvfb = await startXvfb({ executable: 'Xvfb', startupTimeoutMs: 30, shutdownTimeoutMs: 20, spawn })
+    expect(xvfb.display).toBe(':7')
+    expect(calls).toHaveLength(2)
+    expect(calls[0]!.child.kills).toEqual(['SIGTERM'])
+    await xvfb.stop()
+  })
+
+  it('retries once only, then reports the timeout as unavailable', async () => {
+    const { spawn, calls } = fakeSpawner(() => undefined)
+    await expect(startXvfb({ executable: 'Xvfb', startupTimeoutMs: 20, shutdownTimeoutMs: 20, spawn })).rejects.toMatchObject({
+      kind: 'config_error',
+      message: expect.stringMatching(/Xvfb is unavailable.*startup timed out/),
+    })
+    expect(calls).toHaveLength(2)
+  })
+
+  it('does not retry a failure that was not a timeout', async () => {
+    const { spawn, calls } = fakeSpawner((c) => setImmediate(() => c.exit(1)))
+    await expect(startXvfb({ executable: 'Xvfb', startupTimeoutMs: 200, spawn })).rejects.toThrow(/exited before ready/)
+    expect(calls).toHaveLength(1)
+  })
+
+  it('reports a missing binary at once, without a second try', async () => {
+    let spawned = 0
+    const spawn: SpawnXvfb = (command, args, options) => {
+      spawned++
+      return nodeSpawn(command, args, options)
+    }
+    await expect(startXvfb({ executable: '/nonexistent/Xvfb', startupTimeoutMs: 5000, spawn })).rejects.toMatchObject({ message: expect.stringMatching(/ENOENT/) })
+    expect(spawned).toBe(1)
+  })
+
   it('rejects a malformed display number', async () => {
     const { spawn } = fakeSpawner((c) => setImmediate(() => c.ready('7; rm -rf')))
     await expect(startXvfb({ executable: 'Xvfb', startupTimeoutMs: 200, shutdownTimeoutMs: 20, spawn })).rejects.toThrow(/invalid display/)
@@ -159,6 +194,22 @@ describe('ctx.display: display-virtual', () => {
     const display = await ctx.display.prepare('invisible')
     expect(display).toMatchObject({ kind: 'virtual', env: { DISPLAY: ':7' }, windowArgs: ['--window-size=1920,1080'], viewport: null, generation: 1 })
     expect(display.lost.aborted).toBe(false)
+  })
+
+  it('waits for a startup slower than the old 5 s deadline with the default bound', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    onTestFinished(() => { vi.useRealTimers() })
+    const { spawn } = fakeSpawner((c) => { setTimeout(() => c.ready('7'), 6000) })
+    class TestDisplay extends VirtualDisplay {
+      protected override spawnXvfb = spawn
+    }
+    const ctx = new Context()
+    const fiber = ctx.plugin(TestDisplay, {})
+    await fiber
+    onTestFinished(() => fiber.dispose())
+    const prepared = ctx.display.prepare('invisible')
+    await vi.advanceTimersByTimeAsync(6000)
+    await expect(prepared).resolves.toMatchObject({ kind: 'virtual', env: { DISPLAY: ':7' } })
   })
 
   it('shares one Xvfb between concurrent callers', async () => {

@@ -244,7 +244,7 @@
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `xvfbPath` | string | `"Xvfb"` | Xvfb executable |
-| `startupTimeoutMs` | number (0…) | `5000` | Xvfb startup timeout in milliseconds |
+| `startupTimeoutMs` | number (0…) | `30000` | Xvfb startup timeout in milliseconds, per try (one retry after a timeout) |
 | `shutdownTimeoutMs` | number (0…) | `2000` | Per-signal wait when stopping Xvfb, in milliseconds |
 
 ## `egress`
