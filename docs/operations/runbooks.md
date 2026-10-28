@@ -3548,11 +3548,12 @@ every such result waits for you in **Reviews** with `tests, lint` pending.
 
    Each is a command line as the policy matches it: words split on single spaces, no shell
    metacharacter, at most 200 characters. Only `tests`, `typecheck`, and `lint` can be named. The
-   checks are not part of the setup's hash: adding them sets no worktree up again. **Adding a check
-   while results are held for you makes it required of them too**, but their waiting record does not
-   list it, so it is neither run on their trees nor offered for a note when you accept: they cannot be
-   accepted until it is removed again (2026-10-28, a `typecheck` line added beside `lint`). Add a check
-   only when no review is held, or widen an existing check's command instead. A check sees the
+   checks are not part of the setup's hash: adding them sets no worktree up again. **A check the
+   policy newly requires** (a policy change adding it to `requires`) is required of the results
+   already held for you too, but their waiting record does not list it, so it is neither run on their
+   trees nor offered for a note when you accept: they cannot be accepted until the requirement is
+   removed again (2026-10-28, `typecheck` added to the system project's policy). Prefer widening an
+   existing check's command (`lint: corepack pnpm check`) to requiring a new check. A check sees the
    worktree read-only; `checkScratch` names the git-ignored paths it writes (a cache), each a fresh
    private directory for it, discarded after it. A check never installs: it runs with pnpm's
    verify-deps-before-run off (`pnpm_config_verify_deps_before_run=false`; pnpm 11 and later ignore
