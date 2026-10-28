@@ -551,6 +551,8 @@ export function apply(ctx: Context, config: Config = {}): void {
       }
       for (const project of await projectsOf()) {
         for (const task of await board.tasks({ projectId: project.projectId, states: ['review'] })) {
+          // An accepted result that waits for its landing is no review to decide (T293b): it is listed as accepted below.
+          if (task.waiting?.reason === 'landing') continue
           const read = await policiesOf(project.projectId)
           const pending = task.waiting?.pendingChecks ?? []
           const acceptance = acceptanceOf(task, (ref) => artifacts.get(ref)?.body)
@@ -566,7 +568,8 @@ export function apply(ctx: Context, config: Config = {}): void {
       // The results accepted and still on their way into the repository (ADR-0060), the latest first: a verdict's consequence stays in sight.
       const accepted: Array<{ at: string; entry: Record<string, unknown> }> = []
       for (const project of await projectsOf()) {
-        for (const task of await board.tasks({ projectId: project.projectId, states: ['done'] })) {
+        for (const task of await board.tasks({ projectId: project.projectId, states: ['review', 'done'] })) {
+          if (task.state === 'review' && task.waiting?.reason !== 'landing') continue
           const landing = task.run ? ctx.workflow.landing(task.run.runId) : undefined
           if (landing && LANDING_OPEN.has(landing.state)) accepted.push({ at: task.updatedAt ?? task.createdAt, entry: { taskId: task.taskId, title: task.title, project: { projectId: project.projectId, title: project.title }, run: task.run, landing: landingCard(landing, decider).landing } })
         }
