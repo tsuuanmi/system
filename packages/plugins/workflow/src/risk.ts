@@ -251,7 +251,7 @@ async function skipAt(e: Engine, run: RunRow, tiered: Tiered, review: Approval, 
   const skippable = rows.filter((n) => n.state === 'WAITING' && ((JSON.parse(n.spec) as ResolvedNode).riskSkip ?? []).includes(tiered.tier)
     && !rows.some((d) => d.state !== 'RETIRED' && (JSON.parse(d.spec) as ResolvedNode).dependsOn.includes(n.node_id)))
   if (!skippable.length) return false
-  const ran = await checksFor(e, run, rows, signal)
+  const ran = await checksFor(e, run, rows, signal, tiered.tier)
   if (signal.aborted) return false
   const checks = Object.entries(ran?.checks ?? {})
   const onTree = ran && `git:${ran.subject.ref}:${ran.subject.version}` === review.subject

@@ -1297,7 +1297,7 @@ function isProbeSearch(input: unknown): boolean {
   return keys.length === 1 && keys[0] === 'query' && (input as { query?: unknown }).query === WEB_PROBE_QUERY
 }
 /** The checks a policy rule can require (`autonomy-policy@1.0`): the only ones a verdict may leave pending. */
-export const CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review']
+export const CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review', 'red-on-base']
 
 /**
  * The gate of one run. `ctx.approvals` is read when a call comes (optional: none, and every call is

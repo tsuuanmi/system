@@ -53,6 +53,18 @@ describe('the inputs each step of algorithm-development reads (docs/reference/wo
     for (const id of ['selfreview:1', 'review:1']) expect(steps.get(id)!.prompt, id).not.toContain('{{')
   })
 
+  it('asks the writing step of a change of behaviour to work test-first, tests failing then passing in its evidence, and a refactor to change no test; the docs and tests variants are not asked (T306c, ADR-0079)', () => {
+    const develop = SoftwareDevelopment.ALGORITHM_DEVELOPMENT.find((n) => n.nodeId === 'develop:1')!
+    expect(develop.prompt).toContain('work test-first: write the tests that encode the acceptance criteria before the code, run them')
+    expect(develop.prompt).toContain('see them fail')
+    expect(develop.prompt).toContain('then the same command passing after it')
+    expect(develop.prompt).toContain('base tree')
+    expect(develop.prompt).toContain('`refactor: no behaviour change`')
+    expect(develop.prompt).toContain('change no existing test')
+    expect(Object.keys(develop.variants ?? {})).toEqual(['docs', 'tests'])
+    for (const variant of Object.values(develop.variants ?? {})) expect(variant.prompt).not.toContain('test-first')
+  })
+
   it('has no validate step any more (T267): the author shows its checks\' output in the dossier, a fresh session of its account reviews the change first, and the review is the final step', () => {
     const steps = SoftwareDevelopment.ALGORITHM_DEVELOPMENT
     expect(steps.map((n) => n.nodeId)).toEqual(['develop:1', 'selfreview:1', 'review:1'])

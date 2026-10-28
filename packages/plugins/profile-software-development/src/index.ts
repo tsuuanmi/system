@@ -82,14 +82,22 @@ export const AGENT_REVIEW: NodeTemplate[] = [
  */
 const VERIFY = 'Before you end, verify your change: run the checks the task requires (its acceptance criteria name them), then append their real output, verbatim, to the task\'s dossier as an evidence entry (dossier_append, kind evidence: each command as `$ <command>`, the lines that hold the result, and its exit code when your tool reports one; a required check you could not run, named, with why). The step is refused at its end without that entry, or with one that shows no command, names no required check, or holds no output. Never write output you did not get from running the command. For the tests check, run `corepack pnpm test:related <the absolute paths of the files you changed>` (the tests that import them, plus each changed test file), in this step and in your evidence, never the full suite: the acceptance runs the tests related to your result\'s files, and the landing runs the full suite once on the rebased tree.'
 
+/**
+ * What a change of behaviour does first (T306c, ADR-0079): the tests that encode its criteria, seen
+ * failing. The System checks it (`red-on-base`): the test files the result adds or changes are run on
+ * its base tree, where they must fail. A refactor changes no test instead.
+ */
+const TEST_FIRST = 'For a change of behaviour, work test-first: write the tests that encode the acceptance criteria before the code, run them (`corepack pnpm vitest run <the test file>`), and see them fail (a test file that cannot load for a missing module fails too); then change the code until they pass. In your evidence show both: the new tests\' command with their failing lines before the change, then the same command passing after it. The System runs the test files you add or change on this run\'s base tree, with your tests copied over it, and a test that passes there proves nothing of the change (check `red-on-base`). If the task\'s criteria say `refactor: no behaviour change`, work otherwise: change no existing test, add none that needs the change, and let the related tests pass as they are.'
+
 const DEVELOP_PROMPT = [
   '{{input}}',
   '',
   'Work toward the task above in this run\'s own git worktree, one hypothesis per attempt:',
   '1. State the hypothesis this attempt tests, and why you expect it to help. On a later attempt, start from what the previous attempt measured and why it was not accepted.',
-  '2. Change the code to test it, and only what it needs. Never weaken, skip, or loosen a test or a benchmark to make it pass.',
-  '3. Commands run confined to this worktree, with no network.',
-  `4. ${VERIFY}`,
+  `2. ${TEST_FIRST}`,
+  '3. Change the code to test the hypothesis, and only what it needs. Never weaken, skip, or loosen a test or a benchmark to make it pass.',
+  '4. Commands run confined to this worktree, with no network.',
+  `5. ${VERIFY}`,
   'End with the hypothesis, the files you changed, and which acceptance criteria the change should now meet.',
 ].join('\n')
 

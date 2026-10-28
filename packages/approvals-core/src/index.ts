@@ -68,7 +68,7 @@ export const SHELL_METACHARACTER = /[;&|$`<>(){}[\]*?'"\\\n\r\t\0]|(^|[=:])~/
 export type Mode = 'auto' | 'notify' | 'ask' | 'forbid'
 /** Modes from least to most strict; the effective mode is the strictest of the policies. */
 export const MODES: readonly Mode[] = ['auto', 'notify', 'ask', 'forbid']
-export type Check = 'tests' | 'typecheck' | 'lint' | 'schema' | 'quote-check' | 'review'
+export type Check = 'tests' | 'typecheck' | 'lint' | 'schema' | 'quote-check' | 'review' | 'red-on-base'
 
 /**
  * The policies of a set (the studio's, then the project's) that apply to a class: a project policy
@@ -94,9 +94,9 @@ export function waitSeconds(policies: readonly AutonomyPolicy[], actionClass: Ac
   return Math.min(seconds, ...policies.map((p) => p.expiry.maxSeconds))
 }
 
-/** `autonomy-policy@1.x`: `@1.1` adds the optional path map `riskTiers` (ADR-0071); `@1.2` the tier a step takes at its task's risk tier, `tierByRisk` (ADR-0073); `@1.3` the optional `webAccess` grants (ADR-0074). */
+/** `autonomy-policy@1.x`: `@1.1` adds the optional path map `riskTiers` (ADR-0071); `@1.2` the tier a step takes at its task's risk tier, `tierByRisk` (ADR-0073); `@1.3` the optional `webAccess` grants (ADR-0074); `@1.5` the check `red-on-base` a rule may require (ADR-0079). */
 export interface AutonomyPolicy {
-  schema: 'autonomy-policy@1.0' | 'autonomy-policy@1.1' | 'autonomy-policy@1.2' | 'autonomy-policy@1.3' | 'autonomy-policy@1.4'
+  schema: 'autonomy-policy@1.0' | 'autonomy-policy@1.1' | 'autonomy-policy@1.2' | 'autonomy-policy@1.3' | 'autonomy-policy@1.4' | 'autonomy-policy@1.5'
   id: string
   version: number
   scope: 'studio' | 'project'

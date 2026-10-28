@@ -23,7 +23,7 @@ import { admissionInfrastructure, executionInfrastructure, quotaLoss, sourceGone
 import { admissionKind, assignmentOf, choiceHoldEnded, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForChoice, waitForLimit, waitForRetry } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
 import { cycleOf, missingSubject, remediate, reviewSubject, settleReview, subjectGate, verificationGate, verificationSubject, wordingOf } from './review.ts'
-import { riskAtAcceptance, settleRisk, tierAtRisk } from './risk.ts'
+import { riskAtAcceptance, riskOf, settleRisk, tierAtRisk } from './risk.ts'
 import { leaveSession, type Moved, sessionGaps } from './session-moves.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
 import { fallbackSpent, singleFamilyBrief, singleFamilyDecision, singleFamilyRecovery } from './single-family.ts'
@@ -97,8 +97,8 @@ export class Engine {
    * The mode a gate-like mechanism of the engine runs in now (ADR-0078): the plugin host's live
    * override, else this row's `enforce.<key>`, else on; read at each use, so it moves without a restart.
    */
-  enforce(mechanism: 'evidence-gate' | 'handbook-bound' | 'review-guides'): EnforceMode {
-    const key = ({ 'evidence-gate': 'evidenceGate', 'handbook-bound': 'handbookBound', 'review-guides': 'reviewGuides' } as const)[mechanism]
+  enforce(mechanism: 'evidence-gate' | 'handbook-bound' | 'review-guides' | 'red-on-base'): EnforceMode {
+    const key = ({ 'evidence-gate': 'evidenceGate', 'handbook-bound': 'handbookBound', 'review-guides': 'reviewGuides', 'red-on-base': 'redOnBase' } as const)[mechanism]
     return enforceMode(this.ctx.get('pluginHost' as never) as EnforceSource | undefined, mechanism, this.config.enforce?.[key])
   }
 
@@ -426,7 +426,7 @@ export class Engine {
             // The checks the policy requires of a written result run on its exact tree first (./checks.ts).
             // The source stores each check's outcome on the subject, so a restart before the run finished
             // gets the same outcomes back, never a check run again in place of one that ended.
-            const ran = await checksFor(this, run, nodes, signal)
+            const ran = await checksFor(this, run, nodes, signal, riskOf(this, runId)?.tier)
             if (signal.aborted) return
             // Where a task's result would land, for the board's auto-accept rule (D80): read before its acceptance is decided.
             const targets = this.tasks.bound(runId) ? await landingTargets(this, runId) : []

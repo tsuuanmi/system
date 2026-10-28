@@ -34,6 +34,11 @@ const POLICY: AutonomyPolicy = {
   default: 'ask', expiry: { defaultSeconds: 3600, maxSeconds: 86400 },
 }
 
+/** The policy of the red-on-base tests (T306c): the studio's, and the new check among the required ones. */
+const REQUIRES_RED: AutonomyPolicy = { ...POLICY, schema: 'autonomy-policy@1.5', rules: POLICY.rules.map((r) => r.actionClass === 'workspace-write' ? { ...r, requires: ['tests', 'lint', 'red-on-base'] } : r) }
+/** The same with a path map (ADR-0071), so that each change has a risk tier. */
+const TIERED: AutonomyPolicy = { ...REQUIRES_RED, riskTiers: { version: 1, rules: [{ tier: 'light', note: 'documents', paths: ['docs/'] }, { tier: 'normal', note: 'sources', paths: ['src/'] }] } }
+
 /** Scripted Workers whose results name a git working tree and the subject it is at, as an agent's do. */
 class TreeWorkers extends ScriptedWorkers {
   private readonly results = new Map<string, ArtifactRef>()
@@ -135,7 +140,7 @@ const REVIEWED = [DEVELOP[0]!, { ...DEVELOP[0]!, nodeId: 'review', objective: 'R
  * `onTree: false`: the Workers' results are plain reports, on no git working tree. `review`: the
  * reviewer's verdict on the exact subject it is given. `board`: the board's configuration.
  */
-async function boot(checker: Checker | undefined, { onTree = true, review, board = {} }: { onTree?: boolean; review?: 'approve' | 'changes-requested'; board?: BoardConfig } = {}) {
+async function boot(checker: Checker | undefined, { onTree = true, review, board = {}, redOnBase, tiered = false }: { onTree?: boolean; review?: 'approve' | 'changes-requested'; board?: BoardConfig; redOnBase?: 'off' | 'warn' | 'on'; tiered?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'system-workflow-checks-db-'))
   const workspace = tree()
   if (checker) checker.workspace = workspace
@@ -154,7 +159,7 @@ async function boot(checker: Checker | undefined, { onTree = true, review, board
       return { text: '```json\n' + JSON.stringify({ subject, verdict: review, findings: [changes ? importantFinding('no test for a', 'a.c') : { severity: 'nit', title: 'no test for a', file: 'a.c' }] }) + '\n```' }
     }
   }
-  const config = { ...CONFIG, approvalPollSeconds: 1, maxReviewCycles: 1, templates: { ...TEMPLATES, develop: DEVELOP, reviewed: REVIEWED } }
+  const config = { ...CONFIG, approvalPollSeconds: 1, maxReviewCycles: 1, templates: { ...TEMPLATES, develop: DEVELOP, reviewed: REVIEWED }, ...(redOnBase ? { enforce: { redOnBase } } : {}) }
   const fibers: Fiber[] = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}),
@@ -162,7 +167,7 @@ async function boot(checker: Checker | undefined, { onTree = true, review, board
       c.workers.register(workers.source(c))
       checker?.register(c)
     } }),
-    ctx.plugin(StoreApprovals, { policies: [POLICY], sweepSeconds: 3600 }), ctx.plugin(StoreBoard, { sweepSeconds: 0, ...board }),
+    ctx.plugin(StoreApprovals, { policies: [redOnBase ? (tiered ? TIERED : REQUIRES_RED) : POLICY], sweepSeconds: 3600 }), ctx.plugin(StoreBoard, { sweepSeconds: 0, ...board }),
   ]
   await Promise.all(fibers)
   let engine = ctx.plugin(Workflow, config)
@@ -175,8 +180,8 @@ async function boot(checker: Checker | undefined, { onTree = true, review, board
   await activeProject(ctx)
   const { subject } = captureGitSubject(workspace)!
   /** A board task writing the tree (or, `writes: false`, naming no write subject), of `actionClass`, its run started. */
-  const task = async (actionClass: 'workspace-write' | 'read' = 'workspace-write', { writes = true, template = 'solo' }: { writes?: boolean; template?: string } = {}): Promise<{ taskId: string; runId: string }> => {
-    const ready = await readyTask(ctx, 'tree', { ...(writes ? { writes: { type: 'git-head' as const, ref: subject.ref } } : {}), actionClass })
+  const task = async (actionClass: 'workspace-write' | 'read' = 'workspace-write', { writes = true, template = 'solo', criteria }: { writes?: boolean; template?: string; criteria?: string } = {}): Promise<{ taskId: string; runId: string }> => {
+    const ready = await readyTask(ctx, 'tree', { ...(writes ? { writes: { type: 'git-head' as const, ref: subject.ref } } : {}), actionClass, ...(criteria ? { acceptance: [{ id: 'a1', statement: criteria }] } : {}) })
     const run = await ctx.workflow.start({ template, input: 'change it', classification: 'public', task: { taskId: ready.taskId } })
     return { taskId: ready.taskId, runId: run.runId }
   }
@@ -397,6 +402,90 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
     expect(await settled(ctx, taskId)).toMatchObject(LANDING)
     expect(checker.steps).toEqual([])
     expect(acceptanceOf(ctx, runId).outcome.detail).not.toHaveProperty('checkRun')
+  })
+
+  describe('the red-on-base check, behind its enforce switch (T306c, ADR-0079, ADR-0078)', () => {
+    const gateDecisions = (ctx: Context, runId: string) => ctx.artifacts.list({ kind: 'decision', decisionType: 'gate', runId, limit: 100 })
+      .filter((a) => (a.body as { decider?: { id?: string } }).decider?.id === 'workflow.red-on-base')
+
+    it('on: a result whose new test passes on its base is sent back as a failed attempt, the check asked with the others', async () => {
+      const checker = new Checker()
+      checker.outcomes = { tests: 'passed', lint: 'passed', 'red-on-base': 'failed' }
+      checker.failures = { 'red-on-base': ['FAIL red-on-base: packages/p/tests/a.spec.ts passes on the base tree (works): it proves nothing of the change'] }
+      const { ctx, task } = await boot(checker, { redOnBase: 'on' })
+      const { taskId, runId } = await task()
+      expect((await settled(ctx, taskId)).state).toBe('ready')
+      expect(checker.steps.map((s) => s.checks)).toEqual([['tests', 'lint', 'red-on-base']])
+      const acceptance = acceptanceOf(ctx, runId)
+      expect(acceptance.outcome).toMatchObject({ option: 'reject', detail: { checks: { tests: true, lint: true, 'red-on-base': false } } })
+      expect(acceptance.candidates.find((c) => c.selected)!.reasons[0]).toMatch(/red-on-base check failed/)
+      expect(gateDecisions(ctx, runId)).toEqual([])
+    })
+
+    it('on: a result whose new test fails on its base and passes on the result is accepted', async () => {
+      const checker = new Checker()
+      checker.outcomes = { tests: 'passed', lint: 'passed', 'red-on-base': 'passed' }
+      const { ctx, task } = await boot(checker, { redOnBase: 'on' })
+      const { taskId, runId } = await task()
+      expect(await settled(ctx, taskId)).toMatchObject(LANDING)
+      expect(acceptanceOf(ctx, runId).outcome).toMatchObject({ option: 'accept', detail: { checks: { tests: true, lint: true, 'red-on-base': true } } })
+      // Not a refactor: its check is not told so.
+      expect(checker.steps[0]).not.toHaveProperty('refactor')
+    })
+
+    it('warn (the start value): the check runs, a result it would refuse is accepted all the same, and the refusal is recorded as a decision naming the failing lines (INV-13)', async () => {
+      const checker = new Checker()
+      checker.outcomes = { tests: 'passed', lint: 'passed', 'red-on-base': 'failed' }
+      checker.failures = { 'red-on-base': ['FAIL red-on-base: packages/p/tests/a.spec.ts passes on the base tree (works): it proves nothing of the change'] }
+      const { ctx, task } = await boot(checker, { redOnBase: 'warn' })
+      const { taskId, runId } = await task()
+      expect(await settled(ctx, taskId)).toMatchObject(LANDING)
+      expect(checker.steps.map((s) => s.checks)).toEqual([['tests', 'lint', 'red-on-base']])
+      const acceptance = acceptanceOf(ctx, runId)
+      expect(acceptance.outcome).toMatchObject({ option: 'accept', detail: { checks: { tests: true, lint: true, 'red-on-base': true } } })
+      expect(acceptance.candidates.find((c) => c.selected)!.reasons.join('\n')).toMatch(/red-on-base check failed .*passes on the base tree.*warn mode, so the result is judged as if it passed/)
+      const [decision] = gateDecisions(ctx, runId)
+      expect(decision!.body).toMatchObject({ outcome: { option: 'warn', detail: { check: 'red-on-base', outcome: 'failed' } } })
+    })
+
+    it('warn: a check that could not run does not hold the result for the operator either', async () => {
+      const checker = new Checker()
+      checker.outcomes = { tests: 'passed', lint: 'passed', 'red-on-base': 'error' }
+      const { ctx, task } = await boot(checker, { redOnBase: 'warn' })
+      const { taskId, runId } = await task()
+      expect(await settled(ctx, taskId)).toMatchObject(LANDING)
+      expect(gateDecisions(ctx, runId)).toHaveLength(1)
+    })
+
+    it('off: the check is not asked, and the policy sees it met', async () => {
+      const checker = new Checker()
+      const { ctx, task } = await boot(checker, { redOnBase: 'off' })
+      const { taskId, runId } = await task()
+      expect(await settled(ctx, taskId)).toMatchObject(LANDING)
+      expect(checker.steps.map((s) => s.checks)).toEqual([['tests', 'lint']])
+      expect(acceptanceOf(ctx, runId).outcome.detail['checkRun']).toMatchObject({ redOnBase: expect.stringContaining('off') })
+    })
+
+    it('is told a task whose criteria say `refactor: no behaviour change` is a refactor', async () => {
+      const checker = new Checker()
+      checker.outcomes = { tests: 'passed', lint: 'passed', 'red-on-base': 'passed' }
+      const { ctx, task } = await boot(checker, { redOnBase: 'on' })
+      const { taskId } = await task('workspace-write', { criteria: 'Refactor: no behaviour change; the related suite passes' })
+      expect(await settled(ctx, taskId)).toMatchObject(LANDING)
+      expect(checker.steps[0]).toMatchObject({ checks: ['tests', 'lint', 'red-on-base'], refactor: true })
+    })
+
+    it('never asks it of a change of the light tier (the policy requires it by tier): the policy sees it met, and the acceptance says why; a change of no known tier is asked (the tests above)', async () => {
+      const checker = new Checker()
+      // The tier is read from the source's changes: this run's worktree touches no path, so it is light.
+      checker.base = 'dev'
+      const { ctx, task } = await boot(checker, { redOnBase: 'on', tiered: true, review: 'approve' })
+      const { taskId, runId } = await task('workspace-write', { writes: false, template: 'reviewed' })
+      expect(await settled(ctx, taskId)).toMatchObject({ state: 'review' })
+      expect(checker.steps.map((s) => s.checks)).toEqual([['tests', 'lint']])
+      const acceptance = acceptanceOf(ctx, runId)
+      expect(acceptance.outcome).toMatchObject({ option: 'accept', detail: { checks: { tests: true, lint: true, 'red-on-base': true }, checkRun: { redOnBase: expect.stringContaining('light tier') } } })
+    })
   })
 
   describe('a board task with no write subject (T165: the lead\'s parallel tasks on one repository)', () => {

@@ -36,6 +36,10 @@ export const MECHANISMS: readonly Mechanism[] = [
     what: 'the bound of a step\'s handbook slice (docs/design/handbook.md): on refuses a slice over it after the warn period, warn always sends it whole and records it; to give no slice at all, handbook.enabled is false',
   },
   {
+    id: 'red-on-base', row: 'workflow', key: 'redOnBase', modes: ['off', 'warn', 'on'],
+    what: 'the check `red-on-base` (T306c, ADR-0079), required by a policy rule of a result of the normal or heavy tier: on holds the result to it (a new test that passes on the base tree sends it back), warn runs it and records what it would refuse (the result is judged as if it passed), off does not ask it; it starts in warn, and goes on only after the test profile\'s canary and days clean (D108)',
+  },
+  {
     id: 'review-guides', row: 'workflow', key: 'reviewGuides', modes: ['off', 'on'],
     what: 'the selection of the REVIEW.md guides of the areas a review\'s change touches (T267): off gives a review no guides; it refuses nothing, so it has no warn',
   },

@@ -696,7 +696,7 @@ export interface Config {
    * selection (`off`, `on`); each `on` by default. The plugin host's live override (`system enforce
    * set`) wins over it, and each is read at its use.
    */
-  enforce?: { evidenceGate?: EnforceMode; handbookBound?: EnforceMode; reviewGuides?: EnforceMode }
+  enforce?: { evidenceGate?: EnforceMode; handbookBound?: EnforceMode; reviewGuides?: EnforceMode; redOnBase?: EnforceMode }
   /** Reviews of one change, the first included, before remediation stops (default 3). */
   maxReviewCycles?: number
   /**

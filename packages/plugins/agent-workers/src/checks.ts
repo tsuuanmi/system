@@ -91,6 +91,12 @@ const CHECK_SCOPE_ENV = 'SYSTEM_CHECK_SCOPE'
  * also leaves out the browser specs the change does not touch when it is set, T305).
  */
 const CHECK_BASE_ENV = 'SYSTEM_CHECK_BASE'
+/**
+ * The environment a check's command reads whether the task is a refactor from (T306c): `1` when its
+ * criteria say `refactor: no behaviour change` ({@link CheckStep}'s `refactor`), else `0`. The
+ * repository's `check:red-on-base` (scripts/red-on-base.ts) reads it, and the base commit above.
+ */
+const CHECK_REFACTOR_ENV = 'SYSTEM_CHECK_REFACTOR'
 /** Set to `1` for a check run again alone after failing only on timeouts (T292). */
 export const CHECK_ALONE_ENV = 'SYSTEM_CHECK_ALONE'
 
@@ -336,9 +342,10 @@ export class RunChecks {
     })
     if (!allowed.length) return { outcome: 'checked', results }
     const evidence = this.ctx.artifacts.put({
-      kind: 'evidence', bodySchema: 'check-run@1.0',
+      // `red-on-base` is a check of check-run@1.1; a record with none of it stays @1.0 (readers of @1.0 never meet it).
+      kind: 'evidence', bodySchema: names.includes('red-on-base') ? 'check-run@1.1' : 'check-run@1.0',
       body: {
-        schema: 'check-run@1.0', runId: step.runId, repository: found.repository, workspace: found.path,
+        schema: names.includes('red-on-base') ? 'check-run@1.1' : 'check-run@1.0', runId: step.runId, repository: found.repository, workspace: found.path,
         subject: { type: 'git-head', ref: step.subject.ref, version: step.subject.version }, setup: setup!.hash,
         // check-run@1.0 says what did not run in the reason; the field is the store's and the answer's.
         checks: names.map((check) => {
@@ -521,7 +528,7 @@ export class RunChecks {
     // as a check alone after timeouts) inherits no starting commit and no alone mark from it, so its first run is never read as alone.
     const inherited = noInstallEnvironment()
     delete inherited[CHECK_BASE_ENV]
-    const env = { ...inherited, [CHECK_SCOPE_ENV]: scope, [CHECK_ALONE_ENV]: '0', ...(found.forkedAt ? { [CHECK_BASE_ENV]: found.forkedAt } : {}) }
+    const env = { ...inherited, [CHECK_SCOPE_ENV]: scope, [CHECK_ALONE_ENV]: '0', [CHECK_REFACTOR_ENV]: step.refactor ? '1' : '0', ...(found.forkedAt ? { [CHECK_BASE_ENV]: found.forkedAt } : {}) }
     let moved: string | undefined
     for (const a of todo) {
       const base = { check: a.check, argv: a.argv, autonomy: a.autonomy }

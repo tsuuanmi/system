@@ -795,6 +795,7 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
       'workers.mjs': 'console.log(`workers ${process.env.SYSTEM_CHECK_MAX_WORKERS}`)\n',
       'scope.mjs': 'console.log(`scope ${process.env.SYSTEM_CHECK_SCOPE} base ${/^[0-9a-f]{40}$/.test(process.env.SYSTEM_CHECK_BASE ?? "") ? "the fork" : "none"}`)\n',
       'alone.mjs': 'console.log(`alone ${process.env.SYSTEM_CHECK_ALONE} base ${process.env.SYSTEM_CHECK_BASE ?? "none"}`)\n',
+      'refactor.mjs': 'console.log(`refactor ${process.env.SYSTEM_CHECK_REFACTOR} base ${/^[0-9a-f]{40}$/.test(process.env.SYSTEM_CHECK_BASE ?? "") ? "the fork" : "none"}`)\n',
     })
     const step = (runId: string, at: { workspace: string; subject: { ref: string; version: string } }, checks: RunCheck[] = ['tests']) =>
       ({ runId, workspace: at.workspace, subject: at.subject, checks, classification: 'operator-shared' as const })
@@ -855,6 +856,24 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
       expect(evidenceOf(ctx, landing).checks[0]!.output!.tail).toBe('scope landing base the fork\n')
       // And each is stored, so neither runs again.
       expect(await checks.check({ ...step('run_scope', at), scope: 'landing' })).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed' }] })
+    })
+
+    it('runs the red-on-base check the repository configures, told the commit its worktree was cut at and whether the task is a refactor, and records it as check-run@1.1 (T306c)', async () => {
+      const repo = repository()
+      commit(repo, files())
+      const { write, checksWith, ctx } = await boot(repo, { checks: { tests: 'node scope.mjs', 'red-on-base': 'node refactor.mjs' } }, [...SETUP, 'node scope.mjs', 'node refactor.mjs'])
+      const at = await write('run_red')
+      const checks = checksWith({ queue: new CheckQueue() })
+      const plain = await checks.check(step('run_red', at, ['red-on-base']))
+      expect(plain).toMatchObject({ outcome: 'checked', results: [{ check: 'red-on-base', outcome: 'passed' }] })
+      expect(evidenceOf(ctx, plain).checks[0]!.output!.tail).toBe('refactor 0 base the fork\n')
+      expect(ctx.artifacts.get((plain as { evidence: string }).evidence as `sha256:${string}`)).toMatchObject({ bodySchema: 'check-run@1.1', body: { schema: 'check-run@1.1' } })
+      // A refactor is told so, as its own run of the check on the same tree (the stored outcome of the other stands apart only by its key: this is a new run).
+      const refactor = await checksWith({ queue: new CheckQueue() }).check({ ...step('run_red', at, ['red-on-base']), scope: 'landing', refactor: true })
+      expect(evidenceOf(ctx, refactor).checks[0]!.output!.tail).toBe('refactor 1 base the fork\n')
+      // A record of the other checks stays @1.0.
+      const tests = await checks.check(step('run_red', at))
+      expect(ctx.artifacts.get((tests as { evidence: string }).evidence as `sha256:${string}`)).toMatchObject({ body: { schema: 'check-run@1.0' } })
     })
 
     it('never hands a check what its own parent check said: run inside a check run alone, its first run is not alone, and it gets no starting commit it was not given', async () => {
