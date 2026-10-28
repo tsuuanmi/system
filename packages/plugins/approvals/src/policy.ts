@@ -109,7 +109,8 @@ function commandRuleProblems(rules: readonly CommandRule[]): string[] {
       }
     }
     for (const option of rule.options ?? []) {
-      if (option.kind === 'path') problems.push(`${name}: option ${option.name} takes a path, which no rule allows (a path is a positional word)`)
+      if (option.kind === 'path' && option.scope === undefined) problems.push(`${name}: option ${option.name} is a path with no scope`)
+      if (option.kind !== 'path' && option.scope !== undefined) problems.push(`${name}: option ${option.name} names a scope but is not a path`)
       if (option.pattern !== undefined) {
         try {
           new RegExp(option.pattern)

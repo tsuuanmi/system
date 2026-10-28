@@ -94,9 +94,9 @@ export function waitSeconds(policies: readonly AutonomyPolicy[], actionClass: Ac
   return Math.min(seconds, ...policies.map((p) => p.expiry.maxSeconds))
 }
 
-/** `autonomy-policy@1.x`: `@1.1` adds the optional path map `riskTiers` (ADR-0071); `@1.2` the tier a step takes at its task's risk tier, `tierByRisk` (ADR-0073); `@1.3` the optional `webAccess` grants (ADR-0074); `@1.5` the check `red-on-base` a rule may require (ADR-0079). */
+/** `autonomy-policy@1.x`: `@1.1` adds the optional path map `riskTiers` (ADR-0071); `@1.2` the tier a step takes at its task's risk tier, `tierByRisk` (ADR-0073); `@1.3` the optional `webAccess` grants (ADR-0074); `@1.5` the check `red-on-base` a rule may require (ADR-0079); `@1.6` a command rule's `enforce` and an option's path `scope` (T326). */
 export interface AutonomyPolicy {
-  schema: 'autonomy-policy@1.0' | 'autonomy-policy@1.1' | 'autonomy-policy@1.2' | 'autonomy-policy@1.3' | 'autonomy-policy@1.4' | 'autonomy-policy@1.5'
+  schema: 'autonomy-policy@1.0' | 'autonomy-policy@1.1' | 'autonomy-policy@1.2' | 'autonomy-policy@1.3' | 'autonomy-policy@1.4' | 'autonomy-policy@1.5' | 'autonomy-policy@1.6'
   id: string
   version: number
   scope: 'studio' | 'project'
@@ -126,6 +126,8 @@ export interface AutonomyPolicy {
   /**
    * `@1.4`, optional: structured command rules (./command-rules.ts). A command the gate's matcher
    * says one allows is judged as `workspace-write`, as a listed command is; the decision names the rule.
+   * `@1.6`: a rule may be `enforce: warn` (it grants nothing, {@link warnedCommandRulesOf}) and an
+   * option may take a path.
    */
   commandRules?: CommandRule[]
 }
@@ -139,7 +141,27 @@ export interface AutonomyPolicy {
 export function commandRulesOf(policies: readonly AutonomyPolicy[]): CommandRule[] {
   const [studio, ...rest] = policies
   const same = (a: CommandRule, b: CommandRule): boolean => canonical(a) === canonical(b)
-  return (studio?.commandRules ?? []).filter((rule) => rest.every((p) => p.commandRules === undefined || p.commandRules.some((r) => r.id === rule.id && same(r, rule))))
+  return (studio?.commandRules ?? []).filter((rule) => rule.enforce !== 'warn' && rest.every((p) => p.commandRules === undefined || p.commandRules.some((r) => r.id === rule.id && same(r, rule))))
+}
+
+/**
+ * The command rules of `enforce: warn` (`autonomy-policy@1.6`) a policy set carries, the studio's
+ * and every project's, each id once (the first): rules that grant nothing. The gate matches a
+ * command against them only to record that a rule would have allowed it; the command still asks.
+ * The studio need not hold them: a warning widens nothing. A project policy's `warn` copy of a rule
+ * also differs from the studio's, so {@link commandRulesOf} keeps that rule out of force for it.
+ */
+export function warnedCommandRulesOf(policies: readonly AutonomyPolicy[]): CommandRule[] {
+  const seen = new Set<string>()
+  const warned: CommandRule[] = []
+  for (const policy of policies) {
+    for (const rule of policy.commandRules ?? []) {
+      if (rule.enforce !== 'warn' || seen.has(rule.id)) continue
+      seen.add(rule.id)
+      warned.push(rule)
+    }
+  }
+  return warned
 }
 
 /** A JSON value's text with its object keys sorted: two rules written in another key order are the same rule. */
@@ -163,8 +185,14 @@ export interface CommandRule {
   flagLetters?: string
   countFlag?: boolean
   required?: string[]
-  options?: Array<{ name: string; kind: CommandValueKind; oneOf?: string[]; pattern?: string; atMost?: number }>
+  options?: Array<{ name: string; kind: CommandValueKind; oneOf?: string[]; pattern?: string; scope?: CommandPathScope; atMost?: number }>
   positionals?: Array<{ kind: CommandValueKind; min?: number; max?: number; oneOf?: string[]; pattern?: string; scope?: CommandPathScope; atMost?: number }>
+  /**
+   * `@1.6`, optional: `on` (the default) grants the rule; `warn` grants nothing: the gate records
+   * that the rule would have allowed a command, and the command still asks. It is on only once
+   * every policy of the set that holds it holds it without `warn` (each an approved policy change).
+   */
+  enforce?: 'on' | 'warn'
   note: string
 }
 

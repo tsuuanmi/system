@@ -359,6 +359,15 @@ How each layer's parts carry the keys (I1 part 2 builds them; nothing is rewritt
   now. The tier's lines (what the change's path is: one review, or a second family and the
   operator's acceptance; whether validation may be skipped) and, for a Worker on probation (T1,
   §3), its one line, are selected by tier and trust tier.
+  What a Worker may run without asking, besides the commands list, is the policy's [command
+  rules](approvals.md#command-rules) (T326): `corepack pnpm [exec] vitest run <spec files or tests
+  directories>` and `corepack pnpm [-s] test:related <paths>` (at most 60 paths of its own worktree,
+  never `..`, `.git`, or `.system`), with only a reporter (`dot`, `default`, `verbose`, `basic`,
+  `json`), `--silent[=true|false]`, `--exclude=<relative path>`, and `--outputFile[.<reporter>]=<a
+  file in its worktree>` (after `--` for `test:related`), and `corepack pnpm [-s] lint|typecheck|check|check:<name>`.
+  Another option, a path outside the worktree, or a command after `;` or `&&` asks. A rule
+  shipped `enforce: warn` records what it would allow and still asks, until the operator approves
+  both the studio policy and the project policy holding it without `enforce`.
 - **Layer 3:** the charter's objective, required checks, and auto-accept branches, for every role;
   its constraints for `develop` and `review`.
 - **Layer 4:** one playbook per role, the role's template text; a variant's text replaces the

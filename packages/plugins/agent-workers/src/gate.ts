@@ -18,7 +18,7 @@ import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import { COMMIT_ID, HOST_TOOLS_SERVER, type ToolCall, type ToolGate, type ToolVerdict, WORKSPACE_GIT_TOOLS, WORKSPACE_READS_SERVER, WORKSPACE_READ_TOOLS } from '@tsuuanmi/system-agent-runtime-core'
 import {
-  type ActionClass, type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, type Check, type CommandPathScope, commandRulesOf, SHELL_METACHARACTER, webAccessOf, type WebTool, withinClassification,
+  type ActionClass, type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, type Check, type CommandPathScope, commandRulesOf, SHELL_METACHARACTER, warnedCommandRulesOf, webAccessOf, type WebTool, withinClassification,
 } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-ledger-core'
 import { contentId, isRecord } from '@tsuuanmi/system-libs'
@@ -1348,6 +1348,23 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
     return { decision: 'deny', reason: `${why} (decision ${decision.id})` }
   }
 
+  /**
+   * Record that a command rule of `enforce: warn` would have allowed this command (T326): a `gate`
+   * decision naming the rule, deterministic, with the command's words as the call (the rule matched
+   * them whole, so none is a secret the call itself did not carry). The call is then judged as if no
+   * rule matched, so it still asks.
+   */
+  const warnWouldAllow = (call: ToolCall, ruleId: string, command: readonly string[]): void => {
+    ctx.artifacts.recordDecision({
+      decisionType: 'gate', question: `Would a command rule of the autonomy policy allow the ${call.tool} call ${run.worker} asked for in run ${run.runId}?`, inputs: [],
+      candidates: [
+        { option: 'allow', selected: false, reasons: [`would allow: command rule ${ruleId} matches the command, but its enforce is warn`] },
+        { option: 'ask', selected: true, reasons: [`command rule ${ruleId} grants nothing while its enforce is warn: the call asks the operator`] },
+      ],
+      decider: RULE, outcome: { option: 'ask', detail: { agentRun: run.runId, tool: call.tool.slice(0, 100), warnedRule: ruleId, command: clamp(command.join(' ')) } }, deterministic: true,
+    }, { producer: { type: 'system', ref: 'agent-workers' }, ...(run.workflowRunId ? { runId: run.workflowRunId } : {}), classification: run.classification })
+  }
+
   /** Deny on the policy's own decision: it is the record. */
   const denied = (call: ToolCall, action: ToolAction, verdict: AutonomyVerdict, why: string, reason: DenialReason): ToolVerdict => {
     deniedEvent(call, reason, verdict.decision, { actionClass: action.class })
@@ -1586,10 +1603,15 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
     if (action.class === 'command' && action.historyRead !== true && action.command) {
       const forProject = run.projectId ?? projectId
       const policies = (await approvals.policy(forProject)).policies
-      const rule = await matchCommandRule(commandRulesOf(policies), action.command, { path: (word, scope) => commandPath(run.workspace, run.repository, word, scope) })
+      const env = { path: (word: string, scope: CommandPathScope) => commandPath(run.workspace, run.repository, word, scope) }
+      const rule = await matchCommandRule(commandRulesOf(policies), action.command, env)
       if (rule) {
         ruled = rule.id
         projectId = forProject
+      } else {
+        // A rule of `enforce: warn` grants nothing: record the rule that would have allowed the command, and let it ask (INV-13).
+        const warned = await matchCommandRule(warnedCommandRulesOf(policies), action.command, env)
+        if (warned) warnWouldAllow(call, warned.id, action.command)
       }
     }
     let verdict = await approvals.check({ class: action.class, ...(action.command ? { command: action.command } : {}), ...(ruled ? { commandRule: ruled } : {}), ...(projectId !== undefined ? { projectId } : {}) })

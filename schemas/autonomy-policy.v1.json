@@ -6,7 +6,7 @@
   "type": "object",
   "required": ["schema", "id", "version", "scope", "rules", "default", "expiry"],
   "properties": {
-    "schema": { "enum": ["autonomy-policy@1.0", "autonomy-policy@1.1", "autonomy-policy@1.2", "autonomy-policy@1.3", "autonomy-policy@1.4", "autonomy-policy@1.5"] },
+    "schema": { "enum": ["autonomy-policy@1.0", "autonomy-policy@1.1", "autonomy-policy@1.2", "autonomy-policy@1.3", "autonomy-policy@1.4", "autonomy-policy@1.5", "autonomy-policy@1.6"] },
     "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "version": {
       "description": "Changes whenever the policy's effect changes; decisions name it.",
@@ -127,23 +127,30 @@
   "allOf": [
     {
       "if": { "properties": { "riskTiers": { "type": "object" } }, "required": ["riskTiers"] },
-      "then": { "description": "@1.1 fields (riskTiers) are refused before @1.1.", "properties": { "schema": { "enum": ["autonomy-policy@1.1", "autonomy-policy@1.2", "autonomy-policy@1.3", "autonomy-policy@1.4", "autonomy-policy@1.5"] } } }
+      "then": { "description": "@1.1 fields (riskTiers) are refused before @1.1.", "properties": { "schema": { "enum": ["autonomy-policy@1.1", "autonomy-policy@1.2", "autonomy-policy@1.3", "autonomy-policy@1.4", "autonomy-policy@1.5", "autonomy-policy@1.6"] } } }
     },
     {
       "if": { "properties": { "tierByRisk": { "type": "object" } }, "required": ["tierByRisk"] },
-      "then": { "description": "@1.2 fields (tierByRisk) are refused before @1.2.", "properties": { "schema": { "enum": ["autonomy-policy@1.2", "autonomy-policy@1.3", "autonomy-policy@1.4", "autonomy-policy@1.5"] } } }
+      "then": { "description": "@1.2 fields (tierByRisk) are refused before @1.2.", "properties": { "schema": { "enum": ["autonomy-policy@1.2", "autonomy-policy@1.3", "autonomy-policy@1.4", "autonomy-policy@1.5", "autonomy-policy@1.6"] } } }
     },
     {
       "if": { "properties": { "webAccess": { "type": "object" } }, "required": ["webAccess"] },
-      "then": { "description": "@1.3 fields (webAccess) are refused before @1.3.", "properties": { "schema": { "enum": ["autonomy-policy@1.3", "autonomy-policy@1.4", "autonomy-policy@1.5"] } } }
+      "then": { "description": "@1.3 fields (webAccess) are refused before @1.3.", "properties": { "schema": { "enum": ["autonomy-policy@1.3", "autonomy-policy@1.4", "autonomy-policy@1.5", "autonomy-policy@1.6"] } } }
     },
     {
       "if": { "properties": { "commandRules": { "type": "array" } }, "required": ["commandRules"] },
-      "then": { "description": "@1.4 fields (commandRules) are refused before @1.4.", "properties": { "schema": { "enum": ["autonomy-policy@1.4", "autonomy-policy@1.5"] } } }
+      "then": { "description": "@1.4 fields (commandRules) are refused before @1.4.", "properties": { "schema": { "enum": ["autonomy-policy@1.4", "autonomy-policy@1.5", "autonomy-policy@1.6"] } } }
     },
     {
       "if": { "properties": { "rules": { "type": "array", "contains": { "type": "object", "required": ["requires"], "properties": { "requires": { "type": "array", "contains": { "const": "red-on-base" } } } } } }, "required": ["rules"] },
-      "then": { "description": "@1.5 values (a rule that requires red-on-base) are refused before @1.5.", "properties": { "schema": { "const": "autonomy-policy@1.5" } } }
+      "then": { "description": "@1.5 values (a rule that requires red-on-base) are refused before @1.5.", "properties": { "schema": { "enum": ["autonomy-policy@1.5", "autonomy-policy@1.6"] } } }
+    },
+    {
+      "if": {
+        "properties": { "commandRules": { "type": "array", "contains": { "type": "object", "anyOf": [{ "required": ["enforce"], "properties": { "enforce": true } }, { "required": ["options"], "properties": { "options": { "type": "array", "contains": { "type": "object", "required": ["scope"], "properties": { "scope": true } } } } }] } } },
+        "required": ["commandRules"]
+      },
+      "then": { "description": "@1.6 fields (a command rule's enforce, an option's scope) are refused before @1.6.", "properties": { "schema": { "const": "autonomy-policy@1.6" } } }
     }
   ],
   "$defs": {
@@ -188,6 +195,7 @@
               "kind": { "$ref": "#/$defs/commandValueKind" },
               "oneOf": { "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,64}$" } },
               "pattern": { "description": "A regular expression the whole value must also match (at most 200 characters).", "type": "string", "minLength": 1, "maxLength": 200 },
+              "scope": { "description": "1.6 adds an option's scope. For a path value (`--outputFile=`, `--exclude=`): the same scopes as a positional path.", "enum": ["run-worktree", "repository-read", "scratch-file", "test-target"] },
               "atMost": { "description": "For a number: its upper bound.", "type": "integer", "minimum": 0, "maximum": 1000000 }
             },
             "additionalProperties": false
@@ -212,6 +220,7 @@
             "additionalProperties": false
           }
         },
+        "enforce": { "description": "1.6 adds enforce. `on` (the default) grants the rule. `warn` grants nothing: it is not in force, and a command that would match it still asks, with a gate decision recording the rule it would have allowed. A `warn` rule is read from any policy of the set, the studio need not hold it, as it widens nothing; and a project policy's `warn` copy of a rule differs from the studio's, so it keeps the studio's copy out of force for that project. A rule is turned on by approving, as policy changes, every policy that holds it without `warn`.", "enum": ["on", "warn"] },
         "note": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" }
       },
       "additionalProperties": false

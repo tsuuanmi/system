@@ -871,6 +871,14 @@ guesses.
   in every rule; the studio's grant is the only one that grants, and a project's only narrows it. A
   record carrying it below `@1.3` is refused. Like every part of the policy, it changes only
   through a `policy-change` approval; `policies/system.json` holds the system repository's.
+- `@1.4` adds the optional `commandRules` ([command rules](../design/approvals.md#command-rules),
+  T319b): structured rules a command is matched against, which the policy judges as `workspace-write`.
+  `@1.6` adds an option's `scope` (an option of `kind: path`, such as `--outputFile=`, is judged like
+  a positional path; one with no scope is refused when the policy loads) and a rule's `enforce`
+  (`on`, the default, or `warn`: the rule grants nothing, and the gate records a `gate` decision
+  naming it where it would have allowed the command, T326; a project policy's `warn` copy differs
+  from the studio's rule, so it keeps that rule out of force for the project). A record carrying
+  either below `@1.6` is refused.
 - An approval request expires at its creation plus the shortest `expiresSeconds` of the rules
   that apply to its class (the studio's and the project's), else the stricter
   `expiry.defaultSeconds`, never more than the stricter `expiry.maxSeconds`.

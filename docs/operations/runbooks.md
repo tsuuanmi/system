@@ -2816,7 +2816,18 @@ To approve:
      nothing. To wait for your verdict as long as the request lives, set the workflow's
      `deferredCommandMinutes` to 0. To let a command run unasked, add its exact argv to the studio
      policy's commands list ([change the autonomy policy](#change-the-autonomy-policy)); each
-     Worker that may run commands is told the list's lines with every turn's prompt;
+     Worker that may run commands is told the list's lines with every turn's prompt. A run's own
+     tests (`vitest run <its spec files>`, `test:related <its files> [-- <options>]`, with a
+     reporter, `--silent`, `--exclude`, or an `--outputFile` inside its worktree) and the read-only
+     checks (`lint`, `typecheck`, `check`, `check:<name>`) are not for you to classify: they are
+     the policy's [command rules](../design/approvals.md#command-rules) (T326), decided at the gate.
+     A form no rule names still asks: add it to the rule through a policy change, never to a
+     script. The rules ship `enforce: warn`: each still asks, and its `gate` decision
+     (`warnedRule`) shows what it would have allowed. They are in force for project `system` only
+     after two approved policy changes: the studio policy holding them without `enforce`, and
+     `policies/system.json` version 5, whose copies drop `enforce` too (version 4's `warn` copies
+     keep the studio's out of force). Only then does the lead delete `ownTests` from `sysdev.mjs`
+     and keep no test-command judge;
    - a run outside a board task continues by itself: within `approvalPollSeconds` (15 s) of your
      approval the engine reopens the failed step as a new attempt in its session, with a line
      saying the call was approved, and the call runs once. It is a `recovery` decision (rule

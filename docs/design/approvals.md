@@ -396,7 +396,7 @@ characters, a field no denial carries) is counted apart, never by reason.
 
 ### Command rules
 
-`autonomy-policy@1.4` adds `commandRules` (T319b, D107): the routine commands a lead used to approve
+`autonomy-policy@1.4` adds `commandRules` (T319b, D107; `@1.6` adds `enforce` and path options, T326): the routine commands a lead used to approve
 with judges of its own scripts are policy, decided at the gate, so they never ask. A rule names the
 `program`, the literal `words` after it (a subcommand), the `flags` and `flagLetters` it allows, the
 `options` that take a value (a number with its `atMost`, a `oneOf` list, or a `pattern`), the
@@ -432,12 +432,40 @@ with judges of its own scripts are policy, decided at the gate, so they never as
   `--reporter=dot|default|verbose|basic`) and never the whole suite with no path: that runs in the
   checks (T299, D100). `corepack pnpm [-s] lint|typecheck|check|check:<name>`, `test:related`, `git mv`,
   `git rm [-r] [-q]`, `corepack pnpm install --offline [--frozen-lockfile]`, and `rm` of scratch files
-  are rules too.
+  are rules too. The rules of T326 (`autonomy-policy@1.6`, below) add the options Workers use.
+- **Options with a path, and `enforce` (`autonomy-policy@1.6`, T326).** An option of `kind: path`
+  names a `scope`, as a positional path does: `--outputFile=<file>` and `--exclude=<path>` are
+  judged like any path word, so one outside the worktree, with a `..`, or in `.git` or `.system`
+  leaves the command asking. A rule's `enforce` is `on` (the default) or `warn`. A `warn` rule grants
+  nothing, so the gate reads it from any policy of the set, the studio's or a project's, without
+  the studio holding it: when the gate finds that one would have allowed a command, it records a
+  `gate` decision (`agent-workers.tool-gate`, option `ask`, `warnedRule`, `command`) and the
+  command asks as before. A `warn` copy also counts as a different definition when the studio's
+  rules are narrowed: a project policy that holds a rule as `warn` keeps the studio's copy of that
+  rule, `on` or not, out of force for its project.
+- **The rules of T326** (`policies/system.json`, version 4; shipped `enforce: warn`, so they record
+  and ask). They are in force for project `system` only after two policy changes, each approved by
+  the operator: the studio policy holds them without `enforce`, and `policies/system.json` is
+  approved as a new version (5) whose copies of them drop `enforce` too, word for word the studio's.
+  The studio's change alone leaves them asking, since version 4's `warn` copies differ from it.
+  The rules: `corepack pnpm [exec] vitest run <spec files or
+  tests directories>` and `corepack pnpm [-s] test:related <paths>`, at most 60 paths, all inside
+  the one worktree, with only these options: `--reporter=` of `dot`, `default`, `verbose`, `basic`,
+  or `json`; `--silent`, `--silent=true`, `--silent=false`; `--exclude=<relative path>`;
+  `--outputFile=<file>` and `--outputFile.<reporter>=<file>`, the file inside the worktree. For
+  `test:related`, the options follow `--` (the script refuses one before it). Put the paths before
+  `--silent`: vitest reads a word after a bare `--silent` as its value. An unknown option
+  (`--watch`, `--coverage`, `--config=`, `-u`), another reporter, a command after `;` or `&&` (a
+  metacharacter, refused before any rule), or a path outside the worktree is no rule's command and
+  asks. `corepack pnpm [-s] lint|typecheck|check|check:<name>` are the read-only checks
+  (`check-script`). The rules live in the policy, never in the gate; once they are in force, the
+  lead keeps no list of them (`ownTests` leaves its script).
 - **Taking effect.** Rules are part of the policy set, in force only after the operator approves a
   [policy change](#a-policy-change) carrying them; the lead never approves it. `policies/system.json`
-  (version 3) holds the standard rules for the system project, in force once the studio policy
-  holds the same rules through its own change. The project template (`system project new`) writes
-  the same rules into every new project's policy, and into the studio change it files when the
+  (version 4) holds the standard rules for the system project, each in force once the studio policy
+  holds the same rule through its own change; its T326 rules, held as `warn`, need its own next
+  version as well (above). The project template (`system project new`) writes
+  the template's rules (the first of them, not those of T326) into every new project's policy, and into the studio change it files when the
   studio lacks them, as it does for missing commands.
 
 ### A deferred call

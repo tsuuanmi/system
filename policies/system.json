@@ -1,7 +1,7 @@
 {
-  "schema": "autonomy-policy@1.4",
+  "schema": "autonomy-policy@1.6",
   "id": "system.policy",
-  "version": 3,
+  "version": 4,
   "scope": "project",
   "projectId": "system",
   "narrows": "studio-default",
@@ -115,7 +115,75 @@
     { "id": "edit-git-mv", "program": "git", "words": ["mv"], "positionals": [{ "kind": "path", "scope": "run-worktree", "min": 2, "max": 2 }], "note": "moves a path of the run's own tree" },
     { "id": "edit-git-rm", "program": "git", "words": ["rm"], "flagLetters": "rq", "positionals": [{ "kind": "path", "scope": "run-worktree", "min": 1, "max": 20 }], "note": "removes paths of the run's own tree" },
     { "id": "edit-pnpm-install", "program": "corepack", "words": ["pnpm", "install"], "flags": ["--offline", "--frozen-lockfile"], "required": ["--offline"], "note": "installs dependencies in the worktree from the offline store" },
-    { "id": "scratch-rm", "program": "rm", "positionals": [{ "kind": "path", "scope": "scratch-file", "min": 1, "max": 20 }], "note": "removes the run's own untracked scratch files" }
+    { "id": "scratch-rm", "program": "rm", "positionals": [{ "kind": "path", "scope": "scratch-file", "min": 1, "max": 20 }], "note": "removes the run's own untracked scratch files" },
+    {
+      "id": "test-vitest-run-options", "program": "corepack", "words": ["pnpm", "vitest", "run"], "enforce": "warn",
+      "flags": ["--silent"],
+      "options": [
+        { "name": "--reporter=", "kind": "word", "oneOf": ["dot", "default", "verbose", "basic", "json"] },
+        { "name": "--silent=", "kind": "word", "oneOf": ["true", "false"] },
+        { "name": "--exclude=", "kind": "path", "scope": "run-worktree", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]*$" },
+        { "name": "--outputFile=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.dot=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.default=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.verbose=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.basic=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.json=", "kind": "path", "scope": "run-worktree" }
+      ],
+      "positionals": [{ "kind": "path", "scope": "test-target", "min": 1, "max": 60 }],
+      "note": "the run's own test files or tests directories, never the whole suite, with a reporter, --silent, --exclude, and --outputFile inside the worktree (T326)"
+    },
+    {
+      "id": "test-vitest-exec-run-options", "program": "corepack", "words": ["pnpm", "exec", "vitest", "run"], "enforce": "warn",
+      "flags": ["--silent"],
+      "options": [
+        { "name": "--reporter=", "kind": "word", "oneOf": ["dot", "default", "verbose", "basic", "json"] },
+        { "name": "--silent=", "kind": "word", "oneOf": ["true", "false"] },
+        { "name": "--exclude=", "kind": "path", "scope": "run-worktree", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]*$" },
+        { "name": "--outputFile=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.dot=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.default=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.verbose=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.basic=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.json=", "kind": "path", "scope": "run-worktree" }
+      ],
+      "positionals": [{ "kind": "path", "scope": "test-target", "min": 1, "max": 60 }],
+      "note": "the same, run through pnpm exec (T326)"
+    },
+    {
+      "id": "test-related-options", "program": "corepack", "words": ["pnpm", "test:related"], "enforce": "warn",
+      "flags": ["--", "--silent"],
+      "options": [
+        { "name": "--reporter=", "kind": "word", "oneOf": ["dot", "default", "verbose", "basic", "json"] },
+        { "name": "--silent=", "kind": "word", "oneOf": ["true", "false"] },
+        { "name": "--exclude=", "kind": "path", "scope": "run-worktree", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]*$" },
+        { "name": "--outputFile=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.dot=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.default=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.verbose=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.basic=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.json=", "kind": "path", "scope": "run-worktree" }
+      ],
+      "positionals": [{ "kind": "path", "scope": "run-worktree", "min": 1, "max": 60 }],
+      "note": "the tests that relate to files of the run's worktree, with vitest's reporter, --silent, --exclude, and --outputFile after -- (T326)"
+    },
+    {
+      "id": "test-related-silent-options", "program": "corepack", "words": ["pnpm", "-s", "test:related"], "enforce": "warn",
+      "flags": ["--", "--silent"],
+      "options": [
+        { "name": "--reporter=", "kind": "word", "oneOf": ["dot", "default", "verbose", "basic", "json"] },
+        { "name": "--silent=", "kind": "word", "oneOf": ["true", "false"] },
+        { "name": "--exclude=", "kind": "path", "scope": "run-worktree", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]*$" },
+        { "name": "--outputFile=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.dot=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.default=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.verbose=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.basic=", "kind": "path", "scope": "run-worktree" },
+        { "name": "--outputFile.json=", "kind": "path", "scope": "run-worktree" }
+      ],
+      "positionals": [{ "kind": "path", "scope": "run-worktree", "min": 1, "max": 60 }],
+      "note": "the same, with pnpm's -s (T326)"
+    }
   ],
   "webAccess": {
     "version": 1,

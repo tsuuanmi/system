@@ -192,8 +192,130 @@ describe('a project policy only narrows the studio\'s command rules', () => {
 })
 
 describe('the rules the project template and policies/system.json carry', () => {
-  it('are the same rules, and load', () => {
-    expect((read('../../../../policies/system.json') as AutonomyPolicy).commandRules).toEqual(RULES)
-    expect(new Set(RULES.map((r) => r.id)).size).toBe(RULES.length)
+  it('are the same rules, and system.json adds only rules of enforce: warn, and they load', () => {
+    const shipped = (read('../../../../policies/system.json') as AutonomyPolicy).commandRules!
+    expect(shipped.slice(0, RULES.length)).toEqual(RULES)
+    const added = shipped.slice(RULES.length)
+    expect(added.length).toBeGreaterThan(0)
+    expect(added.every((r) => r.enforce === 'warn')).toBe(true)
+    expect(new Set(shipped.map((r) => r.id)).size).toBe(shipped.length)
+  })
+})
+
+// T326: a run's own tests with the options Workers use, and the read-only checks, are the policy's
+// rules, read from policies/system.json (never hard-coded in the gate). Shipped `enforce: warn`, they
+// record what they would have allowed and the command still asks; the studio policy that grants them
+// (`enforce` dropped) lets each run unasked, its decision naming the rule.
+const SHIPPED = (read('../../../../policies/system.json') as AutonomyPolicy).commandRules!
+const granted = (): CommandRule[] => SHIPPED.map(({ enforce: _enforce, ...rule }) => rule)
+const T326 = (command: string): string => command.replaceAll('OUT', outside)
+const many = (n: number): string => Array.from({ length: n }, () => 'src/a.ts').join(' ')
+
+/** The rule a command's recorded autonomy decision names, or undefined when it was not allowed by a rule (workspace writes ask here, so the decision is visible). */
+async function ruleOf(command: string, rules: CommandRule[]): Promise<string | undefined> {
+  const { ctx, verdict } = await boot({ ...policy({ 'workspace-write': 'ask' }), schema: 'autonomy-policy@1.6', commandRules: rules })
+  const answer = await verdict(T326(command))
+  const gateId = /decision (sha256:[0-9a-f]{64})/.exec((answer as { reason?: string }).reason ?? '')?.[1]
+  const first = gateId ? (ctx.artifacts.get(gateId as never)!.body as { inputs: string[] }).inputs[0] : undefined
+  const body = first ? ctx.artifacts.get(first as never)?.body as { decisionType: string; outcome: { detail: { commandRule?: string } } } | undefined : undefined
+  return body?.decisionType === 'autonomy' ? body.outcome.detail.commandRule : undefined
+}
+
+const OWN_TESTS: Array<[string, string]> = [
+  ['corepack pnpm vitest run --silent tests/a.spec.ts', 'test-vitest-run-options'],
+  ['corepack pnpm vitest run --silent=true tests/a.spec.ts', 'test-vitest-run-options'],
+  ['corepack pnpm vitest run tests/a.spec.ts --silent=false', 'test-vitest-run-options'],
+  ['corepack pnpm vitest run --reporter=json tests/a.spec.ts', 'test-vitest-run-options'],
+  ['corepack pnpm vitest run --reporter=json --outputFile=out.json tests/a.spec.ts', 'test-vitest-run-options'],
+  ['corepack pnpm vitest run --reporter=json --outputFile.json=out.json tests/a.spec.ts', 'test-vitest-run-options'],
+  [`corepack pnpm vitest run --reporter=json --outputFile.json=${join(ws, 'out.json')} tests/a.spec.ts`, 'test-vitest-run-options'],
+  ['corepack pnpm vitest run --exclude=packages/p/tests/b.spec.ts tests/a.spec.ts packages/p-core/tests/c.spec.ts', 'test-vitest-run-options'],
+  ['corepack pnpm vitest run --reporter=basic --silent --exclude=src/a.ts packages/p/tests/', 'test-vitest-run-options'],
+  ['corepack pnpm exec vitest run --silent --reporter=json --outputFile=out.json tests/a.spec.ts', 'test-vitest-exec-run-options'],
+  ['corepack pnpm test:related src/a.ts -- --silent', 'test-related-options'],
+  ['corepack pnpm test:related src/a.ts tests/a.spec.ts -- --silent=true --reporter=dot', 'test-related-options'],
+  ['corepack pnpm test:related src/a.ts -- --reporter=json --outputFile=out.json', 'test-related-options'],
+  ['corepack pnpm test:related src/a.ts -- --reporter=json --outputFile.json=out.json --exclude=tests/a.spec.ts', 'test-related-options'],
+  ['corepack pnpm -s test:related src/a.ts', 'test-related-silent-options'],
+  ['corepack pnpm -s test:related src/a.ts -- --silent=false', 'test-related-silent-options'],
+  [`corepack pnpm test:related ${many(60)}`, 'test-related'],
+  [`corepack pnpm test:related ${many(60)} -- --silent`, 'test-related-options'],
+]
+
+const NOT_OWN_TESTS = [
+  // A path outside the worktree, `..`, git's and System's own data.
+  'corepack pnpm vitest run --silent OUT/a.spec.ts', 'corepack pnpm vitest run --silent ../outside/a.spec.ts', 'corepack pnpm vitest run --silent tests/../../outside/a.spec.ts',
+  'corepack pnpm test:related ../outside/a.ts -- --silent', 'corepack pnpm test:related OUT/f -- --silent', 'corepack pnpm test:related .git/config -- --silent', 'corepack pnpm test:related .system/x -- --silent',
+  'corepack pnpm test:related src/a.ts ../outside/a.ts -- --silent', 'corepack pnpm -s test:related ../outside/a.ts',
+  // An --outputFile (or --exclude) outside the worktree, or in git's or System's own data.
+  'corepack pnpm vitest run --reporter=json --outputFile=../out.json tests/a.spec.ts', 'corepack pnpm vitest run --reporter=json --outputFile=OUT/out.json tests/a.spec.ts',
+  'corepack pnpm vitest run --reporter=json --outputFile.json=OUT/out.json tests/a.spec.ts', 'corepack pnpm vitest run --outputFile=.git/hooks/pre-commit tests/a.spec.ts',
+  'corepack pnpm vitest run --outputFile=.system/x tests/a.spec.ts', 'corepack pnpm test:related src/a.ts -- --outputFile=../out.json', 'corepack pnpm test:related src/a.ts -- --outputFile.json=OUT/o.json',
+  'corepack pnpm vitest run --outputFile= tests/a.spec.ts', 'corepack pnpm vitest run --outputFile tests/a.spec.ts',
+  'corepack pnpm vitest run --exclude=../outside/x tests/a.spec.ts', 'corepack pnpm vitest run --exclude=/etc/passwd tests/a.spec.ts',
+  // An option the rule does not name, or a value it does not allow.
+  'corepack pnpm vitest run --watch tests/a.spec.ts', 'corepack pnpm vitest run --coverage tests/a.spec.ts', 'corepack pnpm vitest run --reporter=junit tests/a.spec.ts',
+  'corepack pnpm vitest run --reporter=./x.js tests/a.spec.ts', 'corepack pnpm vitest run --silent=maybe tests/a.spec.ts', 'corepack pnpm vitest run --outputFile.junit=out.xml tests/a.spec.ts',
+  'corepack pnpm vitest run --config=x.ts tests/a.spec.ts', 'corepack pnpm vitest run -u tests/a.spec.ts', 'corepack pnpm vitest run --update tests/a.spec.ts',
+  'corepack pnpm test:related src/a.ts -- --coverage', 'corepack pnpm test:related src/a.ts -- --bogus', 'corepack pnpm test:related src/a.ts -- --reporter=junit',
+  // No path, a whole-suite filter, more than 60 paths (the plain `test:related` rule of T299 keeps its 64 until policy v4 is approved).
+  'corepack pnpm vitest run --silent', 'corepack pnpm vitest run --silent tests', 'corepack pnpm test:related -- --silent', 'corepack pnpm test:related --',
+  `corepack pnpm test:related ${many(61)} -- --silent`, `corepack pnpm -s test:related ${many(61)}`,
+  // A command after ; or && (or any other shell word) is no command a rule judges.
+  'corepack pnpm vitest run --silent tests/a.spec.ts; rm -rf src', 'corepack pnpm vitest run --silent tests/a.spec.ts && echo done', 'corepack pnpm test:related src/a.ts -- --silent; pwd',
+  'corepack pnpm test:related src/a.ts && pwd', 'corepack pnpm -s test:related src/a.ts ; pwd', 'corepack pnpm vitest run --silent tests/a.spec.ts | cat', 'corepack pnpm vitest run --outputFile=$HOME/x tests/a.spec.ts',
+  'corepack pnpm vitest run --silent tests/a.spec.ts #x', 'corepack pnpm lint; pwd', 'corepack pnpm check && pwd',
+]
+
+describe('a run\'s own tests and read-only checks (T326)', () => {
+  it('allows each form, its rule named, once the studio policy grants the rules', async () => {
+    for (const [command, rule] of OWN_TESTS) expect(await ruleOf(command, granted()), command).toBe(rule)
+    const { verdict } = await boot({ ...policy(), schema: 'autonomy-policy@1.6', commandRules: granted() })
+    for (const [command] of OWN_TESTS) expect(await verdict(T326(command)), command).toEqual({ decision: 'allow' })
+  })
+
+  it('allows the repository\'s read-only checks, and no other script', async () => {
+    const { verdict } = await boot({ ...policy(), schema: 'autonomy-policy@1.6', commandRules: granted() })
+    for (const command of ['corepack pnpm lint', 'corepack pnpm typecheck', 'corepack pnpm check', 'corepack pnpm check:docs', 'corepack pnpm -s check:schemas']) expect(await verdict(command), command).toEqual({ decision: 'allow' })
+    for (const command of ['corepack pnpm build', 'corepack pnpm lint --fix', 'corepack pnpm check:', 'corepack pnpm test', 'corepack pnpm gen:reference']) expect((await verdict(command)).decision, command).toBe('deny')
+  })
+
+  it('does not allow a path outside the worktree, a `..`, an --outputFile outside it, an unknown option, or a command after ; or &&', async () => {
+    const { verdict } = await boot({ ...policy(), schema: 'autonomy-policy@1.6', commandRules: granted() })
+    for (const command of NOT_OWN_TESTS) expect((await verdict(T326(command))).decision, command).toBe('deny')
+  })
+
+  it('as shipped (enforce: warn) allows nothing: each form still asks, and a gate decision records the rule it would have allowed', async () => {
+    // The studio holds the template's rules; the project policy carries the shipped ones, the warn rules among them.
+    const { ctx, verdict } = await boot({ ...policy(), schema: 'autonomy-policy@1.6', commandRules: RULES }, [{ ...project(SHIPPED), schema: 'autonomy-policy@1.6' }], 'p')
+    const forms = OWN_TESTS.filter(([, rule]) => rule !== 'test-related')
+    for (const [command] of forms) expect((await verdict(T326(command))).decision, command).toBe('deny')
+    const warnedRules = (): string[] => ctx.artifacts.list({ kind: 'decision' }).map((a) => (a.body as { outcome: { detail?: { warnedRule?: string } } }).outcome.detail?.warnedRule).filter((r): r is string => r !== undefined)
+    expect(warnedRules()).toHaveLength(forms.length)
+    expect(new Set(warnedRules())).toEqual(new Set(['test-vitest-run-options', 'test-vitest-exec-run-options', 'test-related-options', 'test-related-silent-options']))
+    // What no rule matches records nothing.
+    const before = warnedRules().length
+    for (const command of NOT_OWN_TESTS) expect((await verdict(T326(command))).decision, command).toBe('deny')
+    expect(warnedRules()).toHaveLength(before)
+  })
+
+  it('stays off for a project whose policy still holds the rules as warn, even once the studio grants them: both policies must drop enforce', async () => {
+    const studio = { ...policy(), schema: 'autonomy-policy@1.6' as const, commandRules: granted() }
+    // Project policy version 4, as shipped: its warn copies differ from the studio's, so the studio's are not in force for it.
+    const v4 = await boot(studio, [{ ...project(SHIPPED), schema: 'autonomy-policy@1.6' }], 'p')
+    const command = 'corepack pnpm vitest run --silent=true tests/a.spec.ts'
+    expect((await v4.verdict(command)).decision).toBe('deny')
+    expect(v4.ctx.artifacts.list({ kind: 'decision' }).map((a) => (a.body as { outcome: { detail?: { warnedRule?: string } } }).outcome.detail?.warnedRule)).toContain('test-vitest-run-options')
+    // Its next version drops enforce, word for word the studio's: now the command runs unasked.
+    const v5 = await boot(studio, [{ ...project(granted()), schema: 'autonomy-policy@1.6', version: 2 }], 'p')
+    expect(await v5.verdict(command)).toEqual({ decision: 'allow' })
+  })
+
+  it('records the rule a warned command would have matched', async () => {
+    const { ctx, verdict } = await boot({ ...policy(), schema: 'autonomy-policy@1.6', commandRules: RULES }, [{ ...project(SHIPPED), schema: 'autonomy-policy@1.6' }], 'p')
+    expect((await verdict('corepack pnpm vitest run --silent tests/a.spec.ts')).decision).toBe('deny')
+    const recorded = ctx.artifacts.list({ kind: 'decision' }).map((a) => a.body as { decisionType: string; decider: { id: string }; outcome: { option: string; detail?: { warnedRule?: string; command?: string } } })
+      .filter((d) => d.outcome.detail?.warnedRule !== undefined)
+    expect(recorded).toEqual([expect.objectContaining({ decisionType: 'gate', decider: expect.objectContaining({ id: 'agent-workers.tool-gate' }), outcome: expect.objectContaining({ option: 'ask', detail: expect.objectContaining({ warnedRule: 'test-vitest-run-options', command: 'corepack pnpm vitest run --silent tests/a.spec.ts' }) }) })])
   })
 })
