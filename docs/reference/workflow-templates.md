@@ -238,6 +238,17 @@ ignored, so an update never stops a row from loading; remove it.
   failed only after its `develop:1` completed (its review's session broke, say), no review having
   judged that change, this attempt's worktree already holds it, and its brief says so: it builds on
   it ([starting from the previous attempt's work](../design/workflow-engine.md#starting-from-the-previous-attempts-work)).
+- **A change of behaviour is test-first** (T306c, [ADR-0079](../decisions/adr/0079-test-first-is-checked-by-system-red-on-base.md)).
+  The `develop:1` prompt of the code work (not the `docs` and `tests` variants) asks the author to
+  write the tests that encode the criteria first, run them and see them fail (a test that cannot
+  load for a missing module fails too), then change the code until they pass, and to show both runs
+  in its evidence: the command and failing lines before the change, the same command passing after
+  it. A task whose criteria say `refactor: no behaviour change` is asked the opposite: no existing
+  test changes. The System does not take the author's word: the acceptance's `red-on-base` check
+  ([a run's required checks](../design/workflow-engine.md#a-runs-required-checks)) runs the test
+  files the result adds or changes on the run's base tree, with the result's tests copied over, and
+  they must fail there and pass on the result; for a refactor it fails a result that edits or
+  deletes an existing test. It sits behind the enforce switch `red-on-base`, which starts in `warn`.
 - **The author verifies before anyone reviews** (T267, T284). `develop:1` ends with the author having
   run the checks the task's criteria name. The System records, for every command the Worker ran, the
   command, its exit code as the runtime reports it (Codex's command items; for Claude Code the tool

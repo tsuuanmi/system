@@ -8,7 +8,7 @@
  * acceptance's `checks`, passed or failed; one that could not run stays pending, and the board holds
  * the result for the operator as before (INV-2). An agent's own account of a command is never a check.
  */
-import type { Check } from '@tsuuanmi/system-approvals-core'
+import type { Check, RiskTier } from '@tsuuanmi/system-approvals-core'
 import type { Subject } from '@tsuuanmi/system-board-core'
 import { type ArtifactRef, RUN_CHECKS, type RunCheck } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
@@ -18,6 +18,48 @@ import type { NodeRecord, NodeRow, RunRow } from './types.ts'
 
 /** What a writing step's work is, as the autonomy policy names it: a plain run's checks are judged under it. */
 export const WRITES = 'workspace-write'
+
+/** The words of a task's criterion that make it a refactor: no behaviour changes, so no test may (T306c). */
+const REFACTOR = /\brefactor:\s*no behaviour change\b/i
+
+/** Whether the task of run `runId` is a refactor: one of its acceptance criteria says `refactor: no behaviour change`. */
+function refactorOf(e: Engine, runId: string): boolean {
+  return e.tasks.frame(runId)?.acceptance.some((a) => REFACTOR.test(a.statement)) ?? false
+}
+
+/**
+ * Why `red-on-base` is not asked of a result though the policy requires it (T306c): its enforce
+ * switch is `off`, or the change is of the `light` tier (documents and changesets, which no test runs
+ * against). Undefined when it is asked: the tier is normal or heavy, or none is known (INV-2).
+ */
+function redOnBaseExempt(e: Engine, tier: RiskTier | undefined): 'off' | 'light' | undefined {
+  return e.enforce('red-on-base') === 'off' ? 'off' : tier === 'light' ? 'light' : undefined
+}
+
+/**
+ * The enforce switch of `red-on-base` in `warn` (ADR-0078, ADR-0079): the check ran and did not pass
+ * (`failed`, or `error` when it could not run), and the result is judged as if it had: the refusal it
+ * would make is recorded as a `gate` decision (INV-13) and said in the notes the review reads.
+ */
+function warnRedOnBase(e: Engine, runId: string, result: { outcome: string; reason: string; failures?: readonly string[] }, evidence: ArtifactRef | undefined): string {
+  const lines = (result.failures ?? []).slice(0, 5).map((l) => String(l).slice(0, MAX_FAILURE_LINE_CHARS))
+  const why = `its red-on-base check ${result.outcome === 'failed' ? 'failed' : 'did not run to an exit code'} (${result.reason.slice(0, 300)})${lines.length ? `: ${lines.join(' | ')}` : ''}`
+  try {
+    e.ctx.artifacts.recordDecision({
+      decisionType: 'gate', question: `May run ${runId}'s result stand though its red-on-base check did not pass, the enforce switch being in warn mode?`,
+      inputs: evidence ? [evidence] : [],
+      candidates: [
+        { option: 'warn', selected: true, reasons: [why, 'the red-on-base enforce switch is in warn mode (system enforce): the refusal is recorded, and the result is judged as if the check passed'] },
+        { option: 'refuse', selected: false, reasons: ['not refuse: the check is in warn mode'] },
+      ],
+      decider: { type: 'rule', id: 'workflow.red-on-base', version: '1' }, outcome: { option: 'warn', detail: { check: 'red-on-base', outcome: result.outcome, failures: lines } }, deterministic: true,
+    }, { producer: { type: 'system', ref: 'workflow' }, runId })
+  } catch (error) {
+    e.ctx.logger.warn(`workflow: the warning of run ${runId}'s red-on-base check was not recorded: ${(error as Error).message}`)
+  }
+  e.ctx.logger.warn(`workflow: run ${runId}: ${why}; the red-on-base switch is in warn mode, so the result stands`)
+  return `${why}; the red-on-base enforce switch is in warn mode, so the result is judged as if it passed`
+}
 
 /** How many failing lines of one failed check the task's dossier tells (T270). */
 export const MAX_FAILURE_LINES = 200
@@ -96,9 +138,10 @@ function treeOf(e: Engine, done: NodeRow[], writes: Subject | undefined): Tree |
  * the tree of the subject its task writes, when that is a `git-head`; with no write subject (the
  * lead's parallel tasks on one repository, T165), on the tree its latest agent result is on, as a
  * plain run's, and `tasks.complete` binds the result to that tree when a check ran on it (INV-5).
- * Undefined when nothing was asked. Throws only when `signal` stopped it.
+ * `tier`: the change's risk tier, when one is recorded; `red-on-base` is asked of a normal or heavy
+ * one only (T306c). Undefined when nothing was asked. Throws only when `signal` stopped it.
  */
-export async function checksFor(e: Engine, run: RunRow, nodes: NodeRow[], signal: AbortSignal): Promise<RanChecks | undefined> {
+export async function checksFor(e: Engine, run: RunRow, nodes: NodeRow[], signal: AbortSignal, tier?: RiskTier): Promise<RanChecks | undefined> {
   const done = nodes.filter((n) => n.state === 'COMPLETED')
   const row = e.tasks.row(run.run_id)
   let action: { class: string; projectId?: string }
@@ -122,7 +165,7 @@ export async function checksFor(e: Engine, run: RunRow, nodes: NodeRow[], signal
     if (!tree) return undefined
     action = { class: WRITES }
   }
-  return runRequiredChecks(e, run, tree, e.tasks.checksOf(done, tree.subject), action, signal)
+  return runRequiredChecks(e, run, tree, e.tasks.checksOf(done, tree.subject), action, signal, tier)
 }
 
 /**
@@ -134,22 +177,31 @@ export async function checksFor(e: Engine, run: RunRow, nodes: NodeRow[], signal
  */
 async function runRequiredChecks(
   e: Engine, run: RunRow, tree: Tree, own: Partial<Record<Check, boolean>>,
-  action: { class: string; projectId?: string }, signal: AbortSignal,
+  action: { class: string; projectId?: string }, signal: AbortSignal, tier?: RiskTier,
 ): Promise<RanChecks | undefined> {
   if (Object.values(own).some((passed) => !passed)) return undefined
   const approvals = queueOf(e)
   if (!approvals) return undefined
   let required: RunCheck[]
+  // `red-on-base`, when the policy requires it and its switch is off or the change is light: not asked, and reported met (T306c).
+  let exempt: ReturnType<typeof redOnBaseExempt>
   try {
     const verdict = await approvals.check({ class: action.class as never, ...(action.projectId ? { projectId: action.projectId } : {}), checks: own })
     if (verdict.mode !== 'auto' && verdict.mode !== 'notify') return undefined
     required = RUN_CHECKS.filter((c) => verdict.failedChecks?.includes(c))
+    exempt = required.includes('red-on-base') ? redOnBaseExempt(e, tier) : undefined
+    if (exempt) required = required.filter((c) => c !== 'red-on-base')
   } catch (error) {
     e.ctx.logger.warn(`workflow: the autonomy policy could not be read for run ${run.run_id}'s checks; they stay pending: ${(error as Error).message}`)
     return undefined
   }
-  if (!required.length) return undefined
-  return runChecksOn(e, run.run_id, tree, required, run.classification ?? e.ctx.egress.defaultClassification, signal)
+  if (!required.length && !exempt) return undefined
+  const ran: RanChecks = required.length
+    ? await runChecksOn(e, run.run_id, tree, required, run.classification ?? e.ctx.egress.defaultClassification, signal)
+    : { subject: tree.subject, checks: {}, notes: [], detail: { asked: [], outcome: 'not-asked' } }
+  if (!exempt) return ran
+  const why = exempt === 'off' ? 'its enforce switch (red-on-base) is off' : 'the change is of the light tier'
+  return { ...ran, checks: { ...ran.checks, 'red-on-base': true }, notes: [...ran.notes, `its red-on-base check was not asked: ${why}`], detail: { ...ran.detail, redOnBase: `not asked: ${why}` } }
 }
 
 /**
@@ -167,6 +219,7 @@ export async function runChecksOn(
   try {
     checked = await e.ctx.workers.check({
       runId, workspace: tree.workspace, subject: { ref: tree.subject.ref, version: tree.subject.version }, checks: required, classification,
+      ...(required.includes('red-on-base') && refactorOf(e, runId) ? { refactor: true } : {}),
     }, signal)
   } catch (error) {
     // A stop or a lost lease ends the run's turn; anything else is a check not run, never a run failed for it.
@@ -184,7 +237,11 @@ export async function runChecksOn(
     if (r.outcome === 'failed' && Array.isArray(r.failures) && r.failures.length) {
       failures[r.check] = r.failures.slice(0, MAX_FAILURE_LINES).map((line) => String(line).slice(0, MAX_FAILURE_LINE_CHARS))
     }
-    if (r.outcome === 'error') notes.push(`its ${r.check} check did not run to an exit code on the result (${r.reason}); it stays pending`)
+    // The red-on-base switch in warn (T306c): a check that did not pass is recorded and the result stands.
+    if (r.check === 'red-on-base' && r.outcome !== 'passed' && e.enforce('red-on-base') === 'warn') {
+      notes.push(warnRedOnBase(e, runId, r, checked.evidence as ArtifactRef | undefined))
+      checks[r.check] = true
+    } else if (r.outcome === 'error') notes.push(`its ${r.check} check did not run to an exit code on the result (${r.reason}); it stays pending`)
     else {
       checks[r.check] = r.outcome === 'passed'
       // A pass that did not run every test says so to the review, never read as covering them (T247).

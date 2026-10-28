@@ -803,7 +803,8 @@ export class TaskLandings {
       return [...Object.keys(detail?.checks ?? {}), ...asked]
     }
     const reported = new Set([...checksOf(row.acceptance), ...checksOf(landing.acceptance)])
-    return RUN_CHECKS.filter((c) => reported.has(c))
+    // `red-on-base` proves the result's tests against the commit it started from, once, at its acceptance: the rebased tree has no such base (T306c).
+    return RUN_CHECKS.filter((c) => c !== 'red-on-base' && reported.has(c))
   }
 
   /**

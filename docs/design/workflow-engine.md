@@ -1581,7 +1581,39 @@ task's dossier as `evidence` (T267), is never one.
   host. One killed by the operator's stop of its run or a lost lease stays the `error` it was
   stored as, after any restart. A re-run replaces the check's stored row in one statement, so the
   cuts counted are never absent from the store.
-- **Bounded** (INV-9): at most the three checks, each within the source's deadline, and three cuts
+- **`red-on-base`: the result's new tests fail on its base** (T306c,
+  [ADR-0079](../decisions/adr/0079-test-first-is-checked-by-system-red-on-base.md)). A test that
+  passes on the tree its change started from proves nothing of the change. A policy rule may
+  require the check (`autonomy-policy@1.5`), and the repository's command for it
+  (`corepack pnpm check:red-on-base`, `scripts/red-on-base.ts`) runs, confined as the others are,
+  on the result's tree, told the commit the worktree was cut at (`SYSTEM_CHECK_BASE`) and whether
+  the task is a refactor (`SYSTEM_CHECK_REFACTOR`, from `refactor: no behaviour change` among the
+  task's criteria). It reads the test files the result added or changed against that commit, makes
+  the base tree (a `git archive` in a temporary directory, its `node_modules` linked from the
+  result's tree with the workspace packages pointing at the base's own sources), copies the
+  result's tests over it, and runs them there and on the result: each file must fail on the base (a
+  file that cannot load, a missing module, counts) and pass on the result; a file that passes on the
+  base is named with its tests (`FAIL red-on-base: <file> passes on the base tree (<tests>)`), which
+  the failed check's lines carry into the dossier. A file the runner reported nothing of (vitest did
+  not start, or its configuration failed before loading it) is no evidence either way, and fails the
+  check (`did not run on the base tree`), never read as red (INV-2). The check prints the end of both
+  runs' output before its verdicts, all of it within a budget (3600 characters) under the 4000 a
+  check's record keeps: the verdicts take at most 1200 (each line cut to 240, the failures first,
+  those that do not fit counted in a closing line that says how many failed), and the two runs share
+  the rest. So the check's record and the dossier hold what each run said, not only the verdict,
+  however many files and however long their tests' names. A result that changes code and no test file
+  fails it; one that changes documents or tests alone has nothing for the base to lack and passes.
+  A **refactor** is held to the reverse: no existing test file edited or deleted, and none run on
+  the base; the `tests` check runs the related suite as for any result. It is asked of a change
+  of the **normal or heavy** tier (or one with no tier recorded), never a light one, as the
+  policy's `requires` is read by tier, and it is not asked again at the landing (the rebased tree
+  has no such base). Its **enforce switch** (`red-on-base`, `off`, `warn`, `on`, workflow row
+  `enforce.redOnBase`, starting `warn`; [plugin model](../architecture/plugin-model.md#turning-a-plugin-off)):
+  `on` sends a result it fails back as another attempt, `warn` runs it, records a `gate` decision
+  (`workflow.red-on-base`, outcome `warn`) and says in the acceptance's reasons what it would have
+  refused, and judges the result as if it passed, `off` does not ask it. It goes `on` only after
+  the test profile's canary and days clean (D108).
+- **Bounded** (INV-9): at most the four checks, each within the source's deadline, and three cuts
   of each.
 - **Configuration**: the commands are the operator's, per repository
   ([runbook](../operations/runbooks.md#let-a-run-pass-the-required-checks)); with none configured,

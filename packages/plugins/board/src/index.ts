@@ -228,9 +228,15 @@ interface Why {
 }
 
 /** The checks a policy rule can require (`autonomy-policy@1.0`). */
-const CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review']
+const CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review', 'red-on-base']
 /** The required checks that are commands, which a run runs on its exact result (ADR-0063) and records as `check-run@1.0`. */
-const COMMAND_CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint']
+const COMMAND_CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint', 'red-on-base']
+/**
+ * The command checks whose pass the auto-accept rule reads in the check-run record: `red-on-base` is
+ * left out (T306c): its enforce switch may be warn or off, or the change light, and the run's own
+ * acceptance then reports it met with no `passed` record behind it; the run owner judged it.
+ */
+const PROVEN_CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint']
 /** A project id in `autoAccept` (`common@1` `id`). */
 const PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
 /** A branch name in `autoAccept`: a plain git branch name, never a pattern. */
@@ -2226,7 +2232,7 @@ export class StoreBoard extends Board {
       else if (blocking) reasons.push(`the run's last review ${reviewRef} left ${blocking} blocking finding(s)${cycle}`)
     }
 
-    const passed = COMMAND_CHECKS.filter((c) => read.checks?.[c] === true)
+    const passed = PROVEN_CHECKS.filter((c) => read.checks?.[c] === true)
     const checkRun = isRecord(detail['checkRun']) ? detail['checkRun'] : undefined
     const evidenceRef = typeof checkRun?.['evidence'] === 'string' ? checkRun['evidence'] as ArtifactRef : undefined
     if (passed.length) {

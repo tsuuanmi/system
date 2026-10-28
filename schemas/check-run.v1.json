@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:check-run:v1",
   "title": "Check run",
-  "description": "Body of an `evidence` artifact: a workflow run's required checks (tests, typecheck, lint) as the Worker source that holds its worktree ran them on the exact tree its result is on, each the operator's command for the check, judged by the autonomy policy and run confined (design/workflow-engine.md#a-runs-required-checks, ADR-0063). Its envelope's inputs are the `autonomy` decisions that let the commands run. A check passes only on exit code 0 with the tree unchanged after it; `error` neither passes nor fails.",
+  "description": "Body of an `evidence` artifact: a workflow run's required checks (tests, typecheck, lint) as the Worker source that holds its worktree ran them on the exact tree its result is on, each the operator's command for the check, judged by the autonomy policy and run confined (design/workflow-engine.md#a-runs-required-checks, ADR-0063). Its envelope's inputs are the `autonomy` decisions that let the commands run. A check passes only on exit code 0 with the tree unchanged after it; `error` neither passes nor fails. check-run@1.1 adds the check `red-on-base` (T306c, ADR-0079): the result's added or changed tests run on its base tree, where they must fail; a record that names it is @1.1.",
   "type": "object",
   "required": ["schema", "runId", "repository", "workspace", "subject", "setup", "checks"],
   "properties": {
-    "schema": { "const": "check-run@1.0" },
+    "schema": { "enum": ["check-run@1.0", "check-run@1.1"] },
     "runId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "repository": { "description": "The repository the worktree belongs to (its real path).", "type": "string", "minLength": 1, "maxLength": 4096 },
     "workspace": { "description": "The run's worktree the checks ran in.", "type": "string", "minLength": 1, "maxLength": 4096 },
@@ -26,12 +26,12 @@
       "description": "One entry per check asked, in the order asked.",
       "type": "array",
       "minItems": 1,
-      "maxItems": 3,
+      "maxItems": 4,
       "items": {
         "type": "object",
         "required": ["check", "outcome", "reason"],
         "properties": {
-          "check": { "enum": ["tests", "typecheck", "lint"] },
+          "check": { "enum": ["tests", "typecheck", "lint", "red-on-base"] },
           "outcome": {
             "description": "passed: exited 0 on the subject and left it unchanged; failed: exited with another code on the subject; error: did not run to an exit code on the subject (no command configured, not allowed unasked by the policy, could not be confined or started, timed out, ended on a signal, or changed the tree).",
             "enum": ["passed", "failed", "error"]

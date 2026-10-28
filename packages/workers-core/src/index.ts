@@ -574,8 +574,8 @@ export type Carried =
  * The checks a policy can require that are commands (`autonomy-policy` `requires`): what a run's
  * checks run (T151). The others (`schema`, `review`, `quote-check`) are judged by the run itself.
  */
-export type RunCheck = 'tests' | 'typecheck' | 'lint'
-export const RUN_CHECKS: readonly RunCheck[] = ['tests', 'typecheck', 'lint']
+export type RunCheck = 'tests' | 'typecheck' | 'lint' | 'red-on-base'
+export const RUN_CHECKS: readonly RunCheck[] = ['tests', 'typecheck', 'lint', 'red-on-base']
 
 /**
  * Run a workflow run's required checks on its result (T151): the source that holds `workspace` as
@@ -598,6 +598,11 @@ export interface CheckStep {
    * the whole suite with every browser test.
    */
   scope?: 'acceptance' | 'landing' | 'daily'
+  /**
+   * The task's criteria say `refactor: no behaviour change` (T306c): a check that reads it
+   * (`red-on-base`) requires that no existing test was changed, instead of that new tests fail on the base.
+   */
+  refactor?: boolean
 }
 
 /**

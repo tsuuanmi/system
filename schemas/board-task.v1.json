@@ -137,11 +137,11 @@
           "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" }
         },
         "pendingChecks": {
-          "description": "For operator-review: the class's required checks the acceptance did not report passed.",
+          "description": "For operator-review: the class's required checks the acceptance did not report passed. board-task@1.4 adds `red-on-base` (T306c, ADR-0079).",
           "type": "array",
-          "maxItems": 6,
+          "maxItems": 7,
           "uniqueItems": true,
-          "items": { "enum": ["tests", "typecheck", "lint", "schema", "quote-check", "review"] }
+          "items": { "enum": ["tests", "typecheck", "lint", "schema", "quote-check", "review", "red-on-base"] }
         },
         "funding": {
           "description": "@1.1, for budget-spent: the lines the funding request asks to add to the budget, at most one per pool and unit of it. The request's subject version is `budget-spent:<sha256 of their canonical JSON>`, so its verdict binds to exactly these.",

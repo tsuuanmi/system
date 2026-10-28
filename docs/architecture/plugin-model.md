@@ -244,9 +244,9 @@ code change ([ADR-0078](../decisions/adr/0078-a-plugin-or-a-mechanism-is-turned-
   (MCP `enforce`) sets a live override the plugin host keeps, recorded as a `gate` decision, and the
   mechanism reads it at each use. The mechanisms and the modes each takes are `MECHANISMS` in the
   libs: `evidence-gate` (off, warn, on), `handbook-bound` (warn, on; `handbook.enabled: false` gives
-  no slice at all), `review-guides` (off, on), and `lead-rights` (on only: every refusal is a bound
-  of authority, INV-6; revoke the lead's token instead). Red-on-base is not built yet: it lands
-  behind such a switch.
+  no slice at all), `review-guides` (off, on), `red-on-base` (off, warn, on; the acceptance check
+  that a result's new tests fail on its base, ADR-0079; it starts in warn), and `lead-rights` (on
+  only: every refusal is a bound of authority, INV-6; revoke the lead's token instead).
 
 **The rule for a new mechanism** (its check: the review; no automated check yet):
 

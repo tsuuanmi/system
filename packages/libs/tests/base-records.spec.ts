@@ -31,6 +31,13 @@ describe('autonomy-policy@1.0', () => {
     expect(valid('autonomy-policy@1.0', withRule({ actionClass: 'read', mode: 'auto' }))).toBe(true)
   })
 
+  it('@1.5 lets a rule require red-on-base, refused before @1.5 (T306c, INV-14)', () => {
+    const rule = { actionClass: 'workspace-write', mode: 'auto', requires: ['tests', 'red-on-base'] }
+    expect(valid('autonomy-policy@1.5', { ...withRule(rule), schema: 'autonomy-policy@1.5' })).toBe(true)
+    for (const before of ['autonomy-policy@1.0', 'autonomy-policy@1.4']) expect(valid(before, { ...withRule(rule), schema: before }), before).toBe(false)
+    expect(valid('autonomy-policy@1.4', { ...withRule({ ...rule, requires: ['tests'] }), schema: 'autonomy-policy@1.4' })).toBe(true)
+  })
+
   it('fails closed for an action class no rule names (INV-2)', () => {
     expect(valid('autonomy-policy@1.0', { ...policy, default: 'auto' })).toBe(false)
     expect(valid('autonomy-policy@1.0', { ...policy, default: 'notify' })).toBe(false)
@@ -429,6 +436,12 @@ describe('digest-extract@1.0', () => {
 
 describe('check-run@1.0', () => {
   const run = example('check-run.lint-failed')
+
+  it('@1.1 names the check red-on-base: the result\'s tests run on its base tree (T306c)', () => {
+    const red = { ...run, schema: 'check-run@1.1', checks: [{ check: 'red-on-base', outcome: 'failed', exitCode: 1, reason: 'its command exited with code 1' }] }
+    expect(valid('check-run@1.1', red)).toBe(true)
+    expect(valid('check-run@1.1', { ...run, schema: 'check-run@1.1' })).toBe(true)
+  })
 
   it('binds every check to one exact git tree, by a name a policy can require and an outcome that is never guessed (INV-5, T151)', () => {
     expect(valid('check-run@1.0', run)).toBe(true)
