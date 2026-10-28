@@ -1,0 +1,17 @@
+{
+  "schema": "operator-decision@1.0",
+  "id": "D12",
+  "projectId": "alpha",
+  "state": "answered",
+  "question": "Which branch does the project's lead merge results into?",
+  "options": ["dev", "main"],
+  "recommendation": "dev: main stays the operator's.",
+  "links": ["docs/decisions/adr/0076-the-lead-is-a-principal-of-its-own-with-a-closed-list-of-rights.md", "task-6755c1d17c2d"],
+  "askedAt": "2026-10-27T08:00:00.000Z",
+  "askedBy": "lead:alpha",
+  "answeredAt": "2026-10-27T08:30:00.000Z",
+  "answer": "dev.",
+  "answeredBy": "lead:alpha",
+  "source": "the operator's message of 2026-10-27, 08:29",
+  "revision": 1
+}

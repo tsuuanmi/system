@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:mcp-decisions:v1",
+  "title": "MCP decision tools",
+  "description": "Input and output of the `decisions_*` MCP tools (the decisions row, docs/proposals/0019-lead-logic-in-system.md section 2.7). The root describes one call (tool, input, structured output); the row validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens, a write checking its output before it commits.",
+  "type": "object",
+  "required": ["tool", "input", "output"],
+  "properties": {
+    "tool": { "enum": ["decisions_ask", "decisions_answer", "decisions_list", "decisions_show", "decisions_import"] },
+    "input": { "type": "object" },
+    "output": { "type": "object" }
+  },
+  "allOf": [
+    { "if": { "properties": { "tool": { "const": "decisions_ask" } } }, "then": { "properties": { "input": { "$ref": "#/$defs/decisions-ask-input" }, "output": { "$ref": "#/$defs/decisions-ask-output" } } } },
+    { "if": { "properties": { "tool": { "const": "decisions_answer" } } }, "then": { "properties": { "input": { "$ref": "#/$defs/decisions-answer-input" }, "output": { "$ref": "#/$defs/decisions-answer-output" } } } },
+    { "if": { "properties": { "tool": { "const": "decisions_list" } } }, "then": { "properties": { "input": { "$ref": "#/$defs/decisions-list-input" }, "output": { "$ref": "#/$defs/decisions-list-output" } } } },
+    { "if": { "properties": { "tool": { "const": "decisions_show" } } }, "then": { "properties": { "input": { "$ref": "#/$defs/decisions-show-input" }, "output": { "$ref": "#/$defs/decisions-show-output" } } } },
+    { "if": { "properties": { "tool": { "const": "decisions_import" } } }, "then": { "properties": { "input": { "$ref": "#/$defs/decisions-import-input" }, "output": { "$ref": "#/$defs/decisions-import-output" } } } }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "decisionId": { "description": "`D<n>`.", "type": "string", "pattern": "^D[1-9][0-9]{0,8}$" },
+    "projectId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$" },
+    "decision": { "$ref": "urn:tsuuanmi:system:schema:operator-decision:v1" },
+    "one": {
+      "description": "The output of a write: the record as it stands once written.",
+      "type": "object",
+      "required": ["decision"],
+      "properties": { "decision": { "$ref": "#/$defs/decision" } },
+      "additionalProperties": false
+    },
+    "decisions-ask-input": {
+      "type": "object",
+      "required": ["question"],
+      "properties": {
+        "question": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "projectId": { "description": "Absent: a studio-wide decision (the operator's token only). A lead token's is its own project.", "$ref": "#/$defs/projectId" },
+        "options": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+        "recommendation": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "links": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 300 } },
+        "supersedes": { "description": "The decision this one corrects.", "$ref": "#/$defs/decisionId" }
+      },
+      "additionalProperties": false
+    },
+    "decisions-ask-output": { "$ref": "#/$defs/one" },
+    "decisions-answer-input": {
+      "type": "object",
+      "required": ["id", "answer"],
+      "properties": {
+        "id": { "$ref": "#/$defs/decisionId" },
+        "answer": { "type": "string", "minLength": 1, "maxLength": 8000 },
+        "source": { "description": "Where the operator said it: required for a lead token (the row refuses it absent).", "type": "string", "minLength": 1, "maxLength": 500 }
+      },
+      "additionalProperties": false
+    },
+    "decisions-answer-output": {
+      "description": "The answered record; `answeredBy` is the token's principal, never chosen by the caller.",
+      "allOf": [{ "$ref": "#/$defs/one" }, { "type": "object", "properties": { "decision": { "type": "object", "properties": { "state": { "const": "answered" } } } } }]
+    },
+    "decisions-list-input": {
+      "type": "object",
+      "properties": {
+        "state": { "enum": ["asked", "answered"] },
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "studio": { "description": "Only the studio-wide ones.", "type": "boolean" },
+        "after": { "description": "The number of the last record of the previous page.", "type": "integer", "minimum": 0, "maximum": 999999999 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+      },
+      "additionalProperties": false
+    },
+    "decisions-list-output": {
+      "type": "object",
+      "required": ["decisions"],
+      "properties": {
+        "decisions": { "description": "In number order, at most `limit` (200).", "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/decision" } },
+        "next": { "description": "The cursor of the next page; absent on the last.", "type": "integer", "minimum": 1, "maximum": 999999999 }
+      },
+      "additionalProperties": false
+    },
+    "decisions-show-input": {
+      "type": "object",
+      "required": ["id"],
+      "properties": { "id": { "$ref": "#/$defs/decisionId" } },
+      "additionalProperties": false
+    },
+    "decisions-show-output": {
+      "type": "object",
+      "required": ["decision", "supersededBy"],
+      "properties": {
+        "decision": { "$ref": "#/$defs/decision" },
+        "supersededBy": { "description": "The decisions that correct this one, oldest first, at most 100.", "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/decisionId" } }
+      },
+      "additionalProperties": false
+    },
+    "decisions-import-input": {
+      "type": "object",
+      "required": ["registry", "file"],
+      "properties": {
+        "registry": { "description": "The parsed decisions.json: a list of decisions, `{\"decisions\": [...]}`, or an object keyed by number; at most 10,000 decisions, each read as an operator-decision@1.0 record by the row, which names every problem it refuses.", "anyOf": [{ "type": "array", "maxItems": 10000 }, { "type": "object", "maxProperties": 10000 }] },
+        "file": { "description": "The file's name, kept on each imported record as `importedFrom`.", "type": "string", "minLength": 1, "maxLength": 200 }
+      },
+      "additionalProperties": false
+    },
+    "decisions-import-output": {
+      "type": "object",
+      "required": ["imported", "unchanged", "highest"],
+      "properties": {
+        "imported": { "description": "Records written by this run: all of the registry's into an empty log, none on a second run.", "type": "integer", "minimum": 0, "maximum": 10000 },
+        "unchanged": { "description": "Records the log held already, as the registry has them (or answered here since).", "type": "integer", "minimum": 0, "maximum": 10000 },
+        "highest": { "description": "The registry's highest number; the sequence goes on past it.", "type": "integer", "minimum": 1, "maximum": 999999999 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

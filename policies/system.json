@@ -331,6 +331,7 @@
           "packages/plugins/models/",
           "packages/plugins/notify/",
           "packages/plugins/lead-inbox/",
+          "packages/plugins/decisions/",
           "packages/plugins/plugin-host/",
           "packages/plugins/profile-scientific-research/",
           "packages/plugins/profile-software-development/",

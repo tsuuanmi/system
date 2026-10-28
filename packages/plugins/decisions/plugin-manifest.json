@@ -1,0 +1,29 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-decisions",
+  "version": "0.0.0",
+  "description": "The operator's decisions as records in System: operator-decision@1.0, a question recorded and later answered, numbered D<n> by the store from one sequence per studio and never reused, never deleted (a correction is a new record that supersedes); MCP decisions_ask, decisions_answer, decisions_list, decisions_show, decisions_import and system decisions; a lead token acts for its own project and reads studio-wide ones",
+  "class": {
+    "kind": "family",
+    "family": "surface"
+  },
+  "provides": [],
+  "consumes": [
+    {
+      "seam": "store",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "mcp",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "config": [
+    {
+      "key": "pageSize",
+      "sensitive": false
+    }
+  ],
+  "license": "UNLICENSED"
+}

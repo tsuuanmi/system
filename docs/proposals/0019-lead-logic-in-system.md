@@ -589,3 +589,30 @@ clean; it records its commit here and in the [roadmap](roadmap.md) when it lands
   `lead.brief-read` (`principal`, `project`); a project the board does not know is refused, not
   briefed empty. Tests: `lead-inbox/tests/brief.spec.ts`, `cli/tests/lead-brief.spec.ts`,
   `system-bundle/tests/lead-brief-seams.spec.ts`.
+- **Rank 4, the operator-decision record (T328).** The `decisions` row (package
+  `@tsuuanmi/system-decisions`, off in the bundle; a surface with no seam of its own, as `report`)
+  holds `operator-decision@1.0` ([schema](../../schemas/operator-decision.v1.json)); MCP
+  `decisions_ask|answer|list|show|import`, each input and output `mcp-decisions@1.0`
+  ([schema](../../schemas/mcp-decisions.v1.json), [reference](../reference/schemas.md#mcp-tools-decisions_)), and
+  `system decisions list|show|ask|answer|import` ([runbook](../operations/runbooks.md#record-a-decision)).
+  What was built differs from section 2.7 as follows:
+  - A question has its number when it is **asked**, not when it is answered: the lead's registry holds
+    asked decisions with numbers, and the import keeps them. The store takes it from one sequence in the
+    transaction that writes the record (`BEGIN IMMEDIATE`), so two writers, in one process or two, never
+    share one; a number is never reused.
+  - The fields are `question`, `options`, `recommendation`, `links`, `askedAt`/`askedBy`,
+    `answeredAt`/`answer`/`answeredBy`, `source`, `supersedes` (not `date`, `words`, `causes`); `askedBy`
+    and `answeredBy` say who wrote it down (`operator`, `lead:<project>`, or `import`).
+  - An answered record never changes, and none is ever deleted (the store refuses both); a correction is
+    a new record whose `supersedes` names the old one.
+  - A lead token asks for its own project, records an answer only for its own project and only on the
+    operator's word (`source` is required, and the record says `answeredBy: lead:<project>`, never
+    `operator`), and reads its project's and the studio-wide records. It never answers a studio-wide
+    question or another project's, never corrects another's, and never imports. Studio-wide decisions
+    are the operator's to ask and answer (open question 5: the same row, `projectId` absent).
+  - The tool names are `decisions_*` and `system decisions`, in the plural, as the other rows' are.
+  - The import reads a list, `{"decisions": [...]}`, or an object keyed by number, and refuses a gap, a
+    duplicate, or an entry it cannot read exactly (no guessed time, no truncated text); a second run
+    changes nothing.
+  - The closed list of a lead's rights (ADR-0076) is unchanged: asking and recording the operator's
+    word are records of evidence, not decisions of System, and the row is checked by its own tool code.

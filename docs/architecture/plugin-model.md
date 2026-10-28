@@ -109,13 +109,13 @@ The `Class` column of the [seam catalog](#seam-catalog) gives each seam's class.
 | Plugin family | Contract | Seams and providers |
 |---|---|---|
 | Worker | takes a brief and artifact pointers; returns result artifacts with usage | Worker sources `turns`, `agentWorkers`, `models`, and `workers-fake` (scripted Workers for the `system-test` profile's canary, T323; off in the bundle); their runtimes `agentRuntimes`, `providers`, `browser`, `display`, `accounts`, `login`; the plugins that register into them: `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp`, `runtime-antigravity-cli`, `provider-chatgpt-web`, `provider-gemini-web` |
-| decision | takes state and typed questions; returns typed answers with probabilities | the routing policy inside `workers`; model healing in `ui-ops`; `dispatchAdvisor` (defined in `decision-core`; its providers `local` and `model` in the workflow engine); `decisions` (planned) |
+| decision | takes state and typed questions; returns typed answers with probabilities | the routing policy inside `workers`; model healing in `ui-ops`; `dispatchAdvisor` (defined in `decision-core`; its providers `local` and `model` in the workflow engine); the planned decisions seam of the seam catalog (PROP-0002), not the decisions surface row |
 | verification | takes an artifact and criteria; returns pass or fail with evidence | acceptance contracts registered through `workers.contract`; metric collectors and validators registered through `evaluations.collector`; quote checks and tallies in team review |
 | digest | takes raw artifacts; returns a cited summary | `digests`: `system-digest` (on by default), `system-digest-extractive` (off, its alternative) |
 | context | attached to a Worker at launch; reduces tokens entering context without changing results | `context` (planned) |
 | workflow | template: job graph, team kind, milestones, default criteria | profiles through `workflow.template`: `profile-software-development`, `profile-scientific-research` |
 | knowledge | indexing and retrieval over the ledger of record | `knowledge` (planned) |
-| surface | reads from the core and presents it to the operator and the lead | `mcp`, `webServer`, `gateway-anthropic`, `gateway-responses`, `web-ui`, `report`, `notify` (out-of-band notices from the event log, its row off; [notifications](../design/notifications.md)), `lead-inbox` (a project's lead inbox from the event log, pushed to its sinks; [the lead's inbox](../design/notifications.md#the-leads-inbox)), the CLI |
+| surface | reads from the core and presents it to the operator and the lead | `mcp`, `webServer`, `gateway-anthropic`, `gateway-responses`, `web-ui`, `report`, `notify` (out-of-band notices from the event log, its row off; [notifications](../design/notifications.md)), `lead-inbox` (a project's lead inbox from the event log, pushed to its sinks; [the lead's inbox](../design/notifications.md#the-leads-inbox)), `decisions` (the operator's decisions as `operator-decision@1.0` records, its row off, no seam of its own: its MCP tools are `mcp-decisions@1.0`; [runbook](../operations/runbooks.md#record-a-decision)), the CLI |
 
 Rules for the two classes:
 
@@ -159,7 +159,7 @@ The **family** is the seam a group of plugins registers into, where one may buil
 | capability | web-providers | `providers`, `provider-chatgpt-web`, `provider-gemini-web` |
 | capability | digests | `digest`, `digest-extractive` |
 | capability | — | `display-virtual`, `browser-patchright`, `accounts`, `login`, `turns`, `workers-fake`, `agent-workers`, `models` |
-| surface | — | `lead-inbox`, `report`, `notify`, `gateway-anthropic`, `gateway-responses`, `web-ui`, `mcp-server` |
+| surface | — | `lead-inbox`, `decisions`, `report`, `notify`, `gateway-anthropic`, `gateway-responses`, `web-ui`, `mcp-server` |
 | profile | — | `profile-software-development`, `profile-scientific-research` |
 
 The check reads each package's imports from its `src/` (tests excluded), type and value apart (`import
@@ -197,7 +197,7 @@ matrix fails).
   surface mounts on), `credentials`, `store`, `event-log`, `leases`, `artifacts`, `plugin-host`,
   `resources`, `approvals`, `turn-receipts`, `egress`, `workers`, `worker-sessions`, `landing-local`,
   `workflow`, `board`.
-- **Optional** rows (capability and surface): `lead-inbox`, `display`, `browser`, `providers`,
+- **Optional** rows (capability and surface): `lead-inbox`, `decisions`, `display`, `browser`, `providers`,
   `provider-chatgpt-web`, `provider-gemini-web`, `accounts`, `login`, `turns`, `workers-fake`, `agent-runtimes`,
   `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp`, `runtime-antigravity-cli`,
   `agent-workers`, `llm`, `llm-pi-ai`, `models`, `digest`, `digest-extractive`, `report`, `notify`,

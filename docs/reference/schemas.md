@@ -1258,6 +1258,55 @@ guesses.
 - A request no Worker can serve is not refused: it settles `bypassed` ([digests](../design/digests.md)).
   Example: [`mcp-digests.request.json`](../../schemas/examples/mcp-digests.request.json).
 
+### `operator-decision`
+
+One question put to the operator and, once answered, the answer: the `decisions` row
+([PROP-0019 section 2.7](../proposals/0019-lead-logic-in-system.md#27-the-decision-log--an-operator-decision-record-rank-4),
+[runbook](../operations/runbooks.md#record-a-decision)). Schema:
+[`operator-decision.v1.json`](../../schemas/operator-decision.v1.json).
+
+- `id` is `D<n>`, taken from one sequence for the whole studio in the transaction that writes the
+  question; never reused. A record is never deleted, and an answered one never changes (the store
+  refuses both): a correction is a new record whose `supersedes` names the old one.
+- `state` `asked` has no answer and `revision` 0; `answered` has `answer`, `answeredAt`, `answeredBy`, and
+  `revision` 1.
+- `askedBy` and `answeredBy` say who wrote it down: `operator`, `lead:<project>` (from the token, never
+  the caller's word), or `import`. An answer a lead wrote down is the operator's word only as the lead
+  relays it: it must name where the operator said it (`source`), or the record is invalid.
+- `importedFrom` is present exactly when `askedBy` is `import` (the one-time import of the lead's
+  registry), and an answer recorded by the import is on such a record.
+- No `projectId`: a studio-wide decision, which every lead reads and only the operator asks and answers.
+  Examples: [`operator-decision.asked.json`](../../schemas/examples/operator-decision.asked.json),
+  [`operator-decision.answered.json`](../../schemas/examples/operator-decision.answered.json).
+
+### MCP tools: `decisions_*`
+
+| Tool | Scope | Does |
+|---|---|---|
+| `decisions_ask` | operator, lead | record a question; the store gives it the studio's next number |
+| `decisions_answer` | operator, lead | record the answer to a question that waits |
+| `decisions_list` | operator, lead | the decisions in number order, a page at a time |
+| `decisions_show` | operator, lead | one decision, with the decisions that supersede it (at most 100) |
+| `decisions_import` | operator | import the lead's `decisions.json`, once |
+
+- Input and output: [`mcp-decisions.v1.json`](../../schemas/mcp-decisions.v1.json) `$defs/<tool>-input`
+  and `<tool>-output` (`mcp-decisions@1.0`). The row is a surface with no seam of its own: these tools
+  are its whole contract. A refused input does nothing (`invalid input, nothing done`); a write checks
+  the output it would give before it commits (`would make an output its schema refuses (a defect), so
+  nothing changed`); a refusal says its kind (`invalid`, `forbidden`, `not-found`, `conflict`).
+- A lead token (ADR-0076) asks about its own project; reads its project's and the studio-wide records;
+  and answers only its own project's, with `source`, recorded as `answeredBy: lead:<project>`. It never
+  answers or corrects a studio-wide or another project's decision, and never imports.
+- `decisions_list`: `state`, `projectId`, `studio` (only the studio-wide), `limit` 1 to 200 (default the
+  row's `pageSize`, 50), `after` the cursor; the output's `next` is the cursor of the next page.
+- `decisions_import`: `registry` is the parsed file (a list, `{"decisions": [...]}`, or an object
+  keyed by number), at most 10,000 decisions, refused past that before any is read. Its numbers must be
+  exactly D1 to Dn: a gap is named as ranges (at most 20, then how many more), found from the sorted
+  numbers so its work never grows with how large a number is (INV-9); a number twice, or an entry it
+  cannot read exactly, is refused with it. Nothing is written then. Into an empty log every record is
+  written; a second run writes nothing (`imported` 0, `unchanged` all). Example:
+  [`mcp-decisions.answer.json`](../../schemas/examples/mcp-decisions.answer.json).
+
 ### MCP tools: agent accounts
 
 | Tool | Scope | Does |

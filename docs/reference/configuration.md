@@ -201,6 +201,14 @@
 | `keyFile` | string |  | 32-byte owner-only key file; defaults to <DSH_HOME>/system/vault.key |
 | `lockWaitMs` | number (0…) | `30000` | Cross-process lock wait in milliseconds |
 
+## `decisions`
+
+[@tsuuanmi/system-decisions](../../packages/plugins/decisions/README.md)
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `pageSize` | number (1…200) | `50` | Records one decisions_list call returns, at most: a cursor (`after`) reads the next page |
+
 ## `digest`
 
 [@tsuuanmi/system-digest](../../packages/plugins/digest/README.md)
