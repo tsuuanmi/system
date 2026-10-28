@@ -238,6 +238,18 @@ export function acceptanceOf(task: Pick<BoardTask, 'lastDecision'>, read: (ref: 
   return isRecord(detail) ? detail : {}
 }
 
+/**
+ * Why a review is held for the operator, in the words the board's hold decision recorded
+ * (`outcome.detail.holdReason`, T330: heavy with its risk decision, the auto-accept rule's reasons, the
+ * checks pending or failed, or forbid). Undefined when it is not held, or the hold named none (an older record).
+ */
+export function holdReasonOf(task: Pick<BoardTask, 'lastDecision' | 'waiting'>, read: (ref: ArtifactRef) => unknown): string | undefined {
+  if (task.waiting?.reason !== 'operator-review' || !task.lastDecision) return undefined
+  const value = read(task.lastDecision)
+  const detail = isRecord(value) && isRecord(value.outcome) ? value.outcome.detail : undefined
+  return isRecord(detail) && typeof detail.holdReason === 'string' ? detail.holdReason : undefined
+}
+
 /** What a lead's acceptance carries over from the run's own (ADR-0076): the facts System recorded of the result. */
 const RECORDED_FACTS = ['checks', 'checkRun', 'risk', 'review', 'landing'] as const
 
@@ -556,8 +568,10 @@ export function apply(ctx: Context, config: Config = {}): void {
           const read = await policiesOf(project.projectId)
           const pending = task.waiting?.pendingChecks ?? []
           const acceptance = acceptanceOf(task, (ref) => artifacts.get(ref)?.body)
+          const holdReason = holdReasonOf(task, (ref) => artifacts.get(ref)?.body)
           listed.push({
             ...reviewOf(task, { projectId: project.projectId, title: project.title }),
+            ...(holdReason ? { holdReason } : {}),
             checks: typeof read === 'string'
               ? { value: checkStates(pending, pending, acceptance), requiredUnknown: read }
               : { value: checkStates(requiredChecks(read, task.actionClass), pending, acceptance) },

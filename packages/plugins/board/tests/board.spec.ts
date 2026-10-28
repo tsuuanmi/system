@@ -786,7 +786,9 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
     expect(ctx.leases.current(`board-task:${t.taskId}`)).toBeUndefined()
     expect(ctx.artifacts.get(held.lastDecision!)?.body).toMatchObject({ decisionType: 'board', inputs: expect.arrayContaining([first]), outcome: { option: 'operator-review', detail: { pendingChecks: ['lint'] } } })
     const refused = await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, branch, { tests: true, lint: false }), at(5)).catch((e: unknown) => e as BoardError)
-    expect(refused).toMatchObject({ failure: 'invalid', message: expect.stringMatching(/the review is the operator's/) })
+    // The refusal names the check that failed and the autonomy decision (T330); the hold's decision says the same.
+    expect(refused).toMatchObject({ failure: 'invalid', message: expect.stringMatching(/required check\(s\) lint have not passed \(autonomy decision sha256:[0-9a-f]+\): the review is the operator's$/) })
+    expect((ctx.artifacts.get(held.lastDecision!)!.body as { outcome: { detail: { holdReason?: string } } }).outcome.detail.holdReason).toMatch(/^required check\(s\) lint have not passed \(autonomy decision sha256:[0-9a-f]+\)$/)
     expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, branch, { tests: 'yes' } as unknown as Action['checks']), at(5)))).toBe('invalid')
     expect(await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, branch, { tests: true, lint: true }), at(5))).toMatchObject({ state: 'done' })
   })
@@ -901,7 +903,7 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
         .toEqual([expect.stringMatching(/is not of the result's exact tree/)])
       // Held, only the operator's acceptance accepts it now: another of the run owner's the rule does not apply to is refused.
       const again = await ctx.board.accept(bound.taskId, engineAcceptance(ctx, bound.taskId, bound.r, { checks, review: assessed(ctx, 'changes-requested', 1), cycle: 3, evidence, branch: 'dev' }), at(6)).catch((e: unknown) => e as BoardError)
-      expect(again).toMatchObject({ failure: 'invalid', message: expect.stringMatching(/the auto-accept rule does not apply .*: the review is the operator's$/) })
+      expect(again).toMatchObject({ failure: 'invalid', message: expect.stringMatching(/the auto-accept rule \(board\.autoAccept, D80\) does not apply: .* \(autonomy decision sha256:[0-9a-f]+\): the review is the operator's$/) })
       const operator = ctx.artifacts.recordDecision({
         decisionType: 'acceptance', question: 'Accept it?', inputs: [bound.r], candidates: [{ option: 'accept', selected: true, reasons: ['the operator accepts it'] }],
         decider: { type: 'operator', id: 'operator.review', version: '1' }, outcome: { option: 'accept', detail: { taskId: bound.taskId, subject: TREE } }, deterministic: false,
@@ -1170,6 +1172,8 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
       const held = await ctx.board.accept(heavy.taskId, withRisk(heavy.taskId, heavy.r, 'heavy', tiered('heavy')), at(5))
       expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: [] } })
       expect(heavyOf(held)).toMatch(/is heavy-tier \(risk decision sha256:[0-9a-f]+\): a heavy change is never accepted automatically/)
+      // The hold decision carries its reason, which /ui shows (T330).
+      expect((ctx.artifacts.get(held.lastDecision!)!.body as { outcome: { detail: { holdReason?: string } } }).outcome.detail.holdReason).toMatch(/^the result is heavy-tier \(risk decision sha256:[0-9a-f]+\).* \(autonomy decision sha256:[0-9a-f]+\)$/)
       // A tier the decision claims but does not back with its record, or a claim the record contradicts, is held too.
       const unbacked = await inReview(ctx, 'unbacked')
       expect(heavyOf(await ctx.board.accept(unbacked.taskId, withRisk(unbacked.taskId, unbacked.r, 'light', tiered('light'), false), at(5)))).toMatch(/no workflow.risk-tier decision among its inputs/)
@@ -1182,6 +1186,17 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
       await active(ctx, 'p3')
       const unlisted = await inReview(ctx, 'unlisted', 'p3')
       expect(heavyOf(await ctx.board.accept(unlisted.taskId, withRisk(unlisted.taskId, unlisted.r, 'heavy', tiered('heavy')), at(5)))).toMatch(/heavy-tier/)
+      // The lead's acceptance of it is refused, naming heavy and its risk decision, not a check that failed (T330).
+      const risk = tiered('heavy')
+      const byLead = ctx.artifacts.recordDecision({
+        schema: 'decision@1.10', decisionType: 'acceptance', question: `Does lead:p2 accept ${heavy.taskId}?`, inputs: [heavy.r, evidence, review, risk],
+        candidates: [{ option: 'accept', selected: true, reasons: ['the lead accepts'] }, { option: 'reject', selected: false, reasons: ['not reject'] }],
+        decider: { type: 'client', id: 'lead:p2', version: '1' },
+        outcome: { option: 'accept', detail: { taskId: heavy.taskId, subject: TREE, checks, risk: { tier: 'heavy', decision: risk } } }, deterministic: false,
+      }, { producer: { type: 'system', ref: 'lead:p2' } }).id as ArtifactRef
+      const refused = await ctx.board.accept(heavy.taskId, byLead, at(5)).catch((e: unknown) => e as BoardError)
+      expect(refused).toMatchObject({ failure: 'invalid', message: expect.stringMatching(new RegExp(`the result is heavy-tier \\(risk decision ${risk}\\).*: the review is the operator's$`)) })
+      expect((refused as BoardError).message).not.toMatch(/required checks? have not passed|required check\(s\)/)
       // Only the operator's acceptance accepts it.
       const operator = ctx.artifacts.recordDecision({
         decisionType: 'acceptance', question: 'Accept it?', inputs: [heavy.r], candidates: [{ option: 'accept', selected: true, reasons: ['the operator accepts it'] }],

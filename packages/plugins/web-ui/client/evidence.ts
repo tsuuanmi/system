@@ -151,9 +151,11 @@ export const verdictChips = (assessments: RunReview['assessments']): Child => !(
     chip(verdictWord(a) + ' · ' + (a.reviewer || a.nodeId || 'a reviewer'), a.verdict === 'approve' ? 'ok' : 'bad'))),
     assessments.more ? el('li', { class: 'muted' }, '+' + assessments.more + (assessments.moreAtLeast ? ' or more' : '') + ' older') : null)
 export const checksDetail = (r: ReviewCard): HTMLElement => {
-  if (!r.checks) return el('p', { class: 'muted' }, r.pendingChecks.length ? 'Pending on the board: ' + r.pendingChecks.join(', ') + '; what the checks came to is not known here.' : 'No check is pending on the board; what the checks came to is not known here.')
+  // Why the board holds it for the operator, in the hold decision's words (T330): a heavy hold has no check pending.
+  const held = r.holdReason ? el('p', { class: 'held-reason' }, 'Held for the operator: ' + r.holdReason) : null
+  if (!r.checks) return el('div', { class: 'checks' }, held, el('p', { class: 'muted' }, r.pendingChecks.length ? 'Pending on the board: ' + r.pendingChecks.join(', ') + '; what the checks came to is not known here.' : 'No check is pending on the board; what the checks came to is not known here.'))
   const list = r.checks.value
-  return el('div', { class: 'checks' },
+  return el('div', { class: 'checks' }, held,
     list.length ? el('ul', { class: 'checks', 'aria-label': 'Each required check' }, list.map((c) => el('li', {}, el('strong', {}, c.check + ': '),
       stateChip(c), c.state === 'passed' || c.state === 'failed' ? exitText(c) + (c.notRun ? ' — ' + c.notRun + ' did not run' : '') : ' — ' + c.why)))
       : el('p', { class: 'muted' }, 'The policy requires no check of this kind of work.'),
