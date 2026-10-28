@@ -122,7 +122,9 @@ export async function list(): Promise<void> {
       g.runs.length ? el('section', { id: 'needs-look-' + s, tabindex: '-1', 'aria-label': 'Runs needing attention' }, el('h3', { class: 'kind' }, 'Runs needing attention'),
         capped('needs-look-' + s, el('div', { id: 'needs-look-list-' + s }), g.runs, (run) => runCard(run, runTitle(run)))) : null))
   }
-  const shownIn = (kind: 'requests' | 'reviews') => shownGroups.some((g) => g[kind].length)
+  // The results held for the operator, together (T336), ahead of the reviews of each project's group below.
+  const heldTogether = okReviews?.heldView(homeProject)
+  const shownIn =(kind: 'requests' | 'reviews') => shownGroups.some((g) => g[kind].length)
   // A kind with nothing in any group shown keeps its own short line (or why it is unknown).
   const queueAlone = !q ? null : 'error' in q ? approvals(q) : shownIn('requests') || homeProject ? null : approvals(q, [])
   const accepted = okReviews ? okReviews.accepted.filter((a) => !homeProject || a.project.projectId === homeProject) : []
@@ -140,7 +142,7 @@ export async function list(): Promise<void> {
         el('section', { class: 'panel', 'aria-label': 'Needs your attention' },
           el('div', { class: 'head' }, el('h3', {}, 'Needs your attention'), homeProject ? anchor('/ui/', 'All projects', () => filterHome(null)) : null),
           waiting.length ? el('div', { class: 'groups' }, waiting) : unknownWaits ? null : el('p', { class: 'muted' }, 'You’re all caught up.'), unknownWaits),
-        cardGroups, queueAlone, reviewsAlone),
+        cardGroups, queueAlone, heldTogether, reviewsAlone),
       el('div', { class: 'col-side overview' },
         el('section', { class: 'panel', 'aria-label': 'Workers availability' }, el('div', { class: 'head' }, el('h3', {}, 'Workers'), pageLink('workers', 'Open Workers')), availability),
         el('div', { class: 'side-extra' }, capacity)),
