@@ -845,8 +845,7 @@ export class StoreBoard extends Board {
         return this.commitLater(before, at, undefined, (current) => this.holdMove(current.task, current.task.result!, acceptance, held, at))
       }
       if (before.waiting?.reason === 'operator-review') {
-        const why = held.autoAccept ? `the auto-accept rule does not apply (${held.autoAccept.join('; ')})` : `the class's required checks have not passed (autonomy decision ${held.verdict.decision})`
-        throw new BoardError('invalid', `${acceptance} is not the operator's, and ${why}: the review is the operator's`)
+        throw new BoardError('invalid', `${acceptance} is not the operator's, and ${this.holdReason(before, held)}: the review is the operator's`)
       }
       return this.commitLater(before, at, undefined, (current) => this.holdMove(current.task, current.task.result!, acceptance, held, at))
     }
@@ -2268,30 +2267,43 @@ export class StoreBoard extends Board {
   }
 
   /**
+   * What holds a result for the operator (T330), as one of: the policy forbids the class, the result
+   * is heavy (with its risk decision, ADR-0071), the auto-accept rule does not apply (its reasons), or
+   * required checks are pending or failed (named); each with the autonomy decision. The refusal of a
+   * non-operator's acceptance and the hold's own decision (`outcome.detail.holdReason`, which /ui
+   * shows) say the same words.
+   */
+  private holdReason(task: BoardTask, held: Held): string {
+    const decision = `autonomy decision ${held.verdict.decision}`
+    if (held.verdict.mode === 'forbid') return `the policy forbids ${task.actionClass} (${decision})`
+    if (held.heavy) return `${held.heavy} (${decision})`
+    if (held.autoAccept) return `the auto-accept rule (board.autoAccept, D80) does not apply: ${held.autoAccept.join('; ')} (${decision})`
+    return `required check(s) ${held.pendingChecks.join(', ')} have not passed (${decision})`
+  }
+
+  /**
    * The review held for the operator: the result recorded, the lease released, and a wait of the
    * policy's length for the class, which ends `review-expired` (INV-9). Only the operator's
    * acceptance accepts it now; a rejection, or an accepting decision with the checks passed, still
-   * applies. A `board` decision naming the acceptance and the autonomy verdict records it.
+   * applies. A `board` decision naming the acceptance, the autonomy verdict, and the hold's reason
+   * ({@link holdReason}) records it.
    */
   private holdMove(task: BoardTask, result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef, held: Held, at: Date): Move {
     const { project } = this.projectOf(task.projectId)
     const expiresAt = new Date(at.getTime() + held.seconds * 1000).toISOString()
-    const why = held.verdict.mode === 'forbid' ? `the policy forbids ${task.actionClass}`
-      : held.heavy ? `${held.heavy}; the operator decides it`
-      : held.autoAccept ? `the auto-accept rule (board.autoAccept, D80) does not apply: ${held.autoAccept.join('; ')}`
-        : `required check(s) ${held.pendingChecks.join(', ')} not passed`
+    const why = this.holdReason(task, held)
     return {
       changes: {
         state: 'review', result, holder: undefined,
         waiting: { reason: 'operator-review', pendingChecks: held.pendingChecks, since: at.toISOString(), expiresAt },
         lastDecision: this.decision(project, task, {
           from: task.state, to: 'operator-review',
-          why: `${acceptance} is not the operator's and ${why} (autonomy decision ${held.verdict.decision}): only the operator's acceptance accepts the result, until ${expiresAt}, the policy's wait for ${task.actionClass}`,
+          why: `${acceptance} is not the operator's and ${why}: only the operator's acceptance accepts the result, until ${expiresAt}, the policy's wait for ${task.actionClass}`,
           whyNot: task.state === 'review'
             ? 'the board never accepts by default, and the reviewer\'s lease would end the operator\'s review when the run that holds it ends'
             : 'the run\'s owner reported a result the board never accepts by default',
           inputs: [acceptance, held.verdict.decision],
-          detail: { reason: 'operator-review', pendingChecks: held.pendingChecks, expiresAt, ...(held.autoAccept ? { autoAccept: held.autoAccept } : {}), ...(held.heavy ? { heavy: held.heavy } : {}) },
+          detail: { reason: 'operator-review', holdReason: why, pendingChecks: held.pendingChecks, expiresAt, ...(held.autoAccept ? { autoAccept: held.autoAccept } : {}), ...(held.heavy ? { heavy: held.heavy } : {}) },
         }, at),
       },
     }

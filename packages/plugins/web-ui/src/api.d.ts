@@ -54,6 +54,8 @@ export interface ReviewCard {
   taskId: string; title: string; goal?: string; actionClass: string; subject: Subject; artifacts: string[]
   project: { projectId: string; title?: string }; run?: { runId: string }; expiresAt?: string; heldFor?: string
   pendingChecks: string[]; checks?: { value: ReviewCheck[]; requiredUnknown?: string }
+  /** Why the board holds it for the operator, from its hold decision (T330); absent when not held, or on an older hold. */
+  holdReason?: string
 }
 export interface AcceptedCard { taskId: string; title: string; project: { projectId: string; title?: string }; run?: { runId: string }; landing: Landing }
 export interface ReviewsResponse { reviews: ReviewCard[]; accepted?: AcceptedCard[] }

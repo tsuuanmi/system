@@ -114,7 +114,7 @@ describe('web UI: a project lead\'s token', () => {
       // so the review stays the operator's and nothing moves.
       const unchecked = await call(`reviews/${task.taskId}/decide`, { verdict: 'accept', subject }, lead)
       expect(unchecked.status, JSON.stringify(unchecked.value)).toBe(409)
-      expect(unchecked.value.error).toMatch(/required checks have not passed/)
+      expect(unchecked.value.error).toMatch(/required check\(s\) tests, lint have not passed \(autonomy decision sha256:[0-9a-f]+\)/)
       expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'review', waiting: { reason: 'operator-review' } })
 
       // The run recorded both required checks passed: the lead's acceptance carries those facts over, and the result is accepted on the lead's token.
