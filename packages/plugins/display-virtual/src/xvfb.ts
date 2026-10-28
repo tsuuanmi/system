@@ -112,7 +112,23 @@ export function removeStaleDisplay(number: string, pid: number | undefined, root
   rmSync(lock, { force: true })
 }
 
-export function startXvfb(options: XvfbOptions): Promise<XvfbHandle> {
+/** Failures that only timed out: a loaded host may be slow, so these (and no other) are tried once more. */
+const timedOut = new WeakSet<Error>()
+
+/**
+ * Starts Xvfb; a startup that only timed out is tried once more, any other failure (a missing
+ * binary, an exit, a bad display number) is reported at once.
+ */
+export async function startXvfb(options: XvfbOptions): Promise<XvfbHandle> {
+  try {
+    return await startOnce(options)
+  } catch (error) {
+    if (!(error instanceof Error) || !timedOut.has(error)) throw error
+    return startOnce(options)
+  }
+}
+
+function startOnce(options: XvfbOptions): Promise<XvfbHandle> {
   const spawn = options.spawn ?? ((command, args, spawnOptions) => nodeSpawn(command, args, spawnOptions))
   const shutdownTimeoutMs = options.shutdownTimeoutMs ?? 2000
   const authority = writeAuthority()
@@ -121,17 +137,22 @@ export function startXvfb(options: XvfbOptions): Promise<XvfbHandle> {
     let output = ''
     let diagnostic = ''
     let settled = false
-    const fail = (reason: string): void => {
+    const fail = (reason: string, timeout = false): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       const detail = diagnostic || reason
+      const report = (message: string): void => {
+        const error = unavailable(message)
+        if (timeout) timedOut.add(error)
+        reject(error)
+      }
       terminate(child, shutdownTimeoutMs).then(
-        () => reject(unavailable(detail)),
-        (error: unknown) => reject(unavailable(`${detail}; ${(error as Error).message}`)),
+        () => report(detail),
+        (error: unknown) => report(`${detail}; ${(error as Error).message}`),
       )
     }
-    const timer = setTimeout(() => fail('startup timed out'), options.startupTimeoutMs)
+    const timer = setTimeout(() => fail('startup timed out', true), options.startupTimeoutMs)
 
     try {
       child = spawn(options.executable, ['-displayfd', '3', '-screen', '0', XVFB_SCREEN, '-nolisten', 'tcp', '-auth', authority.path], {

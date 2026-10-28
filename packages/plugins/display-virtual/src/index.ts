@@ -16,7 +16,7 @@ export { type SpawnXvfb, type XvfbExit, type XvfbHandle, type XvfbOptions, start
 export interface Config {
   /** Xvfb executable (default `Xvfb` on PATH). */
   xvfbPath?: string
-  /** How long Xvfb may take to report its display (default 5 s). */
+  /** How long Xvfb may take to report its display, per try; a startup that only timed out is tried once more (default 30 s). */
   startupTimeoutMs?: number
   /** Per-signal wait when stopping Xvfb (default 2 s). */
   shutdownTimeoutMs?: number
@@ -31,7 +31,7 @@ interface Active {
 export class VirtualDisplay extends Display {
   static Config: z<Config> = z.object({
     xvfbPath: z.string().default('Xvfb').description('Xvfb executable'),
-    startupTimeoutMs: z.natural().default(5000).description('Xvfb startup timeout in milliseconds'),
+    startupTimeoutMs: z.natural().default(30_000).description('Xvfb startup timeout in milliseconds, per try (one retry after a timeout)'),
     shutdownTimeoutMs: z.natural().default(2000).description('Per-signal wait when stopping Xvfb, in milliseconds'),
   })
 
@@ -72,7 +72,7 @@ export class VirtualDisplay extends Display {
   private async start(): Promise<PreparedDisplay> {
     const xvfb = await startXvfb({
       executable: this.config.xvfbPath ?? 'Xvfb',
-      startupTimeoutMs: this.config.startupTimeoutMs ?? 5000,
+      startupTimeoutMs: this.config.startupTimeoutMs ?? 30_000,
       shutdownTimeoutMs: this.config.shutdownTimeoutMs ?? 2000,
       ...(this.spawnXvfb ? { spawn: this.spawnXvfb } : {}),
     })
