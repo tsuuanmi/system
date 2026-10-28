@@ -25,6 +25,7 @@ decisions, architecture, or design.
 | [quota-builtins-2026-10-24.md](quota-builtins-2026-10-24.md) | per-account quota from each provider's own readings: Claude Code's `rate_limit_event` and `get_usage`, the status line, the Codex app server's rate limits, agy's `/usage`, the websites and the Gemini API, local log reconstruction; why the five-hour share is unknown live | 2026-10-24 |
 | [statistics-tooling-2026-10-23.md](statistics-tooling-2026-10-23.md) | statistics and experiment tooling for the feedback loop (SciPy, statsmodels, GrowthBook `gbstats`, MLflow, Optuna, Ax/BoTorch, PyMC): what PROP-0011's F2 reuses and builds | 2026-10-23 |
 | [production-readiness-2026-10-28.md](production-readiness-2026-10-28.md) | what System should change next to be production-ready, ranked by value over cost, from the incidents of 2026-10-26..28, ahead of the DNA pilot | 2026-10-28 |
+| [resource-capacity.md](resource-capacity.md) | the System's disk, RAM and CPU footprint per run and per step, the levers (node_modules, worktree retention, check concurrency, backups, events), and a capacity model for 6 to 20 runs at once | 2026-10-28 |
 
 Each analysis ends with **Adopted** and **Not adopted** lists. Once its findings
 are fully promoted, an analysis may be pruned, because git history keeps it.
