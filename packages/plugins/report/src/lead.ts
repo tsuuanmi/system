@@ -13,6 +13,7 @@ import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { type BranchCommit, buildDigest, type DailyCheckRead, dayPeriod, DIGEST_SCHEMA, type Digest, type LeadDecision, type Read } from './digest.ts'
 import { buildHealth, type DispatchRead, type EnforceRead, type Health, type LandingQueueRead, type LiveUpdateRead, type PoolRead, SINK_WINDOW_HOURS, type SinkRead, type WorkerRead, type WorktreesRead } from './health.ts'
 import { MAX_RUNS_READ } from './metrics.ts'
+import { type PolicyDrift, policyDrift } from './policy-drift.ts'
 import { LIVENESS_EVENTS, ReportError, type Recorded, runsOf, within } from './report.ts'
 
 const run = promisify(execFile)
@@ -29,7 +30,12 @@ const REQUEST_STATES: ApprovalRequest['state'][] = ['open', 'batched', 'approved
 /** The reads both tools share: the event log's pages, and the one decision a record names. */
 interface LeadReads {
   events(filter: { type: string; since?: string }): Recorded[]
+  /** The policy files the repository ships at the live install's commit (T352); throws when they cannot be read. */
+  policyFiles(): Promise<PolicyFiles>
 }
+
+/** The policy files of the repository at the commit the live install was built from. */
+export interface PolicyFiles { commit: string; files: Array<{ path: string; record: Record<string, unknown> }> }
 
 const failure = (error: unknown): string => ((error as Error)?.message ?? String(error)).slice(0, 300)
 /** One read that may throw, as `unknown`: a source that cannot answer never reads as healthy. */
@@ -236,8 +242,18 @@ export async function leadHealth(ctx: Context, reads: LeadReads, input: { projec
   const host = ctx.get('pluginHost' as never) as { enforcement?: () => Array<{ mechanism: string; mode: string }> } | undefined
   const enforcement: Read<EnforceRead[]> = host?.enforcement ? await attempt(() => host.enforcement!().map((m) => ({ mechanism: m.mechanism, mode: m.mode }))) : missing('the plugin host')
 
+  // Each policy file shipped for this project, against the policy of its id in the live set.
+  const approvals = ctx.get('approvals')
+  const policies: Read<PolicyDrift[]> = await attempt(async () => {
+    if (!approvals) throw new Error('the approval queue is not loaded')
+    const shipped = await reads.policyFiles()
+    const live = (await approvals.policy(projectId)).policies as unknown as Array<Record<string, unknown>>
+    return shipped.files.filter((f) => f.record['projectId'] === projectId)
+      .map((f) => policyDrift(f.path, f.record, live.find((p) => p['id'] === f.record['id'])))
+  })
+
   return buildHealth({
     projectId, asOf: now.toISOString(), dispatch, workers, pools, notifySinks: lastPerSink('notify.delivery', false), leadSinks: lastPerSink('lead-inbox.delivery', true),
-    liveUpdate, landingQueue, worktrees, enforcement,
+    liveUpdate, landingQueue, worktrees, enforcement, policies,
   })
 }

@@ -779,6 +779,17 @@ report_cuts() {
   fi
 }
 
+# Policy drift (T352), after a verified update: each policy file the target ships that the live set
+# does not hold, and the policy change it needs, printed into the notes (policy-drift.txt too). A policy
+# enters the live set only through an approved policy change, so nothing else puts a changed file
+# there; this proposes nothing (the operator approves it). A failure is a note, never the update's.
+report_policy_drift() {
+  log "policy drift: the policy files of ${TARGET:0:12} against the live set"
+  if ! check_tool policy-drift "$LIVE" "$TARGET" "$ATTEMPT" 2>&1 | tee "$ATTEMPT/policy-drift.txt" | tee -a "$LOG_FILE" >&2; then
+    log "note: policy drift could not be read (above): lead_health's policy rows show it"
+  fi
+}
+
 # The stage (T323): the target's code and the patch to ship on the system-test profile, and its
 # canary, by scripts/live-stage.sh. Nothing of the live profile is read for writing or touched: a
 # failure is a refusal before anything of the live install changed.
@@ -1285,6 +1296,7 @@ if ! reached verified; then
 fi
 resume_dispatch
 report_cuts
+report_policy_drift
 record_outcome done "$FROM" "$TARGET"
 
 set_phase done

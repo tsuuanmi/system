@@ -9,6 +9,7 @@
  *   node scripts/live-update-check.ts await-idle <cli> <DSH_HOME> --wait <seconds> [--every <seconds>] [--cut-running [--cut-file <path>]]
  *   node scripts/live-update-check.ts stop-cut <cli> <DSH_HOME> --deadline <seconds>
  *   node scripts/live-update-check.ts cut-report <cli> <DSH_HOME> <cut file>
+ *   node scripts/live-update-check.ts policy-drift <cli> <DSH_HOME> <repository> <commit> <output dir>
  *   node scripts/live-update-check.ts dispatch-pause <cli> <DSH_HOME> <reason>
  *   node scripts/live-update-check.ts dispatch-resume <cli> <DSH_HOME>
  *   node scripts/live-update-check.ts live-update-record <cli> <DSH_HOME> <done|failed> <from> <to> [<reason>]
@@ -45,6 +46,7 @@
  * (`system backup`) validates against its schema; and to the health it had (`healthProblems`). It
  * prints each problem and exits 1 when there is one, 2 when it cannot run.
  */
+import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
@@ -869,6 +871,38 @@ export function cutReport(home: string, cutFile: string): number {
   return 0
 }
 
+/**
+ * Policy drift after an update (T352): each policy file `policies/*.json` of the repository at
+ * `commit`, against the policy of its id in the live set (MCP `approvals_policy`). For each that the
+ * live set does not hold, the lines say what differs and the change it needs, and the record to
+ * propose is written to `outDir` (`policy-<id>-v<version>.json`). Nothing is proposed: a policy change
+ * is the operator's to approve (docs/operations/runbooks.md#policy-drift). The comparison is the health
+ * table's (packages/plugins/report/src/policy-drift.ts), imported when it runs so a copy of this
+ * script without the packages beside it still loads.
+ */
+export async function policyDrift(call: CallTool, home: string, repo: string, commit: string, outDir: string): Promise<{ lines: string[]; drifted: number }> {
+  const { policyDrift: compare, drifted, describeDrift } = await import('../packages/plugins/report/src/policy-drift.ts')
+  const git = (...args: string[]): string => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', maxBuffer: 4_000_000 })
+  const paths = git('ls-tree', '--name-only', commit, 'policies/').split('\n').filter((p) => p.endsWith('.json'))
+  const lines: string[] = []
+  let count = 0
+  for (const path of paths) {
+    const file = JSON.parse(git('show', `${commit}:${path}`)) as Record<string, unknown>
+    const outcome = await call('approvals_policy', typeof file['projectId'] === 'string' ? { projectId: file['projectId'] } : {}, home)
+    if (outcome.isError) throw new Error(`approvals_policy: ${outcome.text.slice(0, 300)}`)
+    const live = ((outcome.structured?.['policies'] ?? []) as Array<Record<string, unknown>>).find((p) => p['id'] === file['id'])
+    const found = compare(path, file, live)
+    if (!drifted(found)) continue
+    count++
+    const target = join(outDir, `policy-${found.id}-v${String(found.proposal['version'])}.json`)
+    writeFileSync(target, `${JSON.stringify(found.proposal, null, 2)}\n`, { mode: 0o600 })
+    lines.push(`policy drift: ${describeDrift(found)}`,
+      `  the change it needs: approvals_policy_propose (operator) with {"policy": <${target}>, "note": "${path} at ${commit.slice(0, 12)} (T352)"}; or /ui, Autonomy policy, Propose, with that record; the operator approves it in the queue`)
+  }
+  if (!count) lines.push(`no policy drift (the live set holds the content of ${paths.length} policy file(s) at ${commit.slice(0, 12)})`)
+  return { lines, drifted: count }
+}
+
 /** How long `verify` waits for the Workers to take work again by default: two of agent-workers' default `probeTtlMs` (5 min). */
 export const WORKERS_WAIT_SECONDS = 600
 
@@ -878,6 +912,7 @@ const USAGE = `usage: node scripts/live-update-check.ts capture <cli> <DSH_HOME>
        node scripts/live-update-check.ts await-idle <cli> <DSH_HOME> --wait <seconds> [--every <seconds>] [--cut-running [--cut-file <path>]]
        node scripts/live-update-check.ts stop-cut <cli> <DSH_HOME> --deadline <seconds>
        node scripts/live-update-check.ts cut-report <cli> <DSH_HOME> <cut file>
+       node scripts/live-update-check.ts policy-drift <cli> <DSH_HOME> <repository> <commit> <output dir>
        node scripts/live-update-check.ts dispatch-pause <cli> <DSH_HOME> <reason>
        node scripts/live-update-check.ts dispatch-resume <cli> <DSH_HOME>
        node scripts/live-update-check.ts live-update-record <cli> <DSH_HOME> <done|failed> <from> <to> [<reason>]
@@ -905,6 +940,16 @@ async function main(argv: string[]): Promise<number> {
     if (args.length === 2 && Number.isInteger(deadline) && deadline >= 0) return stopCut(args[0]!, args[1]!, deadline)
   }
   if (command === 'cut-report' && args.length === 3) return cutReport(args[1]!, args[2]!)
+  if (command === 'policy-drift' && args.length === 5) {
+    try {
+      const { lines } = await policyDrift(await callToolOf(args[0]!), args[1]!, args[2]!, args[3]!, args[4]!)
+      for (const line of lines) console.log(line)
+      return 0
+    } catch (error) {
+      console.error(`policy drift could not be read: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`)
+      return 1
+    }
+  }
   if (command === 'dispatch-pause' && args.length === 3) {
     const paused = await pauseDispatch(await callToolOf(args[0]!), args[1]!, args[2]!)
     console.log(`${paused.outcome}: ${paused.detail}`)

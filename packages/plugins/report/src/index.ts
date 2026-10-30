@@ -20,6 +20,7 @@ import { buildMetrics, MAX_RUNS_READ, READY_MOVES_READ, METRICS_DEFAULT_DAYS, ty
 import { renderDigest } from './digest.ts'
 import { type Health, renderHealth } from './health.ts'
 import { leadDigest, leadHealth, MIGRATIONS } from './lead.ts'
+import { installPolicyFiles } from './policy-files.ts'
 import { renderReport } from './render.ts'
 import { buildReport, type DecisionRead, type DigestRead, type DrawRead, LIVENESS_EVENTS, MAX_DAYS, periodOf, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type UnknownRead, within } from './report.ts'
 
@@ -456,8 +457,8 @@ const LEAD_DIGEST_DESCRIPTION = 'The lead\'s digest of a day, from recorded data
 const LEAD_HEALTH_INPUT: ToolSpec['inputSchema'] = {
   projectId: zod.string().regex(ID).optional().describe('The project; a lead token\'s own project by default, and the only one it reaches'),
 }
-const LEAD_HEALTH_DESCRIPTION = 'The health table of a project: one row per source, each ok, degraded, or unknown with its reason: dispatch, the Workers, quota headroom, the notification and lead sinks, the live update, the landing queue, the worktrees held, and each enforce switch\'s mode. A source that cannot be read is unknown, never ok. Reads only.'
-const LEAD_READS = (ctx: Context) => ({ events: (filter: { type: string; since?: string }) => readEvents(ctx, filter) })
+const LEAD_HEALTH_DESCRIPTION = 'The health table of a project: one row per source, each ok, degraded, or unknown with its reason: dispatch, the Workers, quota headroom, the notification and lead sinks, the live update, the landing queue, the worktrees held, each enforce switch\'s mode, and each policy file the repository ships for the project (degraded, naming the keys, when the live policy differs from the file at the install\'s commit). A source that cannot be read is unknown, never ok. Reads only.'
+const LEAD_READS = (ctx: Context) => ({ events: (filter: { type: string; since?: string }) => readEvents(ctx, filter), policyFiles: () => installPolicyFiles() })
 
 /** The report tools: input and output checked against `mcp-report@1.7`; the text is the rendering. */
 function registerTool(ctx: Context): void {

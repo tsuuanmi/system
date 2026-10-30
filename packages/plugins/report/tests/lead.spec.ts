@@ -106,14 +106,14 @@ describe('the health table (PROP-0019 2.10)', () => {
     pools: { value: [{ pool: 'plan', available: true, usedPercentage: 40 }] },
     notifySinks: { value: [{ sink: 'file', at: at('11:00'), outcome: 'sent' }] }, leadSinks: { value: [{ sink: 'wait', at: at('11:00'), outcome: 'sent' }] },
     liveUpdate: { value: undefined }, landingQueue: { value: { depth: 0 } }, worktrees: { value: { total: 3, inUse: 1, held: 0, uncommitted: 0 } },
-    enforcement: { value: [{ mechanism: 'evidence-gate', mode: 'on' }] },
+    enforcement: { value: [{ mechanism: 'evidence-gate', mode: 'on' }] }, policies: { value: [] },
   }
   const state = (h: Report.Health, id: string): string => h.rows.find((r) => r.id === id)!.state
 
   it('is ok when every source reads well', () => {
     const health = Report.buildHealth(ok)
     expect(health.state).toBe('ok')
-    expect(health.rows.map((r) => r.id)).toEqual(['dispatch', 'workers', 'quota', 'notify-sinks', 'lead-sinks', 'live-update', 'landing-queue', 'worktrees', 'enforce:evidence-gate'])
+    expect(health.rows.map((r) => r.id)).toEqual(['dispatch', 'workers', 'quota', 'notify-sinks', 'lead-sinks', 'live-update', 'landing-queue', 'worktrees', 'enforce:evidence-gate', 'policy'])
   })
 
   it('makes a Worker the fixture marks unavailable a degraded row, with its reason', () => {
@@ -136,7 +136,7 @@ describe('the health table (PROP-0019 2.10)', () => {
     })
     expect(health.rows.map((r) => [r.id, r.state])).toEqual([
       ['dispatch', 'degraded'], ['workers', 'degraded'], ['quota', 'degraded'], ['notify-sinks', 'degraded'], ['lead-sinks', 'ok'], ['live-update', 'degraded'],
-      ['landing-queue', 'degraded'], ['worktrees', 'degraded'], ['enforce:handbook-bound', 'degraded'], ['enforce:review-guides', 'degraded'],
+      ['landing-queue', 'degraded'], ['worktrees', 'degraded'], ['enforce:handbook-bound', 'degraded'], ['enforce:review-guides', 'degraded'], ['policy', 'ok'],
     ])
   })
 
