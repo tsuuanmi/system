@@ -178,6 +178,15 @@ accepted/implemented -> superseded
   state of a coordination directory that holds `LEAD.md` alone; and 13 ranked tasks that start
   after the core loop runs clean. It changes no code.
 
+- [PROP-0020: Run worktrees share one read-only node_modules per lockfile digest](0020-shared-node-modules.md),
+  **draft** (T355). `node_modules` is 683 MiB of a 710 MiB worktree, copied per run on an ext4 with no
+  reflink. Three options costed at 6, 12 and 20 runs: a read-only bind of one install keyed by the
+  lockfile digest (recommended: 80 to 91 % saved, a run cannot alter it), pnpm's global virtual store
+  (the experiment's second subject), and hardlinks within one master (rejected: one inode with every
+  worktree). A run that changes its dependencies gets its own key; vite's caches and `checkScratch`
+  are unchanged. Six tasks, the switch `enforce.sharedNodeModules` (off, warn, on) and its test on the
+  test profile. It changes no code.
+
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
 a reviewed proposal.
