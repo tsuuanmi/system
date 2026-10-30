@@ -56,10 +56,13 @@ export interface ReviewCard {
   pendingChecks: string[]; checks?: { value: ReviewCheck[]; requiredUnknown?: string }
   /** Why the board holds it for the operator, from its hold decision (T330); absent when not held, or on an older hold. */
   holdReason?: string
+  /** A result whose review expired, still within its wait for input (T350): `heldFor` is `expired`, this is when it expired and `expiresAt` when that wait ends. */
+  expiredAt?: string
 }
 export interface AcceptedCard { taskId: string; title: string; project: { projectId: string; title?: string }; run?: { runId: string }; landing: Landing }
-export interface ReviewsResponse { reviews: ReviewCard[]; accepted?: AcceptedCard[] }
+export interface ReviewsResponse { reviews: ReviewCard[]; accepted?: AcceptedCard[]; /** Results whose review expired and can still be reopened (T350); none for a lead. */ expired?: ReviewCard[] }
 export interface ReviewDecideResponse { task: { state: string }; decision: string }
+export interface ReviewReopenResponse { task: { state: string; waiting?: { pendingChecks: string[] } }; decision: string }
 
 export interface FileChange { path: string; status: string; from?: string; binary?: boolean; note?: string; added?: number; removed?: number; diff?: string; truncated?: boolean }
 export interface BranchChange { branch: string; base: { branch: string; sha: string }; fromBranch?: boolean; workspace: string; files: FileChange[]; more: number }

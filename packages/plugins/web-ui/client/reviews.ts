@@ -1,7 +1,7 @@
 // The board's tasks in review, one card each: the operator's Accept or Send back names the exact result shown (INV-5). Absent when no board runs.
-import type { AcceptedCard, ReviewCard, ReviewDecideResponse, ReviewsResponse, RosterResponse } from '../src/api.js'
+import type { AcceptedCard, ReviewCard, ReviewDecideResponse, ReviewReopenResponse, ReviewsResponse, RosterResponse } from '../src/api.js'
 import { heldSection, notRunKey } from './held.js'
-import type { Send } from './heldbatch.js'
+import { reopenFirst, type Send } from './heldbatch.js'
 import { isKnown } from './roster.js'
 import { absolute, ago, cardFold, copyId, el, expires, keptFold, recording, relative, shortId, verdictButtons, type Child } from './dom.js'
 import { changeSummary, changeWarning, checkChips, checksDetail, evidenceView, landingLine, notRunChecks, pendingWarning, reviewOf, unrunWarning, verdictChips, type Evidence } from './evidence.js'
@@ -36,16 +36,21 @@ export type ReviewsRead = Reviews | { failed: HTMLElement } | null
 const heldOf = (list: ReviewCard[]) => list.filter((r) => r.heldFor === 'operator' && r.expiresAt)
 
 export async function reviews(): Promise<ReviewsRead> {
-  let listed: ReviewCard[], accepted: AcceptedCard[] | undefined
-  try { ({ reviews: listed, accepted } = await api<ReviewsResponse>('reviews')) } catch (error) {
+  let listed: ReviewCard[], accepted: AcceptedCard[] | undefined, expired: ReviewCard[] = []
+  try { ({ reviews: listed, accepted, expired = [] } = await api<ReviewsResponse>('reviews')) } catch (error) {
     const e = asApiError(error)
     return e.status === 503 ? null : { failed: el('section', { id: 'reviews', tabindex: '-1', 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews'), el('p', { class: 'state failed' }, 'The reviews could not be read: ' + e.message + '. The page tries again every 5 seconds.')) }
   }
   // One decision on the exact result the page showed (INV-5); a card and a row of "Held for you" send it the same way.
-  const send: Send = async (r, verdict, note, checksNotRun) => {
+  const decideSend: Send = async (r, verdict, note, checksNotRun) => {
     const { task, decision } = await api<ReviewDecideResponse>('reviews/' + encodeURIComponent(r.taskId) + '/decide', { verdict, subject: r.subject, note, ...(Object.keys(checksNotRun).length ? { checksNotRun } : {}) })
     return { decision, task: task.state }
   }
+  // A result whose review expired is reopened first, its own recorded decision, then accepted as a held result is (T350).
+  const send = reopenFirst(decideSend, async (r) => {
+    const { task } = await api<ReviewReopenResponse>('reviews/' + encodeURIComponent(r.taskId) + '/reopen', { subject: r.subject, reason: 'reopened from Held for you' })
+    return { pendingChecks: task.waiting?.pendingChecks ?? [] }
+  })
   const decide = (r: ReviewCard, verdict: 'accept' | 'reject', buttons: HTMLButtonElement[], clicked: HTMLButtonElement) => recording(buttons, clicked, async () => {
     const key = 'review-' + r.taskId
     try {
@@ -80,13 +85,13 @@ export async function reviews(): Promise<ReviewsRead> {
         el('div', { class: 'actions' }, el('label', { for: 'note-' + key }, 'Note with your verdict (optional)', noteInput('note-' + key, key)))))
   }
   // Every card once, its evidence read; Home places each in its project's group (T253).
-  const evidence = new Map(await Promise.all(listed.map(async (r): Promise<[string, Evidence | undefined]> => [r.taskId, r.run ? await reviewOf(r.run.runId, subjectText(r.subject)) : undefined])))
+  const evidence = new Map(await Promise.all([...listed, ...expired].map(async (r): Promise<[string, Evidence | undefined]> => [r.taskId, r.run ? await reviewOf(r.run.runId, subjectText(r.subject)) : undefined])))
   const cards = new Map(listed.map((r): [string, HTMLElement] => [r.taskId, card(r, evidence.get(r.taskId))]))
   // Each Worker's provider family, to say which family each reviewer is of (a heavy result needs two).
-  const workers = heldOf(listed).length ? (await quiet<RosterResponse>('roster'))?.workers : undefined
+  const workers = heldOf(listed).length || expired.length ?(await quiet<RosterResponse>('roster'))?.workers : undefined
   const families = new Map<string, string>()
   for (const w of workers && isKnown(workers) ? workers.value : []) if (isKnown(w.family)) { families.set(w.worker, w.family.value); families.set(w.name, w.family.value) }
-  const heldView: Reviews['heldView'] = (project) => heldSection(project ? listed.filter((r) => r.project.projectId === project) : listed, evidence, families, send)
+  const heldView: Reviews['heldView'] = (project) => heldSection([...listed, ...expired].filter((r) => !project || r.project.projectId === project), evidence, families, send)
   // Each accepted result still on its way into the repository, its project named unless its group's heading or the page's filter already names it (T256).
   const acceptedView: Reviews['acceptedView'] = (list, level) => list?.length ? el('section', { 'aria-label': 'Accepted, on their way in' }, el(level, { class: 'kind' }, 'Accepted, on their way in', whatIs('landing')),
     list.map((a) => el('article', { class: 'panel request', 'aria-label': 'Accepted: ' + a.title }, el('h4', {}, a.title),

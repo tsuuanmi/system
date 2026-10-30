@@ -38,6 +38,19 @@ checks it.
   recorded row and its card leave at once, the outcome lists each row, and Home's counts follow on
   the refresh. The one-by-one logic is `client/heldbatch.ts` (no page in it), the section `client/held.ts`
   (`tests/held.spec.ts`).
+  A result whose review **expired** unseen (its task waits for input as `review-expired`, T350) is
+  listed there too, after the held ones, marked *Review expired* with when it expired and until when
+  it can be reopened: the wait for input (7 days by default); past it the board's sweep cancels the
+  task and the row is gone. `GET reviews` carries them as `expired` (`heldFor: expired`, `expiredAt`),
+  not among the `reviews`, so Home's counts are of the reviews held now; a lead's token is sent none.
+  **Accept N selected** on an expired row first reopens it (`POST reviews/<taskId>/reopen`, bound to
+  the exact result shown: the board's `reopenReview`, which needs the run's worktree, recorded as the
+  operator's board decision), then sends the same acceptance as a held result's, a second recorded
+  decision. If the re-opened hold still asks why a check did not run and none was given, the row is
+  reopened but not accepted: it is a held row now, and asks in its row. An expired row is not sent
+  back (accept it, or leave it). Only the operator reopens or accepts a heavy result (ADR-0071): a
+  lead's token is refused the re-opening (403), and its acceptance stays held to its listed dev
+  branches (ADR-0076) (`tests/expired.spec.ts`).
 - **Started by itself** (dispatch's own starts, T256) is the last section of Home: a table with the
   columns *Task · State · Worker · Run time · Started*. Each task has one row, its newest attempt's
   run state as a chip. Its attempts are folded into the row (*2 attempts*), each with how it was let
