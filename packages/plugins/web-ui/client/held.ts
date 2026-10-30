@@ -1,8 +1,8 @@
 // "Held for you": every result held for the operator in one list, oldest expiry first, decided together (T336). Each row is still its own decision (INV-5), sent one by one with the same note.
 import type { ReviewCard } from '../src/api.js'
-import { chip, el, expires, recording, type Child } from './dom.js'
+import { absolute, ago, chip, el, expires, recording, type Child } from './dom.js'
 import { changeSummary, checkChips, notRunChecks, type Evidence } from './evidence.js'
-import { decideTogether, digestLines, heldOrder, whyHeld, type NotRun, type RowResult, type Send, type Verdict } from './heldbatch.js'
+import { decideTogether, digestLines, heldOrder, isExpired, whyHeld, type NotRun, type RowResult, type Send, type Verdict } from './heldbatch.js'
 import { noteInput, notes } from './queue.js'
 import { jump } from './router.js'
 import { refresh, refusal, report } from './state.js'
@@ -30,7 +30,8 @@ const row = (r: ReviewCard, evidence: Evidence | undefined, families: Map<string
   const result = el('p', { class: 'row-result state failed', role: 'status', 'data-result': r.taskId }, said.get(r.taskId))
   if (!said.has(r.taskId)) result.hidden = true
   return el('li', { class: 'held-row', 'data-task': r.taskId },
-    el('div', { class: 'line' }, box, el('strong', {}, jump('review-' + r.taskId, r.title)), ' ', r.expiresAt ? expires(r.expiresAt) : null, el('span', { class: 'muted' }, ' · ' + (r.project.title || r.project.projectId))),
+    el('div', { class: 'line' }, box, el('strong', {}, isExpired(r) ? r.title : jump('review-' + r.taskId, r.title)), ' ',
+      isExpired(r) ? [chip('Review expired', 'warn'), ' ', el('span', { class: 'expiry soon' }, 'Expired ', ago(r.expiredAt as string), ' · can be reopened until ', absolute(r.expiresAt as string))] : r.expiresAt ? expires(r.expiresAt) : null, el('span', { class: 'muted' }, ' · ' + (r.project.title || r.project.projectId))),
     el('p', { class: 'why' }, el('strong', {}, 'Held: '), whyHeld(r)),
     el('div', { class: 'summary' }, read ? changeSummary(read.change) : chip('Change unknown', 'idle'), checkChips(r), verdictsOf(evidence, families)),
     lines.length ? el('div', { class: 'digest muted', 'aria-label': 'Its digest' }, lines.map((l) => el('div', {}, l))) : null,
@@ -49,7 +50,8 @@ export function heldSection(list: ReviewCard[], evidence: Map<string, Evidence |
   if (!held.length) return null
   const accept = el('button', { type: 'button', class: 'primary' }), back = el('button', { type: 'button' })
   const count = () => {
-    accept.textContent = 'Accept ' + selected.size + ' selected'; back.textContent = 'Send back ' + selected.size + ' selected'
+    const reopened = held.filter((r) => selected.has(r.taskId) && isExpired(r)).length
+    accept.textContent = 'Accept ' + selected.size + ' selected' + (reopened ? ' (reopens ' + reopened + ' expired)' : ''); back.textContent = 'Send back ' + selected.size + ' selected'
     accept.disabled = back.disabled = !selected.size
   }
   const section = el('section', { class: 'panel held', id: 'held', tabindex: '-1', 'aria-label': 'Held for you' },

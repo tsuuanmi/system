@@ -589,9 +589,45 @@ export function apply(ctx: Context, config: Config = {}): void {
         }
       }
       accepted.sort((a, b) => b.at.localeCompare(a.at))
-      return json(res, 200, { reviews: listed, accepted: accepted.slice(0, ACCEPTED_SHOWN).map((a) => a.entry) })
+      // The results whose review expired unseen, while their wait for input lasts (T350): the latest to expire first; past it the sweep cancels them and they are not listed.
+      // Only the operator reopens one, so a lead is shown none.
+      const now = Date.now(), expired: Array<Record<string, unknown>> = []
+      for (const project of lead === undefined ? await projectsOf() : []) {
+        for (const task of await board.tasks({ projectId: project.projectId, states: ['waiting-for-input'] })) {
+          if (task.waiting?.reason !== 'review-expired' || !task.result || !task.run || Date.parse(task.waiting.expiresAt) <= now) continue
+          expired.push({ ...reviewOf(task, { projectId: project.projectId, title: project.title }), heldFor: 'expired', expiredAt: task.waiting.since })
+        }
+      }
+      expired.sort((a, b) => String(b.expiredAt).localeCompare(String(a.expiredAt)))
+      return json(res, 200, { reviews: listed, accepted: accepted.slice(0, ACCEPTED_SHOWN).map((a) => a.entry), expired })
     }
-    const match = /^reviews\/([A-Za-z0-9][A-Za-z0-9._:-]{0,199})\/decide$/.exec(path)
+    const reopening = /^reviews\/([A-Za-z0-9][A-Za-z0-9._:-]{0,199})\/reopen$/.exec(path)
+    if (reopening) {
+      if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+      // As for a held heavy result, only the operator decides (ADR-0071, ADR-0076): a lead's token reopens nothing here.
+      if (lead !== undefined) return json(res, 403, { error: `${leadId(lead)} may not reopen an expired review: only the operator does; nothing was decided` })
+      const id = reopening[1]!
+      try {
+        const body = await readJson(req)
+        const subject = subjectOf(body.subject)
+        if (!subject) return json(res, 400, { error: 'subject must be the exact subject of the result the page showed' })
+        const why = typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim().slice(0, 500) : 'reopened by the operator from Held for you'
+        const task = await board.task(id)
+        if (!task) return json(res, 404, { error: `unknown task ${id}` })
+        if (task.state !== 'waiting-for-input' || task.waiting?.reason !== 'review-expired' || !task.result || !task.run) return json(res, 409, { error: `task ${id} is ${task.state}, not a review-expired wait; nothing was reopened` })
+        if (!sameSubject(subject, task.result.subject)) return json(res, 409, { error: `task ${id}'s result is on another subject than the page showed; nothing was reopened` })
+        // The board cannot see worktrees itself (as board_reopen_review): the run's must still be recorded and on disk.
+        const worktrees = (board as { runWorktrees?: (runId: string) => string[] }).runWorktrees
+        if (typeof worktrees !== 'function' || !worktrees.call(board, task.run.runId).length) return json(res, 409, { error: `invalid-transition: ${id}'s run ${task.run.runId} has no worktree left (removed, or never made): its result is not re-opened` })
+        if (typeof board.reopenReview !== 'function') return json(res, 409, { error: 'the board cannot reopen an expired review' })
+        const back = await board.reopenReview(id, 'operator', why, new Date())
+        return json(res, 200, { task: back, decision: back.lastDecision })
+      } catch (error) {
+        if (error instanceof BoardError) return json(res, error.failure === 'unknown-task' ? 404 : 409, { error: `${error.failure}: ${error.message}` })
+        return json(res, (error as { status?: number }).status ?? 409, { error: (error as Error).message })
+      }
+    }
+    const match =/^reviews\/([A-Za-z0-9][A-Za-z0-9._:-]{0,199})\/decide$/.exec(path)
     if (!match) return json(res, 404, { error: 'not found' })
     if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
     const taskId = match[1]!

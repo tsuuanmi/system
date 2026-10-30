@@ -9,11 +9,36 @@ export type Send = (row: ReviewCard, verdict: Verdict, note: string, checksNotRu
 /** The checks a row's accept needs a why for, and the why given for each. */
 export interface NotRun { needed: string[]; given: Record<string, string> }
 
-/** A held result with an expiry, the one that lapses first at the top. */
-export const heldOrder = (list: ReviewCard[]): ReviewCard[] => list.filter((r) => r.heldFor === 'operator' && r.expiresAt).sort((a, b) => (a.expiresAt as string).localeCompare(b.expiresAt as string) || a.taskId.localeCompare(b.taskId))
+/** The re-opening of a result whose review expired (T350): what the board then holds pending on it. Throws what the server refused. */
+export type Reopen = (row: ReviewCard) => Promise<{ pendingChecks: string[] }>
+
+/** A result whose review expired: its task still waits for input, and a re-opening puts it back to review. */
+export const isExpired = (r: ReviewCard): boolean => r.heldFor === 'expired' && !!r.expiredAt
+
+/** The held results, the one that lapses first at the top; then those whose review expired (T350), the latest to expire first. */
+export const heldOrder = (list: ReviewCard[]): ReviewCard[] => {
+  const held = list.filter((r) => r.heldFor === 'operator' && r.expiresAt).sort((a, b) => (a.expiresAt as string).localeCompare(b.expiresAt as string) || a.taskId.localeCompare(b.taskId))
+  const expired = list.filter(isExpired).sort((a, b) => (b.expiredAt as string).localeCompare(a.expiredAt as string) || a.taskId.localeCompare(b.taskId))
+  return [...held, ...expired]
+}
+
+/**
+ * `send` for rows that may have expired: an accept of an expired row reopens it first (its own recorded decision), then sends the same acceptance as a
+ * held result's. A re-opened hold that still asks why a check did not run, which the operator gave none for, stays held (named, never accepted); an expired
+ * row is not sent back (it is accepted, or left).
+ */
+export const reopenFirst = (send: Send, reopen: Reopen): Send => async (row, verdict, note, checksNotRun) => {
+  if (!isExpired(row)) return send(row, verdict, note, checksNotRun)
+  if (verdict !== 'accept') throw new Error('its review expired: accept it (which reopens it first), or leave it; it cannot be sent back before it is reopened')
+  const { pendingChecks } = await reopen(row)
+  const missing = pendingChecks.filter((c) => ['tests', 'typecheck', 'lint'].includes(c) && !checksNotRun[c])
+  if (missing.length) throw new Error(`reopened, and it is held for you again; but ${missing.join(', ')} did not run and no why was given: say why in its card, then accept it`)
+  return send(row, verdict, note, checksNotRun)
+}
 
 /** Why the board holds it: its hold decision's words (heavy, with its risk reason), else the checks it holds pending, else the checks that passed with tests not run (the auto-accept rule). */
 export const whyHeld = (r: ReviewCard): string => {
+  if (isExpired(r)) return 'its review expired unseen; reopening it puts it back to review, held for you again'
   if (r.holdReason) return r.holdReason
   const states = r.checks?.value ?? []
   const failed = r.pendingChecks.filter((c) => states.some((s) => s.check === c && s.state === 'failed')), notRun = r.pendingChecks.filter((c) => !failed.includes(c))
