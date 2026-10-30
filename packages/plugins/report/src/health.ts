@@ -6,6 +6,7 @@
  * landing queue, the worktrees held, and each enforce switch's mode (T322).
  */
 import type { Read } from './digest.ts'
+import { describeDrift, drifted, type PolicyDrift } from './policy-drift.ts'
 
 export type HealthState = 'ok' | 'degraded' | 'unknown'
 export interface HealthRow { id: string; name: string; state: HealthState; reason: string }
@@ -40,6 +41,8 @@ export interface HealthSources {
   landingQueue: Read<LandingQueueRead>
   worktrees: Read<WorktreesRead>
   enforcement: Read<EnforceRead[]>
+  /** Each policy file the repository ships for the project at the live install's commit, against the live set (T352). */
+  policies: Read<PolicyDrift[]>
 }
 
 /** A pool at or above this share of a window is degraded: its headroom is spent. */
@@ -121,6 +124,12 @@ export function buildHealth(s: HealthSources): Health {
 
   if (!('value' in s.enforcement)) rows.push(unknown('enforce', 'Enforce switches', s.enforcement.unknown))
   else for (const m of s.enforcement.value) rows.push(m.mode === 'on' ? row(`enforce:${m.mechanism}`, `Enforce ${m.mechanism}`, 'ok', 'on') : row(`enforce:${m.mechanism}`, `Enforce ${m.mechanism}`, 'degraded', m.mode === 'warn' ? 'warn: records what it would refuse, refuses nothing' : `${m.mode}: it does not run`))
+
+  if (!('value' in s.policies)) rows.push(unknown('policy', 'Policy files', s.policies.unknown))
+  else if (!s.policies.value.length) rows.push(row('policy', 'Policy files', 'ok', 'the repository ships no policy file for this project'))
+  else {
+    for (const d of s.policies.value) rows.push(row(`policy:${d.id}`, `Policy ${d.id}`, drifted(d) ? 'degraded' : 'ok', `${describeDrift(d)}${drifted(d) ? ': a policy change must propose it' : ''}`))
+  }
 
   const state: HealthState = rows.some((r) => r.state === 'degraded') ? 'degraded' : rows.some((r) => r.state === 'unknown') ? 'unknown' : 'ok'
   return { projectId: s.projectId, asOf: s.asOf, state, rows }

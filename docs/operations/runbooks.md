@@ -2984,6 +2984,29 @@ asks again or waits for input; a charter is asked about again, or refused. A Wor
 the same call again in that session (it reads the withdrawn request as the answer): run the work
 again to have the new policy judge it.
 
+## Policy drift
+
+A policy file in `policies/` (for example `policies/system.json`) reaches the live set only through
+an approved [policy change](../design/approvals.md#a-policy-change): merging it to dev changes
+nothing live. Two places now show the gap (T352), both read-only:
+
+- **`lead_health`** (`system lead health`) has a `policy:<id>` row for each `policies/*.json` shipped
+  for the project. It compares the live policy of that id with the file at the commit the install was
+  built from (`packages/cli/lib/build-commit`), ignoring `version` and any key only the live record
+  carries. `ok` means equal; `degraded` names the differing keys (`commandRules`, `webAccess`,
+  `riskTiers`, …) or says no policy of that id is in force; `unknown` means the stamp, git, or the live
+  set could not be read.
+- **`scripts/live-update.sh`**, after a verified update, prints each drift into its notes
+  (`<backups>/<date>-before-base/live-update.log` and `policy-drift.txt`), with the change it needs and
+  the record to propose, `policy-<id>-v<N>.json` in the same directory: the file's content at a version
+  past the live one. It proposes nothing, and a failed read is a note, never a failed update.
+
+To close a drift, the operator proposes the record (MCP `approvals_policy_propose` with
+`{"policy": <that file's content>, "note": …}`, or paste it into *Propose* on the `/ui` policy page)
+and approves it in the queue, as in [Change the autonomy policy](#change-the-autonomy-policy).
+Then `lead_health` shows the row `ok`. A change the file needs before it can ship (a rule to
+turn on, a version to raise) is a change to the file first, through the usual review.
+
 ## The queue proposes a policy change
 
 When you keep approving the same exact command, the queue can propose listing it, so that it runs

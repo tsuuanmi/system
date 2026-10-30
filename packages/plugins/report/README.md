@@ -50,7 +50,9 @@ decides nothing, and no model takes part.
   `git log`), lead touches, reruns, red dev (a failed daily check), incidents. A finished day is
   stored as `lead-digest@1.0` and read back unchanged; today's is read now. The health table has
   one row per source (dispatch, Workers, quota, notification and lead sinks, live update, landing
-  queue, worktrees, each enforce switch), each `ok`, `degraded`, or `unknown`; a source not
+  queue, worktrees, each enforce switch, and each policy file the repository ships for the project
+  against the live policy, [`src/policy-drift.ts`](src/policy-drift.ts), T352:
+  [policy drift](../../../docs/operations/runbooks.md#policy-drift)), each `ok`, `degraded`, or `unknown`; a source not
   mounted or failing is `unknown`, never `ok` (INV-2). [`src/digest.ts`](src/digest.ts) and
   [`src/health.ts`](src/health.ts) are pure; [`src/lead.ts`](src/lead.ts) reads. Read-only; the
   digest's push to a sink at an hour is not built here: it will be its own switch, off.
