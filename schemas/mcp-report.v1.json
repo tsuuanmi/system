@@ -1546,13 +1546,13 @@
       "additionalProperties": false
     },
     "lead-health-output": {
-      "description": "1.7: the `lead_health` tool's output (PROP-0019 section 2.10): one row per source, each ok, degraded, or unknown with its reason; a source that could not be read is unknown, never ok (INV-2). `state` is degraded when any row is, else unknown when any is, else ok.",
+      "description": "1.7, 1.8: the `lead_health` tool's output (PROP-0019 section 2.10): one row per source, each ok, degraded, failed, or unknown with its reason; a source that could not be read is unknown, never ok (INV-2). `failed` (1.8, T345) is the disk row under its floor. `state` is failed when any row is, else degraded when any is, else unknown when any is, else ok.",
       "type": "object",
       "required": ["projectId", "asOf", "state", "rows"],
       "properties": {
         "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
         "asOf": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
-        "state": { "enum": ["ok", "degraded", "unknown"] },
+        "state": { "enum": ["ok", "degraded", "unknown", "failed"] },
         "rows": {
           "type": "array",
           "maxItems": 64,
@@ -1562,7 +1562,7 @@
             "properties": {
               "id": { "type": "string", "minLength": 1, "maxLength": 100 },
               "name": { "type": "string", "minLength": 1, "maxLength": 100 },
-              "state": { "enum": ["ok", "degraded", "unknown"] },
+              "state": { "enum": ["ok", "degraded", "unknown", "failed"] },
               "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
             },
             "additionalProperties": false

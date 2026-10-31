@@ -589,6 +589,85 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     expect(existsSync(agent.runs[0]!.workspace)).toBe(true)
   })
 
+  it('removes the worktree of a landed run at once, its branch kept and the removal recorded; one that holds an uncommitted change, or that an agent run still holds, stays; a landing step repeated after it finds its work done (T345, INV-4, INV-13, INV-15)', async () => {
+    const repo = repository()
+    const agent = developer()
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+    for (const runId of ['run_landed', 'run_dirty', 'run_busy']) expect((await run(ctx, 'agent:dev', `k-${runId}`, runId)).status).toBe('completed')
+    const path = (runId: string): string => agent.runs.find((r) => basename(r.workspace) === runId)!.workspace
+    const subject = captureGitSubject(path('run_landed'))!.subject
+    const step = { step: 'commit' as const, runId: 'run_landed', workspace: path('run_landed'), subject: { ref: subject.ref, version: subject.version }, message: 'system: land run_landed' }
+    // Landed as the engine's steps do: the change committed on its branch, then the worktree released.
+    const committed = await ctx.workers.land!(step)
+    expect(committed).toMatchObject({ outcome: 'committed', committed: true })
+    const head = (committed as { head: string }).head
+    const released = await ctx.workers.land!({ step: 'release', runId: 'run_landed', workspace: path('run_landed') })
+    expect(released).toMatchObject({ outcome: 'released', branch: 'system/run/run_landed', path: path('run_landed'), source: 'agents' })
+    expect(existsSync(path('run_landed'))).toBe(false)
+    // The branch keeps the work.
+    expect(git(repo, 'show', 'system/run/run_landed:calc.py')).toBe(FIXED.trim())
+    const decision = ctx.artifacts.get((released as { decision: string }).decision)!
+    expect(decision.body).toMatchObject({ decisionType: 'retention', decider: { id: 'agent-workers.worktree-release' }, outcome: { option: 'remove', detail: { runId: 'run_landed', branch: 'system/run/run_landed' } } })
+    expect((await ctx.agentWorkers.runWorktrees()).worktrees.map((w) => w.runId)).toEqual(['run_dirty', 'run_busy'])
+    // Asked again (a restart): nothing is removed twice, and the commit step finds its work on the branch (INV-4).
+    expect(await ctx.workers.land!({ step: 'release', runId: 'run_landed', workspace: path('run_landed') })).toMatchObject({ outcome: 'refused', cause: 'gone' })
+    expect(await ctx.workers.land!({ ...step, message: 'again' })).toMatchObject({ outcome: 'committed', committed: false, head, branch: 'system/run/run_landed' })
+    // Not committed after its landing: it stays, for the retention to commit.
+    expect(await ctx.workers.land!({ step: 'release', runId: 'run_dirty', workspace: path('run_dirty') })).toMatchObject({ outcome: 'refused', cause: 'dirty' })
+    expect(existsSync(path('run_dirty'))).toBe(true)
+    // An agent run of it ended without being known to be gone: it stays, held.
+    git(path('run_busy'), 'add', '--all')
+    git(path('run_busy'), 'commit', '-q', '-m', 'kept by hand')
+    ctx.store.db.prepare("UPDATE agent_runs SET status = 'failed', liveness_verdict = 'unknown', liveness_decision = ? WHERE workflow_run_id = 'run_busy'").run(`sha256:${'1'.repeat(64)}`)
+    expect(await ctx.workers.land!({ step: 'release', runId: 'run_busy', workspace: path('run_busy') })).toMatchObject({ outcome: 'refused', cause: 'busy' })
+    expect(existsSync(path('run_busy'))).toBe(true)
+    // A workspace no worktree of this source is asked for is no one's.
+    expect(await ctx.workers.land!({ step: 'release', runId: 'run_other', workspace: repo })).toBeUndefined()
+  })
+
+  describe('the disk floor (T345)', () => {
+    // A floor no disk has free: under it on any host. Without one, no floor is set.
+    const HUGE = 1_000_000_000
+    const floorOf = (ctx: Context) => ctx.artifacts.list({ kind: 'decision', decisionType: 'gate' }).filter((a) => (a.body as { decider?: { id?: string } }).decider?.id === 'agent-workers.disk-floor')
+
+    it('refuses a run that needs a new worktree while the worktrees\' filesystem has less free than the floor, when the mechanism is on, and says why', async () => {
+      const repo = repository()
+      const agent = developer()
+      const root = temp('system-worktrees-')
+      const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: root, diskFloorGb: HUGE, enforce: { diskFloor: 'on' } })
+      const refusal = ctx.agentWorkers.diskFloorRefusal()
+      expect(refusal).toMatch(new RegExp(`^the disk under the worktrees \\(${root}\\) has [\\d.]+ GB free of [\\d.]+ GB \\(\\d+ %\\), under the floor of ${HUGE} GB \\(agent-workers diskFloorGb\\): no run is started$`))
+      const refused = await run(ctx, 'agent:dev', 'k-1', 'run_low')
+      // A transient host condition, nothing sent: `overloaded`, which the engine waits on and never counts as the task's attempt.
+      expect(refused).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'overloaded', message: expect.stringMatching(/under the floor .*no run is started/) } })
+      expect(agent.runs).toEqual([])
+      expect(existsSync(join(root, 'run_low'))).toBe(false)
+      expect(ctx.agentWorkers.diskStatus()).toMatchObject({ mode: 'on', floorBytes: HUGE * 1024 ** 3, worktrees: { freeBytes: expect.any(Number), totalBytes: expect.any(Number) }, store: { freeBytes: expect.any(Number) } })
+      // The refusal is recorded once while it stands, not at every look.
+      expect(floorOf(ctx)).toHaveLength(1)
+      expect(floorOf(ctx)[0]!.body).toMatchObject({ outcome: { option: 'refuse' } })
+    })
+
+    it('records the refusal it would make, and refuses nothing, in warn, the start mode; and does not look when off', async () => {
+      const repo = repository()
+      const agent = developer()
+      const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-'), diskFloorGb: HUGE })
+      expect(ctx.agentWorkers.diskStatus().mode).toBe('warn')
+      expect(ctx.agentWorkers.diskFloorRefusal()).toBeUndefined()
+      expect((await run(ctx, 'agent:dev', 'k-1', 'run_warned')).status).toBe('completed')
+      expect(agent.runs).toHaveLength(1)
+      expect(floorOf(ctx)).toHaveLength(1)
+      expect(floorOf(ctx)[0]!.body).toMatchObject({ outcome: { option: 'start', detail: { mode: 'warn' } } })
+
+      const off = await boot(developer(), { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-'), diskFloorGb: HUGE, enforce: { diskFloor: 'off' } })
+      expect(off.ctx.agentWorkers.diskFloorRefusal()).toBeUndefined()
+      expect(floorOf(off.ctx)).toEqual([])
+      // A floor of 0 sets none, whatever the mode.
+      const none = await boot(developer(), { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-'), diskFloorGb: 0, enforce: { diskFloor: 'on' } })
+      expect(none.ctx.agentWorkers.diskFloorRefusal()).toBeUndefined()
+    })
+  })
+
   it('lists each run worktree with its state, what it holds, and when it retires, and removes the finished ones on the operator\'s recorded word: a clean one, a dirty one only with its changes committed on its branch, never one held; the branch stays (D12, INV-13, INV-15)', async () => {
     const repo = repository()
     const head = git(repo, 'rev-parse', 'HEAD')
@@ -646,6 +725,21 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     ctx.store.db.prepare('INSERT INTO agent_worktrees (repository, workflow_run_id, path, branch, gitdir, created_at) VALUES (?, ?, ?, ?, ?, ?)')
       .run(repo, runId, path, `system/run/${runId}`, realpathSync(git(path, 'rev-parse', '--absolute-git-dir')), new Date(Date.UTC(2026, 9, 1, 0, 0, i)).toISOString())
     return path
+  })
+
+  it('counts every worktree for the health table, past the 100 its listing shows: how many are in use, held, or hold something uncommitted (T345)', async () => {
+    const repo = realpathSync(repository())
+    const root = realpathSync(temp('system-worktrees-'))
+    const { ctx } = await boot(developer(), { workers: [writer(repo)], worktreeRoot: root })
+    const runIds = Array.from({ length: 105 }, (_, i) => `run_count${String(i).padStart(3, '0')}`)
+    const paths = finished(ctx, repo, root, runIds)
+    writeFileSync(join(paths[3]!, 'scratch.txt'), 'not committed\n')
+    const at = '2026-10-01T00:00:00.000Z'
+    ctx.store.db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, liveness_verdict, liveness_decision, created_at, updated_at)
+      VALUES ('arun_held', 'key-held', 'agent:dev', NULL, 'p', 'operator-shared', 'failed', 'run_count005', 'unknown', ?, ?, ?)`).run(`sha256:${'1'.repeat(64)}`, at, at)
+    await expect(ctx.agentWorkers.runWorktrees({ limit: 101 })).rejects.toThrow(/limit is a whole number from 1 to 100/)
+    expect((await ctx.agentWorkers.runWorktrees()).worktrees).toHaveLength(100)
+    expect(await ctx.agentWorkers.worktreeCounts()).toEqual({ total: 105, inUse: 0, held: 1, uncommitted: 1 })
   })
 
   it('removes 40 finished worktrees in one call, recorded as one decision its schema accepts: the reasons counted by why, every worktree named in its outcome (T250, INV-13)', async () => {
@@ -809,6 +903,35 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     }
     const carry = (ctx: Context, runId: string, from: Tree) => ctx.workers.carry!({ runId, from, message: `system: carry into ${runId}\n\nWhy it is carried.` })
     const rowOf = (ctx: Context, runId: string) => ctx.store.db.prepare('SELECT carried_from, carried_commit FROM agent_worktrees WHERE workflow_run_id = ?').get(runId)
+
+    it('cuts no worktree for a carried retry under the disk floor when the mechanism is on, and records it in warn, where the retry is carried (T345)', async () => {
+      const floorOf = (ctx: Context) => ctx.artifacts.list({ kind: 'decision', decisionType: 'gate' }).filter((a) => (a.body as { decider?: { id?: string } }).decider?.id === 'agent-workers.disk-floor')
+      /** A source under a floor no disk has free, its disk-floor mode moved live as the plugin host's override does; off while the earlier attempt writes. */
+      const booted = async () => {
+        const repo = repository()
+        const agent = developer()
+        const modes = new Map<string, string>([['disk-floor', 'off']])
+        const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-'), diskFloorGb: 1_000_000_000 })
+        await ctx.plugin({ name: 'live-switch', apply: (c: { provide: (key: string, value: unknown) => void }) => c.provide('pluginHost', { enforced: (m: string) => modes.get(m) }) } as never, {} as never)
+        const earlier = await wrote(ctx, agent, 'run_p')
+        return { ctx, modes, earlier }
+      }
+      const on = await booted()
+      on.modes.set('disk-floor', 'on')
+      const refused = await carry(on.ctx, 'run_r', on.earlier)
+      // Refused for room, a cause the engine waits on: the carry stays due, never settled fresh.
+      expect(refused).toMatchObject({ outcome: 'refused', cause: 'no-room', reason: expect.stringMatching(/under the floor of 1000000000 GB .*: no run is started$/) })
+      // Nothing was cut, and the earlier tree is as its attempt left it.
+      expect(existsSync(join(dirname(on.earlier.workspace), 'run_r'))).toBe(false)
+      expect(rowOf(on.ctx, 'run_r')).toBeUndefined()
+      expect(captureGitSubject(on.earlier.workspace)!.subject).toMatchObject(on.earlier.subject)
+      expect(floorOf(on.ctx).map((d) => (d.body as { outcome: { option: string } }).outcome.option)).toEqual(['refuse'])
+
+      const warn = await booted()
+      warn.modes.set('disk-floor', 'warn')
+      expect(await carry(warn.ctx, 'run_r', warn.earlier)).toMatchObject({ outcome: 'carried', carried: true })
+      expect(floorOf(warn.ctx).map((d) => (d.body as { outcome: { option: string; detail: { mode: string } } }).outcome)).toEqual([{ option: 'start', detail: expect.objectContaining({ mode: 'warn' }) }])
+    })
 
     it('commits the earlier tree on its branch and cuts the new run\'s worktree at its base holding it, staged; a carry asked again finds it done, and the new run works there on that change (INV-4, INV-5, INV-15)', async () => {
       const repo = repository()

@@ -52,6 +52,7 @@ import {
   type TierOffer, TIERS, type WorkerExecution, type WorkerSandbox, type WorkerStart, type WorkScope,
 } from '@tsuuanmi/system-workers-core'
 import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MAX_SLOTS } from './accounts.ts'
+import { describeSpace, type DiskSpace, diskSpace, GB } from './disk.ts'
 import { commandRecorder, type DossierCaller, dossiersOf, dossierTools, type StepDossiers } from './dossier.ts'
 import { DENIAL_MIGRATION, GATE_MIGRATION, type Deferral, readToolsOf, recordDenial, runGate, unaskedNote } from './gate.ts'
 import { HANDBOOK_SOURCE_EVENT, handbookSelection, type SourcePart } from './handbook.ts'
@@ -72,7 +73,7 @@ import { type RunReport, type RunReported, runReport } from './run-report.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
 import { VERIFICATION_MIGRATION } from './verification.ts'
 import { registerAccountTools, registerRunTools } from './tools.ts'
-import { CARRY_MIGRATION, FORK_MIGRATION, notKnownGone, RUN_ID, type RepositoryCheck, type RunWorktree, type RunWorktreeRelease, type SweepOutcome, USED_MIGRATION, type WorktreeRelease, Worktrees } from './worktrees.ts'
+import { CARRY_MIGRATION, DiskFloorError, FORK_MIGRATION, notKnownGone, RUN_ID, type RepositoryCheck, type RunWorktree, type RunWorktreeRelease, type SweepOutcome, USED_MIGRATION, type WorktreeRelease, Worktrees } from './worktrees.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -227,6 +228,12 @@ export interface Config {
    */
   worktreeRetentionHours?: number
   /**
+   * The free space, in GB, the worktrees' filesystem must keep for a new worktree to be cut (T345; default
+   * 10, 0 sets no floor). Under it, no run that needs a new worktree starts, as the `disk-floor` mechanism's
+   * mode says (`enforce.diskFloor`). A landed run's worktree is removed at once, whatever this says.
+   */
+  diskFloorGb?: number
+  /**
    * Per repository, the commands that set a workflow run's new worktree up before any agent run
    * works in it (dependencies installed without a network, say), each allowed by the autonomy
    * policy, run confined: the host read-only but the worktree and the views named, no network
@@ -255,9 +262,11 @@ export interface Config {
    * override wins). `lockfileVerification` (unset: `warn`, the mechanism's start mode, T333): `on`
    * opens one approval request per lockfile digest for its supply-chain verification, run on the
    * host's network once approved; `warn` records the request it would open and opens none; `off` does
-   * not look.
+   * not look. `diskFloor` (unset: `warn`, T345): `on` cuts no new worktree while the worktrees'
+   * filesystem has less than `diskFloorGb` free, and dispatch starts none; `warn` records the refusal it
+   * would make and refuses nothing; `off` does not look.
    */
-  enforce?: { lockfileVerification?: EnforceMode }
+  enforce?: { lockfileVerification?: EnforceMode; diskFloor?: EnforceMode }
 }
 
 interface RunRow {
@@ -345,6 +354,8 @@ const newId = (): string => `arun_${randomBytes(8).toString('hex')}`
 const MAX_MODELS = 16
 /** How often finished workflow runs' worktrees are looked at for removal. */
 const SWEEP_MS = 60 * 60_000
+/** A disk floor that stays under is recorded as a decision at most this often (INV-9). */
+const DISK_RECORD_MS = 10 * 60_000
 /** The kind of work a review member's offers are scoped to (ADR-0049). */
 const REVIEW_MEMBER: WorkScope = 'review-member'
 const RANK: Record<Classification, number> = { public: 0, 'operator-shared': 1, 'local-private': 2 }
@@ -353,7 +364,7 @@ const now = (): string => new Date().toISOString()
 const MAX_COOLDOWN_MS = 604_800_000
 /** The row's settings at their defaults, left out of the row `system account migrate` prints. */
 const SETTING_DEFAULTS: Record<string, unknown> = {
-  maxReplayChars: 200_000, probeTtlMs: 5 * 60_000, runTimeoutMs: 15 * 60_000, worktreeRetentionHours: 168, stallSeconds: 300, deadAfterSeconds: 120, maxUnknownVerdicts: 3,
+  maxReplayChars: 200_000, probeTtlMs: 5 * 60_000, runTimeoutMs: 15 * 60_000, worktreeRetentionHours: 168, diskFloorGb: 10, stallSeconds: 300, deadAfterSeconds: 120, maxUnknownVerdicts: 3,
 }
 /** How often a running agent's activity is written and its stall looked at: the run lease's heartbeat (a bounded write rate). */
 const BEAT_MS = LEASE_TTL_MS / 3
@@ -381,6 +392,8 @@ const FREE_DECIDER = { type: 'operator', id: 'operator.free', version: '1' } as 
 const WORKTREES_DECIDER = { type: 'operator', id: 'operator.worktrees', version: '1' } as const
 /** The most run worktrees one listing shows (INV-9). */
 const MAX_LISTED_WORKTREES = 100
+/** The most worktrees `worktreeCounts` looks at in one read (each is one `git status`). */
+const MAX_COUNTED_WORKTREES = 1000
 /** A run ended without being known to be gone, and what it held stays held. */
 const UNKNOWN_EVENT = 'agent-workers.run.unknown'
 /** The operator freed what such a run held. */
@@ -572,7 +585,8 @@ export class AgentWorkers extends Service {
     deadAfterSeconds: z.natural().min(1).max(86_400).default(120).description('A started run its holder did not finish is dead, and reconciled, only when its holder and its agent process are both positively gone and no activity was seen for this long'),
     maxUnknownVerdicts: z.natural().min(1).max(20).default(3).description('Verdicts other than dead a started run gets in a row, looked at again with a bounded backoff, before it goes to the operator, never declared dead'),
     worktreeRoot: z.string().description('Where the worktrees of worktreePerRun Workers go (default <DSH_HOME>/system/worktrees)'),
-    worktreeRetentionHours: z.natural().default(168).description('Hours a workflow run\'s worktree is kept after its last agent run ended; then its changes are committed on its branch and it is removed (0 keeps them)'),
+    worktreeRetentionHours: z.natural().default(168).description('Hours a workflow run\'s worktree is kept after its last agent run ended, when its landing did not end it (a landed run\'s worktree is removed at once, T345); then its changes are committed on its branch and it is removed (0 keeps them)'),
+    diskFloorGb: z.natural().default(10).description('The free space, in GB, the worktrees\' filesystem must keep for a new worktree to be cut (T345; 0 sets no floor): under it, no run that needs a new worktree starts, as the disk-floor mechanism\'s mode (enforce.diskFloor) says, and dispatch says why'),
     worktreeSetup: z.array(z.object({
       repository: z.string().required().description('The repository (absolute): the workspace of the worktreePerRun Workers whose worktrees it sets up'),
       commands: z.array(z.string()).required().description('1 to 16 commands run in order in a new worktree before any agent run works in it, each its words split on single spaces (no shell), each judged by the autonomy policy as a command with that exact argv'),
@@ -606,6 +620,7 @@ export class AgentWorkers extends Service {
       maxWorkers: z.natural().min(1).max(256).description('The test workers each check run gets (the vitest config reads SYSTEM_CHECK_MAX_WORKERS); default the host\'s cores less one, shared among maxConcurrent checks, at most 32 each (T292)'),
     }).description('The load acceptance checks put on the host (T292)'),
     enforce: z.object({
+      diskFloor: z.union(['off', 'warn', 'on']).description('The disk floor (default warn, the mechanism\'s start mode, T345): on cuts no new worktree while the worktrees\' filesystem has less than diskFloorGb free, and dispatch starts none; warn records the refusal it would make and refuses nothing; off does not look'),
       lockfileVerification: z.union(['off', 'warn', 'on']).description('The supply-chain verification of a new lockfile (default warn, the mechanism\'s start mode): on opens one approval request per lockfile digest and runs the verification once on the host\'s network when approved; warn records the request it would open and opens none; off does not look (T333)'),
     }).description('Each gate-like mechanism\'s start mode (ADR-0078); the plugin host\'s live override (system enforce set) wins, read at each use'),
     workspaceReads: z.object(Object.fromEntries(Object.entries(WORKSPACE_READ_BOUNDS).map(([name, bound]) => [
@@ -640,6 +655,10 @@ export class AgentWorkers extends Service {
   /** Whether each `worktreePerRun` Worker's workspace can hold a worktree per run, as last checked. */
   private readonly repositories = new Map<string, { at: number; check: RepositoryCheck }>()
   private readonly worktrees: Worktrees
+  /** Where the worktrees go: the filesystem the disk floor reads. */
+  private readonly worktreeRoot: string
+  /** When the disk floor's refusal was last recorded, so a standing one is recorded once per {@link DISK_RECORD_MS}, not per look. */
+  private diskRecordedAt = 0
   /** Each repository's worktree setup, by its path as configured (resolved), and what runs them (ADR-0058). */
   private readonly setups: Map<string, Setup>
   private readonly worktreeSetups: WorktreeSetups
@@ -673,8 +692,10 @@ export class AgentWorkers extends Service {
     this.accounts = configured.accounts
     if (config.worktreeRoot !== undefined && !isAbsolute(config.worktreeRoot)) throw new ProviderError('config_error', 'agent Workers: worktreeRoot must be an absolute path')
     const worktreeRoot = config.worktreeRoot ?? join(dshHome(), 'system', 'worktrees')
+    this.worktreeRoot = worktreeRoot
     // A landing whose merge conflicts only in a repository's declared generated files makes them again, in the setup's confinement (T166).
-    this.worktrees = new Worktrees(ctx, worktreeRoot, (repository, setupHash) => regenerationOf(ctx, this.setups, join(worktreeRoot, '.setup'), repository, setupHash, this.worktreeSetups))
+    // Every new checkout (a run's, a carried retry's, a check on a tip's) is cut only above the disk floor (T345).
+    this.worktrees = new Worktrees(ctx, worktreeRoot, (repository, setupHash) => regenerationOf(ctx, this.setups, join(worktreeRoot, '.setup'), repository, setupHash, this.worktreeSetups), () => this.diskFloorRefusal())
     // A setup is for the worktrees of a repository a worktreePerRun Worker works in; any other is refused at load.
     this.setups = loadSetups(config.worktreeSetup, [...this.workers.values()].filter((w) => w.worktreePerRun).map((w) => w.workspace))
     // Its private views are made beside the worktrees (a name no repository's directory there takes).
@@ -1399,6 +1420,9 @@ export class AgentWorkers extends Service {
     if ('problem' in check) throw new ProviderError('config_error', `${row.worker} works in a worktree per run, and ${check.problem}; nothing was run`)
     if (!row.workflow_run_id) return worker.workspace
     return this.worktrees.acquire(check.repository, row.workflow_run_id).catch((error: unknown) => {
+      // Under the disk floor (T345): a passing host condition, nothing sent, so the step waits for room (`overloaded`,
+      // back-off) and the run is never the attempt's; anything else about the worktree is a configuration problem.
+      if (error instanceof DiskFloorError) throw new ProviderError('overloaded', `${row.worker}: the worktree of run ${row.workflow_run_id} is not cut yet: ${error.message}; nothing was run, and it waits for room`, { cause: error })
       throw new ProviderError('config_error', `${row.worker}: the worktree of run ${row.workflow_run_id} cannot be prepared: ${(error as Error).message}; nothing was run`, { cause: error })
     })
   }
@@ -1434,6 +1458,54 @@ export class AgentWorkers extends Service {
     this.inflight.add(tracked)
     void tracked.finally(() => this.inflight.delete(tracked))
     return sweeping
+  }
+
+  /**
+   * The disk the worktrees and the store fill (T345): the free space of each one's filesystem, the floor
+   * (`diskFloorGb`) and the `disk-floor` mechanism's mode now. Reads only; `lead_health` shows it.
+   */
+  diskStatus(): DiskStatus {
+    const host = this.ctx.get('pluginHost' as never) as EnforceSource | undefined
+    const worktrees = diskSpace(this.worktreeRoot)
+    const store = diskSpace(this.ctx.store.path)
+    return { mode: enforceMode(host, 'disk-floor', this.config.enforce?.diskFloor), floorBytes: (this.config.diskFloorGb ?? 10) * GB, ...(worktrees ? { worktrees } : {}), ...(store ? { store } : {}) }
+  }
+
+  /**
+   * Why no new worktree may be cut now, when the worktrees' filesystem has less free than the floor and the
+   * `disk-floor` mechanism is `on` (T345); undefined when one may. In `warn` the refusal it would make is
+   * recorded (a `gate` decision, once per {@link DISK_RECORD_MS} while it stands) and nothing is refused;
+   * `off`, or a floor of 0, does not look. A disk that cannot be read is under the floor (INV-2). Dispatch
+   * asks it before it takes a task, and every new worktree cut asks it again (a run's, a carried retry's, a
+   * check on a tip's), so a start that bypasses dispatch is held to it too.
+   */
+  diskFloorRefusal(): string | undefined {
+    const { mode, floorBytes, worktrees } = this.diskStatus()
+    if (mode === 'off' || floorBytes <= 0) return undefined
+    const floor = `${this.config.diskFloorGb ?? 10} GB (agent-workers diskFloorGb)`
+    const low = !worktrees ? `the free space under the worktrees (${this.worktreeRoot}) cannot be read`
+      : worktrees.freeBytes < floorBytes ? `the disk under the worktrees (${this.worktreeRoot}) has ${describeSpace(worktrees)}, under the floor of ${floor}` : undefined
+    if (!low) return undefined
+    const refuse = mode === 'on'
+    if (Date.now() - this.diskRecordedAt >= DISK_RECORD_MS) {
+      this.diskRecordedAt = Date.now()
+      try {
+        this.ctx.artifacts.recordDecision({
+          decisionType: 'gate', question: 'May a run start while the worktrees\' disk is under its floor?', inputs: [],
+          candidates: [
+            { option: 'refuse', selected: refuse, reasons: [low, refuse ? 'the disk-floor mechanism is on: no new worktree is cut, so a mid-landing ENOSPC becomes an early refusal' : 'the disk-floor mechanism is in warn: the refusal is recorded, nothing is refused'] },
+            { option: 'start', selected: !refuse, reasons: [refuse ? 'not start: the disk is under the floor' : 'a run starts, as the mechanism is in warn'] },
+          ],
+          decider: { type: 'rule', id: 'agent-workers.disk-floor', version: '1' },
+          outcome: { option: refuse ? 'refuse' : 'start', detail: { mode, worktreeRoot: this.worktreeRoot, floorBytes, ...(worktrees ? { freeBytes: worktrees.freeBytes, totalBytes: worktrees.totalBytes } : {}) } },
+          deterministic: true,
+        }, { producer: { type: 'system', ref: 'agent-workers' } })
+      } catch (error) {
+        this.ctx.logger.warn(`agent Workers: the disk floor's decision was not recorded: ${(error as Error).message}`)
+      }
+      if (!refuse) this.ctx.logger.warn(`agent Workers: ${low} (the disk-floor mechanism is in warn, so runs still start)`)
+    }
+    return refuse ? `${low}: no run is started` : undefined
   }
 
   private sweepSafely(): void {
@@ -1804,6 +1876,21 @@ export class AgentWorkers extends Service {
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LISTED_WORKTREES) throw new ProviderError('invalid_input', `limit is a whole number from 1 to ${MAX_LISTED_WORKTREES}`)
     const retentionHours = this.config.worktreeRetentionHours ?? 168
     return { retentionHours, ...await this.worktrees.list(retentionHours, limit) }
+  }
+
+  /**
+   * How many run worktrees are not removed, how many an agent run holds now (`inUse`), how many an agent
+   * run left held (`held`), and how many hold something not committed or are not intact (`uncommitted`):
+   * every one, never the first 100 of the listing (T345). More than {@link MAX_COUNTED_WORKTREES} are not
+   * counted, and it says so, never a part read as the whole (INV-2, INV-9). `lead_health` shows it.
+   */
+  async worktreeCounts(): Promise<{ total: number; inUse: number; held: number; uncommitted: number }> {
+    const { total, worktrees } = await this.worktrees.list(this.config.worktreeRetentionHours ?? 168, MAX_COUNTED_WORKTREES)
+    if (total > worktrees.length) throw new ProviderError('overloaded', `${total} worktrees are not removed, more than the ${MAX_COUNTED_WORKTREES} counted at once`)
+    return {
+      total, inUse: worktrees.filter((w) => w.state === 'in-use').length, held: worktrees.filter((w) => w.state === 'held').length,
+      uncommitted: worktrees.filter((w) => w.changes === 'uncommitted' || w.changes === 'not-intact').length,
+    }
   }
 
   /**
@@ -3254,6 +3341,14 @@ export interface FreeOutcome {
   again: boolean
   freed: string[]
   worktrees: WorktreeRelease[]
+}
+
+/** The disk the worktrees and the store are on (`diskStatus`): each filesystem's space (none when unreadable), the floor, and the disk-floor mechanism's mode. */
+export interface DiskStatus {
+  mode: EnforceMode
+  floorBytes: number
+  worktrees?: DiskSpace
+  store?: DiskSpace
 }
 
 /** The run worktrees not removed (`agent_worktrees`): the retention in force, at most 100 of them, and how many in all. */

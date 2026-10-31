@@ -506,6 +506,22 @@ describe('the dispatch pass (ADR-0064, REQ-WF-16)', () => {
     expect(askOf(paused.ctx.workflow.dispatchStatus(), p.taskId)).toMatchObject({ state: 'asked' })
   })
 
+  it('takes no task while the Worker source says the worktrees\' disk is under its floor, says why in the pass and for each task, and asks again once it has room (T345)', async () => {
+    const { ctx, workers, read } = await boot()
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+    await read('acc-a', 0)
+    let low: string | undefined = 'the disk under the worktrees (/w) has 1.0 GB free of 100.0 GB (1 %), under the floor of 10 GB (agent-workers diskFloorGb): no run is started'
+    await ctx.plugin({ name: 'disk-floor', apply: (c: { provide: (key: string, value: unknown) => void }) => c.provide('agentWorkers', { diskFloorRefusal: () => low }) } as never, {} as never)
+    const t = await ready(ctx, 'low disk')
+    expect(await ctx.workflow.sweepDispatch()).toMatchObject({ state: 'waiting', reason: low, took: [] })
+    expect(reasonOf(ctx.workflow.dispatchStatus(), t.taskId)).toBe(low)
+    expect(await dispatchRequests(ctx)).toHaveLength(0)
+    expect(workers.started).toHaveLength(0)
+    low = undefined
+    await ctx.workflow.sweepDispatch()
+    expect(askOf(ctx.workflow.dispatchStatus(), t.taskId)).toMatchObject({ state: 'asked' })
+  })
+
   it('counts the same after a restart, from its rows, and starts no task twice (INV-4)', async () => {
     const { ctx, workers, read, restartWorkflow } = await boot({ accounts: ['acc-a', 'acc-b'] })
     workers.extra = [agent('agent:acc-a/develop', 'acc-a'), agent('agent:acc-b/develop', 'acc-b')]

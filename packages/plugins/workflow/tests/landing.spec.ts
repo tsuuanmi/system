@@ -79,6 +79,7 @@ class Lander {
     ? { outcome: 'committed', repository: '/repo', branch: `system/run/${step.runId}`, head: HEAD, committed: true, base: BASE, contained: false, stat: ' a.c | 2 +-', subject: { ref: HEAD, version: 'v-committed' }, ...(this.fork ? { fork: this.fork } : {}) }
     : step.step === 'rebase' ? this.rebaseAnswer(step)
       : step.step === 'record' ? undefined
+      : step.step === 'release' ? { outcome: 'released', repository: '/repo', branch: `system/run/${step.runId}`, path: step.workspace, decision: `sha256:${'1'.repeat(64)}` }
       : { outcome: 'merged', repository: '/repo', branch: `system/run/${step.runId}`, head: step.head, base: step.base, commit: 'd'.repeat(40), already: false }
 
   /** Each check passes, unless the script says otherwise. */
@@ -260,7 +261,8 @@ describe('ctx.workflow lands an accepted result through the source that holds it
     await ctx.approvals.decide([{ requestId: asked.requestId!, subject: request!.subject, verdict: 'approved' }])
     const merged = await until(ctx, runId, 'merged')
     expect(merged.commit).toBe('d'.repeat(40))
-    expect(lander.steps.at(-1)).toMatchObject({ step: 'merge', runId, head: HEAD, base: BASE, message: expect.stringContaining(`on the operator's approval of request ${asked.requestId}`) })
+    // The merge is the last landing step; once it ends, the worktree is released (T345).
+    expect(lander.steps.filter((s) => s.step !== 'release').at(-1)).toMatchObject({ step: 'merge', runId, head: HEAD, base: BASE, message: expect.stringContaining(`on the operator's approval of request ${asked.requestId}`) })
     expect(optionsOf(ctx, merged)).toEqual(['commit', 'merge'])
     // Merged, the board's landing wait ends: done on a board.landed decision naming the merge.
     const done = await vi.waitFor(async () => {
@@ -270,6 +272,49 @@ describe('ctx.workflow lands an accepted result through the source that holds it
     }, { timeout: 30_000, interval: 25 })
     expect(ctx.artifacts.get(done.lastDecision!)?.body).toMatchObject({ decider: { id: 'board.landed' }, outcome: { option: 'done', detail: { outcome: 'merged', landing: merged.decisions!.at(-1), acceptance: waiting.result!.acceptance } } })
     expect(landingOf(ctx, runId)).toMatchObject({ tell: 'merged', told: true })
+  })
+
+  it('asks the source that holds the worktree to remove it once the landing is merged and the task done, and when there was nothing to land; a worktree of a task that may be retried is never asked for (T345)', async () => {
+    const releases = (lander: Lander) => lander.steps.filter((s) => s.step === 'release')
+    // Merged: the task is done, then the source is asked to remove the run's worktree, once.
+    const merged = new Lander()
+    const m = await boot('ask', merged)
+    const asked = await until(m.ctx, m.runId, 'asked')
+    expect(releases(merged)).toEqual([])
+    const [request] = await merges(m.ctx)
+    await m.ctx.approvals.decide([{ requestId: asked.requestId!, subject: request!.subject, verdict: 'approved' }])
+    await until(m.ctx, m.runId, 'merged')
+    await vi.waitFor(() => expect(releases(merged)).toEqual([{ step: 'release', runId: m.runId, workspace: m.workspace }]), { timeout: 30_000, interval: 25 })
+    expect((await m.ctx.board.task(m.taskId))?.state).toBe('done')
+    expect(merged.steps.map(stepOf)).toEqual(['commit', 'merge', 'release'])
+
+    // Nothing to land (the base already holds the accepted tree): done as not needed, and the worktree released.
+    const nothing = new Lander()
+    nothing.answer = (step) => step.step === 'commit'
+      ? { outcome: 'committed', repository: '/repo', branch: `system/run/${step.runId}`, head: step.subject.ref, committed: false, base: BASE, contained: true, stat: '' }
+      : step.step === 'release' ? { outcome: 'released', repository: '/repo', branch: `system/run/${step.runId}`, path: step.workspace, decision: `sha256:${'1'.repeat(64)}` } : undefined
+    const n = await boot('ask', nothing)
+    await until(n.ctx, n.runId, 'none')
+    await vi.waitFor(() => expect(releases(nothing)).toEqual([{ step: 'release', runId: n.runId, workspace: n.workspace }]), { timeout: 30_000, interval: 25 })
+    expect(landingOf(n.ctx, n.runId)).toMatchObject({ tell: 'not-needed', told: true })
+
+    // A result sent back as another attempt is retried: its worktree is kept, never asked for.
+    const retried = new Lander()
+    retried.checkAnswer = (step) => ({ outcome: 'checked', results: step.checks.map((check) => (step.scope === 'landing' ? { check, outcome: 'failed' as const, exitCode: 1, reason: 'exited 1' } : { check, outcome: 'passed' as const, exitCode: 0, reason: 'exited 0' })) })
+    const r = await boot('ask', retried, ['tests'])
+    await until(r.ctx, r.runId, 'returned')
+    expect((await r.ctx.board.task(r.taskId))!).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+    expect(releases(retried)).toEqual([])
+    // One the source keeps (it holds something uncommitted) leaves the landing as it ended.
+    const kept = new Lander()
+    const answer = kept.answer
+    kept.answer = (step) => (step.step === 'release' ? { outcome: 'refused', cause: 'dirty', reason: 'it holds changes not committed' } : answer(step))
+    const k = await boot('ask', kept)
+    const askedK = await until(k.ctx, k.runId, 'asked')
+    const [requestK] = await merges(k.ctx)
+    await k.ctx.approvals.decide([{ requestId: askedK.requestId!, subject: requestK!.subject, verdict: 'approved' }])
+    await vi.waitFor(() => expect(releases(kept)).toHaveLength(1), { timeout: 30_000, interval: 25 })
+    expect(landingOf(k.ctx, k.runId)).toMatchObject({ state: 'merged', told: true })
   })
 
   it('keeps an accepted result waiting for its landing, never done, while its merge request is denied (T293)', async () => {
@@ -429,7 +474,7 @@ describe('ctx.workflow rebases an accepted result onto its landing target when t
     expect(await merges(ctx)).toHaveLength(1)
     await ctx.approvals.decide([{ requestId: asked.requestId!, subject: request!.subject, verdict: 'approved' }])
     const merged = await until(ctx, runId, 'merged')
-    expect(lander.steps.at(-1)).toMatchObject({ step: 'merge', head: REBASED, base: BASE })
+    expect(lander.steps.filter((s) => s.step !== 'release').at(-1)).toMatchObject({ step: 'merge', head: REBASED, base: BASE })
     expect(optionsOf(ctx, merged).at(-1)).toBe('merge')
   })
 

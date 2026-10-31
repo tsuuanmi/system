@@ -148,12 +148,18 @@ export class TaskCarries {
    * source that holds the earlier tree, and what it did is a `gate` decision naming the earlier run
    * and the commit (`carried`), or why the run's worktree is cut from HEAD instead (`fresh`). A source
    * that cannot answer is a refusal (the workers seam's own rule), never a wait: the run then starts
-   * as any attempt.
+   * as any attempt. One refusal is a wait: `no-room`, the host has no room to cut the run's worktree
+   * now (the disk floor, T345): the carry stays due, nothing is decided, no step starts, and the run is
+   * looked at again later (`wait`). The wait is bounded (INV-9) by `maxLimitWaitHours` from its first
+   * wait (`roomSince`, kept on the row, so a restart keeps it): past it, the carry settles fresh,
+   * recorded with why; also once the retention or the operator removes the earlier tree, the next look
+   * is refused `gone` and the run starts fresh. Either way the earlier work stays on its branch, and the
+   * run's own first step, still under the floor, fails `overloaded` with nothing sent: no attempt spent.
    */
-  async settle(runId: string): Promise<void> {
+  async settle(runId: string): Promise<'go' | 'wait'> {
     const row = this.e.tasks.row(runId)
     const stored = row ? this.stored(row) : undefined
-    if (!row || !stored) return
+    if (!row || !stored) return 'go'
     const { noted, ...carry } = stored
     // The earlier attempt's change is its result, kept before this attempt decides what to do with it (T271), carried or not;
     // once per run in this engine (every advance passes here), and again after a restart.
@@ -166,7 +172,7 @@ export class TaskCarries {
     // Settled already (or decided fresh at admission): its dossier note, unless a stop came before it was written (INV-4).
     if (carry.state !== 'due' || !carry.from) {
       if (!noted) this.note(runId)
-      return
+      return 'go'
     }
     const from = carry.from
     const carryOf = this.e.ctx.workers.carry
@@ -178,13 +184,28 @@ export class TaskCarries {
       ...(writes?.type === 'git-head' ? { onto: writes.ref } : {}),
     }
     const answer: (Carried & { source: string }) | undefined = !row.lost && carryOf ? await carryOf.call(this.e.ctx.workers, step) : undefined
+    // No room to cut the worktree now (T345): a passing host condition, so the carry waits, bounded by
+    // maxLimitWaitHours from its first wait (INV-9); past it, it settles fresh below, saying so.
+    let pastRoom = ''
+    if (answer?.outcome === 'refused' && answer.cause === 'no-room') {
+      const since = carry.roomSince ?? now()
+      const max = this.e.config.maxLimitWaitHours ?? 24
+      if (max > 0 && Date.now() - Date.parse(since) <= max * 3_600_000) {
+        if (!carry.roomSince) {
+          this.e.ctx.store.transaction((db) => void db.prepare('UPDATE workflow_tasks SET carry = ? WHERE run_id = ?').run(JSON.stringify({ ...stored, roomSince: since }), runId))
+        }
+        this.e.ctx.logger.info(`workflow: run ${runId} of board task ${row.task_id} waits to carry the work of run ${from.runId} (since ${since}, at most maxLimitWaitHours ${max}): ${answer.reason}`)
+        return 'wait'
+      }
+      pastRoom = ` (it waited for room from ${since}, past maxLimitWaitHours (${max}); the earlier work stays on its branch)`
+    }
     const tree = subjectId({ type: 'git-head', ...from.subject })
     const carried = answer?.outcome === 'carried' ? answer : undefined
     const fresh = carried ? undefined
       : row.lost ? 'the run lost its holder before its first step, and starts nothing'
         : !carryOf ? 'the workers seam cannot carry a worktree (no carry)'
           : !answer ? `no Worker source holds ${from.workspace} as the worktree of run ${from.runId}`
-            : answer.outcome === 'refused' ? `source ${answer.source} did not carry it: ${answer.reason}` : `source ${answer.source} answered ${String((answer as { outcome?: unknown }).outcome)}`
+            : answer.outcome === 'refused' ? `source ${answer.source} did not carry it: ${answer.reason}${pastRoom}` : `source ${answer.source} answered ${String((answer as { outcome?: unknown }).outcome)}`
     const decision = this.e.ctx.artifacts.recordDecision({
       decisionType: 'gate',
       question: `Does run ${runId}'s worktree start from the work run ${from.runId} left (attempt ${from.attempt} of board task ${row.task_id})?`,
@@ -223,6 +244,7 @@ export class TaskCarries {
     this.note(runId)
     if (carried) this.e.ctx.logger.info(`workflow: run ${runId} of board task ${row.task_id} starts from the work of run ${from.runId} (${carried.from.commit} on ${carried.from.branch})`)
     else this.e.ctx.logger.info(`workflow: run ${runId} of board task ${row.task_id} starts from HEAD, not from the work of run ${from.runId}: ${fresh}`)
+    return 'go'
   }
 
   /** What a move of the repository's HEAD since the earlier tree did to the carry, in words. */

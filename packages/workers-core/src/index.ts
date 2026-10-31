@@ -399,12 +399,16 @@ export interface LivenessQuery {
  *   there (else the worktree's HEAD): what each review read, and each fix's result, one commit each.
  *   The worktree's HEAD, branch, index, and files are never touched, so a board task bound to its HEAD
  *   still binds the run's result.
+ * - `release` (T345): the landing ended merged, or with nothing to land, and the task will not retry
+ *   this run: remove the worktree now, only while it is intact, no agent run of the workflow run can
+ *   still write it, and it holds nothing uncommitted. Its branch stays; nothing is forced.
  */
 export type LandStep =
   | { step: 'commit'; runId: string; workspace: string; subject: { ref: string; version: string }; message: string }
   | { step: 'record'; runId: string; workspace: string; subject: { ref: string; version: string }; message: string }
   | { step: 'merge'; runId: string; workspace: string; head: string; base: { branch: string; sha: string }; message: string }
   | { step: 'rebase'; runId: string; workspace: string; phase: RebasePhase; head: string; base: { branch: string; sha: string }; message: string; stacked?: true }
+  | { step: 'release'; runId: string; workspace: string }
 
 /** The ref that keeps a workflow run's review history (a {@link LandStep} `record`): never its branch, never checked out. */
 export const reviewRef = (runId: string): string => `refs/system/reviews/${runId}`
@@ -453,6 +457,10 @@ export type LandRefusal = 'moved' | 'gone' | 'busy' | 'base-moved' | 'head-moved
  * A `record` step answers `recorded`: `commit` holds the tree on `ref`, on top of `parent`;
  * `recorded` false when nothing new was made (the ref's last commit, or the worktree's HEAD, already
  * held that tree; then `commit` is that one).
+ *
+ * A `release` step answers `released`: the worktree at `path` is removed, its `branch` kept, on the
+ * `retention` decision `decision` (INV-13); or `refused`, the worktree left where it is. A `commit`
+ * asked again after the release finds the landing commit on the branch (`committed` false, INV-4).
  */
 export type Landed =
   /** `subject`: the tree the worktree holds once committed, where a landing whose base did not move runs its full suite (T299). */
@@ -462,6 +470,7 @@ export type Landed =
   | { outcome: 'conflicted'; repository: string; branch: string; from: string; base: { branch: string; sha: string }; fork: string; files: string[]; more: number; moved: string[] }
   | { outcome: 'abandoned'; repository: string; branch: string; head: string; left: string[] }
   | { outcome: 'recorded'; repository: string; ref: string; commit: string; parent: string; recorded: boolean }
+  | { outcome: 'released'; repository: string; branch: string; path: string; decision: string }
   | { outcome: 'refused'; cause: LandRefusal; reason: string }
 
 /** Conflicted files a `conflicted` rebase names at most (INV-9). */
@@ -545,9 +554,12 @@ export interface CarryStep {
  * before. `moved`: the earlier tree is no longer the subject its writing step left; `gone`: its worktree
  * was removed; `busy`: a run of it is unfinished or not known to be gone; `base-moved`: the repository's
  * HEAD is no longer the tree's base; `exists`: the new run has a worktree (or its branch) already;
- * `empty`: the earlier tree holds no change; `failed`: anything else, such as a worktree not intact.
+ * `empty`: the earlier tree holds no change; `no-room`: the host has no room to cut the new run's
+ * worktree now (the disk floor, T345), a passing condition: the carry is asked again, not settled,
+ * for as long as the earlier tree is kept (once it is removed, the carry is refused `gone`);
+ * `failed`: anything else, such as a worktree not intact.
  */
-export type CarryRefusal = 'moved' | 'gone' | 'busy' | 'base-moved' | 'exists' | 'empty' | 'failed'
+export type CarryRefusal = 'moved' | 'gone' | 'busy' | 'base-moved' | 'exists' | 'empty' | 'no-room' | 'failed'
 
 /**
  * What a carry did (ADR-0061):

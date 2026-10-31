@@ -2963,7 +2963,7 @@
     }
   },
   "mcp-report.v1.json": {
-    "version": "1.7",
+    "version": "1.8",
     "nodes": {
       "": {"h":"158122d46580026f","r":["input","output","tool"],"p":["input","output","tool"]},
       "/$defs/count": {"h":"a6c14b5eee7c4503"},
@@ -2993,8 +2993,8 @@
       "/$defs/lead-health-output/properties/rows/items/properties/id": {"h":"0eb2e3b6e08c031d"},
       "/$defs/lead-health-output/properties/rows/items/properties/name": {"h":"0eb2e3b6e08c031d"},
       "/$defs/lead-health-output/properties/rows/items/properties/reason": {"h":"5fddca17fd910d3d"},
-      "/$defs/lead-health-output/properties/rows/items/properties/state": {"h":"747f74627803de80"},
-      "/$defs/lead-health-output/properties/state": {"h":"747f74627803de80"},
+      "/$defs/lead-health-output/properties/rows/items/properties/state": {"h":"961894032b362d74"},
+      "/$defs/lead-health-output/properties/state": {"h":"961894032b362d74"},
       "/$defs/metric": {"h":"ae1cccf420d75d90","r":["id","l3","name","sources","state","unit"],"p":["bound","byKind","figures","id","l3","name","reason","sample","sampleOf","sources","state","unit","value"]},
       "/$defs/metric/allOf/0": {"h":"44136fa355b3678a"},
       "/$defs/metric/allOf/0/else": {"h":"44136fa355b3678a","r":["reason"],"p":["reason"]},

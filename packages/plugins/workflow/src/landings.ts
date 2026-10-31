@@ -234,15 +234,37 @@ export class TaskLandings {
     const waits = sameRun && task!.state === 'review' && task!.waiting?.reason === 'landing' && !!task!.result?.acceptance
     // Not waiting yet, but still on this run's result (a wait that expired, re-opened later): told once it waits again.
     if (!waits && sameRun && task!.state !== 'done' && task!.state !== 'cancelled') return
+    // The task is done on this run's result: nothing retries it, so its worktree is of no more use (T345).
+    let finished = sameRun && task!.state === 'done'
     if (waits && typeof board.landed === 'function') {
       try {
         await board.landed(row.task_id, { runId: row.run_id, acceptance: task!.result!.acceptance!, outcome: landing.tell!, decision: landing.decisions!.at(-1)! })
+        finished = true
       } catch (error) {
         if (!(error instanceof BoardError)) throw error
         this.e.ctx.logger.warn(`workflow: board task ${row.task_id} did not take the end of run ${row.run_id}'s landing (${landing.tell}): ${error.message}`)
       }
     }
     this.save(row, { ...landing, told: true })
+    if (finished) await this.release(row, landing)
+  }
+
+  /**
+   * Have the source that holds the worktree remove it, now the landing ended merged or with nothing to
+   * land and the task is done (T345). A worktree of a task that may still be retried is never asked for:
+   * a landing sent back, refused, or rejected, and a result the board did not take as done, keep theirs
+   * for the retention. A source that keeps it (it holds an uncommitted change, a run still writes it)
+   * says why, and the retention takes it later; an answer that fails changes nothing.
+   */
+  private async release(row: TaskRow, landing: TaskLanding): Promise<void> {
+    const land = this.e.ctx.workers.land
+    if (!land || !landing.workspace || (landing.tell !== 'merged' && landing.tell !== 'not-needed')) return
+    try {
+      const released = await land.call(this.e.ctx.workers, { step: 'release', runId: row.run_id, workspace: landing.workspace } satisfies LandStep)
+      if (released?.outcome === 'refused') this.e.ctx.logger.info(`workflow: the worktree of run ${row.run_id} stays after its landing: ${released.reason}`)
+    } catch (error) {
+      this.e.ctx.logger.warn(`workflow: the worktree of run ${row.run_id} was not asked to be removed after its landing: ${(error as Error)?.message ?? String(error)}`)
+    }
   }
 
   /** The landing's next state, or undefined when it waits as it is. */

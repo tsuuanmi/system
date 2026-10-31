@@ -1,14 +1,15 @@
 /**
  * The health table of a project (PROP-0019 section 2.10), computed: a pure function from what was
- * read to one row per source, each `ok`, `degraded`, or `unknown` with its reason. A source that
- * could not be read is `unknown`, never `ok` (INV-2). It joins what is read in several places today:
- * dispatch, the Workers, the quota pools, the notification and lead sinks, the live update, the
- * landing queue, the worktrees held, and each enforce switch's mode (T322).
+ * read to one row per source, each `ok`, `degraded`, `failed` (the disk under its floor, T345), or
+ * `unknown` with its reason. A source that could not be read is `unknown`, never `ok` (INV-2). It joins
+ * what is read in several places today: dispatch, the Workers, the quota pools, the notification and
+ * lead sinks, the live update, the landing queue, the worktrees held, the disk, and each enforce
+ * switch's mode (T322).
  */
 import type { Read } from './digest.ts'
 import { describeDrift, drifted, type PolicyDrift } from './policy-drift.ts'
 
-export type HealthState = 'ok' | 'degraded' | 'unknown'
+export type HealthState = 'ok' | 'degraded' | 'unknown' | 'failed'
 export interface HealthRow { id: string; name: string; state: HealthState; reason: string }
 export interface Health { projectId: string; asOf: string; state: HealthState; rows: HealthRow[] }
 
@@ -28,6 +29,10 @@ export interface LiveUpdateRead { at: string; outcome: string; reason?: string }
 export interface LandingQueueRead { depth: number; oldestAt?: string }
 export interface WorktreesRead { total: number; inUse: number; held: number; uncommitted: number }
 export interface EnforceRead { mechanism: string; mode: string }
+/** One filesystem's space; absent in a {@link DiskRead} when it could not be read. */
+interface SpaceRead { path: string; freeBytes: number; totalBytes: number }
+/** The disk the worktrees and the store fill, and the floor (`agentWorkers.diskStatus()`); `mode` is the disk-floor mechanism's. */
+export interface DiskRead { mode: string; floorBytes: number; worktrees?: SpaceRead; store?: SpaceRead }
 
 export interface HealthSources {
   projectId: string
@@ -40,6 +45,8 @@ export interface HealthSources {
   liveUpdate: Read<LiveUpdateRead | undefined>
   landingQueue: Read<LandingQueueRead>
   worktrees: Read<WorktreesRead>
+  /** The free space of the worktrees' and the store's filesystems, and the disk floor (T345). */
+  disk: Read<DiskRead>
   enforcement: Read<EnforceRead[]>
   /** Each policy file the repository ships for the project at the live install's commit, against the live set (T352). */
   policies: Read<PolicyDrift[]>
@@ -49,6 +56,8 @@ export interface HealthSources {
 const QUOTA_DEGRADED_PERCENT = 90
 /** A landing waiting longer than this, in hours, is degraded: the queue is stuck or waits on someone. */
 const LANDING_STALE_HOURS = 12
+/** A filesystem with less than this share free is degraded; under the configured floor it is failed (T345). */
+const DISK_DEGRADED_FREE = 0.2
 /** The window the sinks' deliveries are read over, in hours. */
 export const SINK_WINDOW_HOURS = 24
 
@@ -122,6 +131,21 @@ export function buildHealth(s: HealthSources): Health {
     rows.push(problems.length ? row('worktrees', 'Worktrees held', 'degraded', `${problems.join('; ')} of ${w.total}`) : row('worktrees', 'Worktrees held', 'ok', `${w.total} kept, ${w.inUse} in use, none held`))
   }
 
+  if (!('value' in s.disk)) rows.push(unknown('disk', 'Disk', s.disk.unknown))
+  else {
+    const d = s.disk.value
+    const gb = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)} GB`
+    const spaces = [['worktrees', d.worktrees], ['store', d.store]] as const
+    const unread = spaces.filter(([, v]) => !v).map(([name]) => name)
+    const shown = spaces.flatMap(([name, v]) => (v ? [`${name} ${gb(v.freeBytes)} free of ${gb(v.totalBytes)} (${v.totalBytes ? Math.round((v.freeBytes / v.totalBytes) * 100) : 0} %)`] : []))
+    const under = spaces.flatMap(([name, v]) => (v && d.floorBytes > 0 && v.freeBytes < d.floorBytes ? [name] : []))
+    const low = spaces.flatMap(([name, v]) => (v && (v.totalBytes ? v.freeBytes / v.totalBytes : 0) < DISK_DEGRADED_FREE ? [name] : []))
+    if (unread.length) rows.push(unknown('disk', 'Disk', `the space of the ${unread.join(' and ')} filesystem could not be read`))
+    else if (under.length) rows.push(row('disk', 'Disk', 'failed', `${shown.join('; ')}: the ${under.join(' and ')} filesystem is under the floor of ${gb(d.floorBytes)} (disk-floor ${d.mode})`))
+    else if (low.length) rows.push(row('disk', 'Disk', 'degraded', `${shown.join('; ')}: the ${low.join(' and ')} filesystem has under ${DISK_DEGRADED_FREE * 100} % free`))
+    else rows.push(row('disk', 'Disk', 'ok', `${shown.join('; ')}; floor ${gb(d.floorBytes)} (disk-floor ${d.mode})`))
+  }
+
   if (!('value' in s.enforcement)) rows.push(unknown('enforce', 'Enforce switches', s.enforcement.unknown))
   else for (const m of s.enforcement.value) rows.push(m.mode === 'on' ? row(`enforce:${m.mechanism}`, `Enforce ${m.mechanism}`, 'ok', 'on') : row(`enforce:${m.mechanism}`, `Enforce ${m.mechanism}`, 'degraded', m.mode === 'warn' ? 'warn: records what it would refuse, refuses nothing' : `${m.mode}: it does not run`))
 
@@ -131,7 +155,7 @@ export function buildHealth(s: HealthSources): Health {
     for (const d of s.policies.value) rows.push(row(`policy:${d.id}`, `Policy ${d.id}`, drifted(d) ? 'degraded' : 'ok', `${describeDrift(d)}${drifted(d) ? ': a policy change must propose it' : ''}`))
   }
 
-  const state: HealthState = rows.some((r) => r.state === 'degraded') ? 'degraded' : rows.some((r) => r.state === 'unknown') ? 'unknown' : 'ok'
+  const state: HealthState = rows.some((r) => r.state === 'failed') ? 'failed' : rows.some((r) => r.state === 'degraded') ? 'degraded' : rows.some((r) => r.state === 'unknown') ? 'unknown' : 'ok'
   return { projectId: s.projectId, asOf: s.asOf, state, rows }
 }
 

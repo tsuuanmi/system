@@ -222,6 +222,56 @@ describe('ctx.workflow starts a board task\'s next attempt from its previous att
     expect(b.ctx.workflow.explain(second.runId)!.decisions!.map((d) => d.id)).toEqual(expect.arrayContaining(carry.decisions))
   })
 
+  it('keeps the carry due while the source has no room on its disk to cut the run\'s worktree, starting no step, and carries once it has room, while the earlier tree is kept: a full disk alone never makes it start fresh (T345)', { timeout: 120_000 }, async () => {
+    const b = await boot()
+    const { task, first } = await failedOnce(b, 'relay', BROKEN)
+    const answer = b.carrier.answer
+    let room = false
+    b.carrier.answer = (step) => (room ? answer(step) : { outcome: 'refused', cause: 'no-room', reason: 'the disk under the worktrees is under the floor of 10 GB: no run is started' })
+    const startedBefore = b.workers.started.length
+    const second = await b.ctx.workflow.start({ template: 'relay', input: 'change a.c', classification: 'public', task: { taskId: task.taskId } })
+    await vi.waitFor(() => expect(b.carrier.steps.length).toBeGreaterThan(0), { timeout: 30_000 })
+    // Refused for room: still due, nothing decided fresh, no step started.
+    expect(carryOf(b.ctx, second.runId)).toMatchObject({ state: 'due', from: { runId: first.runId } })
+    expect(carryOf(b.ctx, second.runId)!.decisions.map((d) => decisionOf(b.ctx, d).outcome.option)).toEqual(['carry'])
+    expect(b.workers.started).toHaveLength(startedBefore)
+    // Room again: the carry is asked again and the run starts from the earlier work.
+    room = true
+    // The run is looked at again after the engine's task wait (30 s), then settles.
+    const done = await vi.waitFor(() => {
+      const view = b.ctx.workflow.get(second.runId)
+      if (view?.task?.phase !== 'reported') throw new Error(`run ${second.runId} is not reported yet`)
+      return view
+    }, { timeout: 100_000, interval: 50 })
+    expect(done.status).toBe('completed')
+    expect(carryOf(b.ctx, second.runId)).toMatchObject({ state: 'carried', commit: 'c'.repeat(40), branch: `system/run/${first.runId}` })
+  })
+
+  it('bounds the wait for room by maxLimitWaitHours from its first wait, kept on the carry, whatever the retention (0 keeps the earlier tree forever): past it the carry settles fresh, recorded with why (T345, INV-9)', { timeout: 120_000 }, async () => {
+    const b = await boot()
+    const { task, first } = await failedOnce(b, 'relay', BROKEN)
+    // The floor never lifts, and the earlier tree is never retired (as with worktreeRetentionHours 0).
+    b.carrier.answer = () => ({ outcome: 'refused', cause: 'no-room', reason: 'the disk under the worktrees is under the floor of 10 GB: no run is started' })
+    const second = await b.ctx.workflow.start({ template: 'relay', input: 'change a.c', classification: 'public', task: { taskId: task.taskId } })
+    // The first wait is kept on the carry, so the bound survives a restart (INV-4).
+    const waiting = await vi.waitFor(() => {
+      const carry = carryOf(b.ctx, second.runId)
+      if (!carry?.roomSince) throw new Error('no wait recorded yet')
+      return carry
+    }, { timeout: 30_000, interval: 25 })
+    expect(waiting).toMatchObject({ state: 'due', from: { runId: first.runId } })
+    // Its first wait put back past the bound (24 h by default): the next look settles it.
+    const row = b.ctx.store.db.prepare('SELECT carry FROM workflow_tasks WHERE run_id = ?').get(second.runId) as { carry: string }
+    b.ctx.store.db.prepare('UPDATE workflow_tasks SET carry = ? WHERE run_id = ?').run(JSON.stringify({ ...JSON.parse(row.carry), roomSince: '2020-01-01T00:00:00.000Z' }), second.runId)
+    const fresh = await vi.waitFor(() => {
+      const carry = carryOf(b.ctx, second.runId)
+      if (carry?.state !== 'fresh') throw new Error(`the carry is ${carry?.state}`)
+      return carry
+    }, { timeout: 100_000, interval: 50 })
+    expect(fresh).toMatchObject({ cause: 'no-room', reason: expect.stringMatching(/waited for room from 2020-01-01T00:00:00\.000Z, past maxLimitWaitHours \(24\)/) })
+    expect(decisionOf(b.ctx, fresh.decisions.at(-1)!).outcome).toMatchObject({ option: 'fresh', detail: { cause: 'no-room' } })
+  })
+
   it('starts from HEAD, recorded with why, when no source holds the tree, when the source refuses, and when it cannot answer (REQ-WF-14, INV-2)', async () => {
     const b = await boot()
     const cases: Array<[string, (step: CarryStep) => Carried | undefined, RegExp]> = [

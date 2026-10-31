@@ -56,6 +56,7 @@ describe('the policy row of the health table', () => {
     dispatch: { value: { enabled: true, pausedProjects: [], bounds: [] } }, workers: { value: [{ worker: 'w1', state: 'ready' }] }, pools: { value: [{ pool: 'plan', available: true }] },
     notifySinks: { value: [{ sink: 'f', at: '2026-10-30T11:00:00.000Z', outcome: 'sent' }] }, leadSinks: { value: [{ sink: 'w', at: '2026-10-30T11:00:00.000Z', outcome: 'sent' }] },
     liveUpdate: { value: undefined }, landingQueue: { value: { depth: 0 } }, worktrees: { value: { total: 0, inUse: 0, held: 0, uncommitted: 0 } }, enforcement: { value: [] },
+    disk: { value: { mode: 'warn', floorBytes: 10 * 1024 ** 3, worktrees: { path: '/w', freeBytes: 50 * 1024 ** 3, totalBytes: 100 * 1024 ** 3 }, store: { path: '/s', freeBytes: 50 * 1024 ** 3, totalBytes: 100 * 1024 ** 3 } } },
     policies: { value: [] },
   }
   const row = (h: Report.Health, id: string) => h.rows.find((r) => r.id === id)

@@ -3239,9 +3239,35 @@ otherwise the Worker is `unavailable` (`system health`), with the reason in the 
   repository. Once the work is saved, `git -C <repository> worktree remove --force <path>`.
 - **A path that is not the run's:** a path that already exists and is not that run's worktree is
   never taken over (`config_error`). Move it away.
-- **Disk:** each worktree is a full checkout, kept a week by default. Lower
-  `worktreeRetentionHours` when disk is short, or remove the finished ones sooner
-  ([below](#remove-finished-run-worktrees)).
+- **Landed runs go at once (T345):** when a landing ends merged, or finds nothing to land, and the
+  task is done, the source removes the run's worktree right away if it holds nothing uncommitted
+  and no agent run holds it; its branch stays, and a `retention` decision (rule
+  `agent-workers.worktree-release`) records it. A landing step asked again after that (a restart)
+  finds its commit on the branch. A worktree of a task that may be retried (a landing sent back,
+  refused, or rejected, a result not accepted) is not asked for: the retention above takes it. One
+  the source keeps says why in the daemon log; the retention takes it later.
+- **Disk:** each worktree is a full checkout, kept a week by default. Set
+  `worktreeRetentionHours` (the live patch sets 6) for the worktrees a landing did not remove, or
+  remove the finished ones sooner ([below](#remove-finished-run-worktrees)). The disk floor
+  (`diskFloorGb`, default 10; `system enforce set disk-floor on|warn|off`, starting `warn`) cuts no
+  new worktree while the worktrees' filesystem has less free: dispatch's pass says why for every
+  task, and a start that bypasses dispatch is held at the cut ("no run is started"), never counted
+  as an attempt: a run's first step fails `overloaded` with nothing sent, so it backs off and, if it
+  ends, the board does not count it (ADR-0069); a carried retry's carry is refused `no-room`, and the
+  run waits with its carry still due, and carries the earlier attempt's work once there is room. That
+  wait is bounded by workflow `maxLimitWaitHours` (24 by default) from its first wait, kept on the
+  carry so a restart keeps it, whatever the retention (even `worktreeRetentionHours` 0): past it, the
+  retry starts fresh from HEAD, recorded with why. It ends sooner when the earlier attempt's worktree
+  goes: once the retention retires it (6 h with the live patch) or you remove it, the next look finds
+  it `gone` and the retry starts fresh. Either way the earlier work stays on its branch
+  `system/run/<earlier run>` for you to take by hand, and the retry's first step, still under the
+  floor, fails `overloaded` with nothing sent, so it spends no attempt. A check on a tip is
+  refused for that day. A run in the worktree it has goes on. In `warn` the refusal is only recorded (a `gate` decision of rule
+  `agent-workers.disk-floor`, at most once every 10 min). `lead_health`'s `Disk` row shows the free
+  space of the worktrees' and the store's filesystems: degraded under 20 % free, failed under the
+  floor. Free room by removing finished worktrees, but not the earlier worktree of a retry that waits
+  to carry it (`system worktrees` lists its run as finished; the task's newest run waits on it), or
+  that retry starts fresh; dispatch's next pass starts again by itself.
 
 ### Remove finished run worktrees
 

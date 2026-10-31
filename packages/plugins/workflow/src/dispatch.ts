@@ -606,6 +606,11 @@ export class Dispatcher {
     }
   }
 
+  /** Why no run starts now for want of disk (the Worker source's floor, T345), or undefined; a source that has none refuses nothing. */
+  private diskRefusal(): string | undefined {
+    return (this.e.ctx.get('agentWorkers' as never) as { diskFloorRefusal?: () => string | undefined } | undefined)?.diskFloorRefusal?.()
+  }
+
   /** Keep the pass as the last one (its reasons for each task), on the durable row. */
   private keep(view: DispatchPass): DispatchPass {
     try {
@@ -637,6 +642,13 @@ export class Dispatcher {
     const looked = ready.slice(0, MAX_LOOKED)
     view.more = ready.length - looked.length
     if (!looked.length) return view
+    // The host's disk is the Worker source's to read (T345): under its floor, no run is taken, and the pass says why.
+    const disk = this.diskRefusal()
+    if (disk) {
+      view.tasks = looked.slice(0, MAX_REPORTED).map(({ task, project }) => ({ taskId: task.taskId, projectId: project.projectId, title: task.title, reason: disk }))
+      view.more += Math.max(0, looked.length - MAX_REPORTED)
+      return { ...view, state: 'waiting', reason: disk }
+    }
     const counts = this.counts()
     const engineRoom = s.maxActiveRuns - s.leaveRunsFree
     const reasons = new Map<string, string>()
@@ -1323,6 +1335,8 @@ export class Dispatcher {
     const s = this.settings
     const pending = this.counts(row.ask_id).pending
     if (this.e.draining) return 'the host is draining'
+    const disk = this.diskRefusal()
+    if (disk) return disk
     if (this.active() + pending >= s.maxActiveRuns - s.leaveRunsFree) return `the engine is full (maxActiveRuns less dispatch.leaveRunsFree)`
     // The hour counts the starts made, never the rows still waiting, so two approved starts never hold each other back (D2).
     const full = this.hourFull(this.hourly(at, false), row.project_id)

@@ -30,6 +30,16 @@ describe('the lead brief\'s sources match the real services', () => {
     expect((AgentWorkers.prototype as unknown as Record<string, unknown>)['runWorktrees'], 'agentWorkers.runWorktrees').toBeInstanceOf(AsyncFunction)
   })
 
+  it('gives the health table and dispatch the agent-workers methods they call (T345)', () => {
+    const agents = AgentWorkers.prototype as unknown as Record<string, unknown>
+    expect(agents['worktreeCounts'], 'agentWorkers.worktreeCounts').toBeInstanceOf(AsyncFunction)
+    // Read synchronously by the health table and by dispatch's pass: never async, or a Promise would stand in for the value.
+    for (const m of ['diskStatus', 'diskFloorRefusal']) {
+      expect(typeof agents[m], `agentWorkers.${m}`).toBe('function')
+      expect(agents[m], `agentWorkers.${m}`).not.toBeInstanceOf(AsyncFunction)
+    }
+  })
+
   it('never calls the workflow\'s private projectOf', () => {
     const source = readFileSync(fileURLToPath(new URL('../../plugins/lead-inbox/src/brief-sources.ts', import.meta.url)), 'utf8')
     expect(source).not.toMatch(/workflow\.projectOf\(/)
