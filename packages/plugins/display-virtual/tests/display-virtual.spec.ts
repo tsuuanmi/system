@@ -10,6 +10,7 @@ import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import VirtualDisplay, { type SpawnXvfb, startXvfb } from '../src/index.ts'
 import { removeStaleDisplay } from '../src/xvfb.ts'
+import { scaled } from '../../../provider-core/conformance/time.ts'
 
 /** A scripted Xvfb: tests decide when it reports a display, writes stderr, or exits. */
 class FakeXvfb extends EventEmitter {
@@ -362,7 +363,7 @@ describe.runIf(hasXvfb)('display-virtual with a real Xvfb', () => {
     } finally {
       await fiber.dispose()
     }
-  }, 15_000)
+  }, scaled(15_000))
 
   it('starts a private X server and stops it on dispose', async () => {
     const ctx = new Context()
@@ -376,7 +377,7 @@ describe.runIf(hasXvfb)('display-virtual with a real Xvfb', () => {
     // are no evidence: a parallel test file's Xvfb may take them at once, on a recycled inode.
     expect(startTimeOf(server.pid)).not.toBe(server.start)
     expect(display.lost.aborted).toBe(true)
-  }, 15_000)
+  }, scaled(15_000))
 })
 
 if (hasXvfb) {

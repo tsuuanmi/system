@@ -67,7 +67,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
   type AgentHome, type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ProbeOptions, type RunResult, type RunSpec,
-  type RuntimeEvidence, type ToolCall, WORKSPACE_READS_SCRIPT, type WorkspaceReadBounds, agentHome, agentShellEnvironment, childEnvironment, confinedCommand, homeProblem, identityHmac, proveConfinement,
+  type RuntimeEvidence, type ToolCall, WORKSPACE_READS_SCRIPT, type WorkspaceReadBounds, agentHome, agentShellEnvironment, childEnvironment, confinedCommand, homeProblem, identityHmac, proveConfinement, withTestWorkers,
   readHomeJson, tailOf, toolSandboxAllowances, withMetering, withRunReport, workspaceReadArgs, workspaceReadBounds, writeLauncher,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
@@ -311,7 +311,7 @@ export class CodexRuntime implements AgentRuntimeProvider {
       let roots: string[] = []
       try {
         reads = this.readsCommand(spec.workspace, readBounds)
-        const confinement = withRunReport(this.confinement(bind), writes ? spec.reportFile : undefined)
+        const confinement = withTestWorkers(withRunReport(this.confinement(bind), writes ? spec.reportFile : undefined), writes ? spec.testWorkers : undefined)
         confined = confinedCommand(executable, [], confinement)
         // And the shells' tool-state directories (T270): fish's startup directories in them stay
         // read-only, bound so by the confinement, which no sandbox inside it can undo.

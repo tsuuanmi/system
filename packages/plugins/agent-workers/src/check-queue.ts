@@ -79,6 +79,18 @@ export class CheckQueue {
 /** The one queue of this process, the daemon's: every source of checks in it shares it. */
 export const hostChecks = new CheckQueue()
 
+const DEFAULT_STEP_TEST_RUNS = 6
+
+/**
+ * The test workers each writing step's own test runs get (T348): a budget of the host's cores (default
+ * half of them, the host being shared) shared among the `runs` that may test at once (default
+ * {@link DEFAULT_STEP_TEST_RUNS}, set to the dispatch's `maxRunning`), at least 1, at most 32.
+ */
+export function stepWorkers(stepTests: { coreBudget?: number; runs?: number }, cores = availableParallelism()): number {
+  const budget = stepTests.coreBudget ?? Math.floor(cores / 2)
+  return Math.max(1, Math.min(32, Math.floor(budget / (stepTests.runs ?? DEFAULT_STEP_TEST_RUNS))))
+}
+
 /**
  * The test workers each check run gets (T292): the host's cores less one (the main process) shared
  * among the `maxConcurrent` checks that may run at once, at least 1, at most 32 (the most vitest's

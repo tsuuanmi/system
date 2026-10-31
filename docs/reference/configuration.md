@@ -123,6 +123,9 @@
 | `checks` | object | `{}` | The load acceptance checks put on the host (T292) |
 | `checks.maxConcurrent` | number (1…32) | `2` | How many acceptance check runs the host runs at once, across every workflow run; the rest wait their turn, in order, and never fail for the wait (T292) |
 | `checks.maxWorkers` | number (1…256) |  | The test workers each check run gets (the vitest config reads SYSTEM_CHECK_MAX_WORKERS); default the host's cores less one, shared among maxConcurrent checks, at most 32 each (T292) |
+| `stepTests` | object | `{}` | The share of the host a writing step's own test runs take (T348) |
+| `stepTests.coreBudget` | number (1…1024) |  | The cores of the host a writing step's own test runs may use together, default half the host's (T348) |
+| `stepTests.runs` | number (1…64) |  | How many runs test at once, default 6: set it to the dispatch's maxRunning; each run's commands get coreBudget / runs test workers (SYSTEM_TEST_MAX_WORKERS), 1 to 32 (T348) |
 | `enforce` | object | `{}` | Each gate-like mechanism's start mode (ADR-0078); the plugin host's live override (system enforce set) wins, read at each use |
 | `enforce.diskFloor` | "off" \| "warn" \| "on" |  | The disk floor (default warn, the mechanism's start mode, T345): on cuts no new worktree while the worktrees' filesystem has less than diskFloorGb free, and dispatch starts none; warn records the refusal it would make and refuses nothing; off does not look |
 | `enforce.lockfileVerification` | "off" \| "warn" \| "on" |  | The supply-chain verification of a new lockfile (default warn, the mechanism's start mode): on opens one approval request per lockfile digest and runs the verification once on the host's network when approved; warn records the request it would open and opens none; off does not look (T333) |

@@ -3,7 +3,7 @@ import { hostname } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { profileUsers } from '../src/profiles.ts'
-import { canRunBrowser } from './support.ts'
+import { canRunBrowser, scaled } from './support.ts'
 import { boot, capture, gone, origin, pool, profileStack, reads, running, signedInProfile, squatter } from './profile-stack.ts'
 
 describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => {
@@ -16,7 +16,7 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
     expect(result).toBe('signed in')
     expect(state.cookies).toEqual([expect.objectContaining({ name: 'session', value: 'valid' })])
     expect(state.origins).toEqual([origin])
-  }, 60_000)
+  }, scaled(60_000))
 
   it('refuses a profile a live browser holds, and takes a lock whose pid runs no browser on it as stale (a reused pid)', async () => {
     const ctx = await boot()
@@ -29,14 +29,14 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
     // A live pid, but not a browser on this profile: the lock is a leftover.
     symlinkSync(`${hostname()}-${process.pid}`, join(dir, 'SingletonLock'))
     await expect(capture(ctx, dir)).resolves.toMatchObject({ result: 'signed in' })
-  }, 90_000)
+  }, scaled(90_000))
 
   it('runs one Save per account at a time, so two never open the profile together', async () => {
     const ctx = await boot()
     const dir = await signedInProfile()
     const both = await Promise.all([capture(ctx, dir), capture(ctx, dir)])
     expect(both.map((b) => b.result)).toEqual(['signed in', 'signed in'])
-  }, 90_000)
+  }, scaled(90_000))
 
   describe('profile turns (a session-bound account, ADR-0030)', () => {
     it('opens each turn as a page of one persistent context on the login profile, and closes only the page (REQ-ACC-4)', async () => {
@@ -66,7 +66,7 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
       expect(profileUsers(dir)).toEqual([])
       // Closed, its browser has exited: the Save flow reopens the profile at once.
       await expect(capture(ctx, dir)).resolves.toMatchObject({ result: 'signed in' })
-    }, 90_000)
+    }, scaled(90_000))
 
     it('reserves the profile for the operator: refused while a turn runs; once reserved, turns fail as overloaded until every reservation is released', async () => {
       const ctx = await boot()
@@ -93,7 +93,7 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
       second()
       const again = await pool(ctx).openTurn('acct', { profile: { dir } })
       await again.close()
-    }, 90_000)
+    }, scaled(90_000))
 
     it('stops a browser a crashed host left on the profile when the operator reserves it', async () => {
       const ctx = await boot()
@@ -102,6 +102,6 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
       const release = await pool(ctx).reserveProfile('acct', dir)
       await gone(orphan)
       release()
-    }, 90_000)
+    }, scaled(90_000))
   })
 })

@@ -4,7 +4,7 @@ import { type XvfbHandle, startXvfb } from '@tsuuanmi/system-display-virtual'
 import { Display, type PreparedDisplay, ProviderError } from '@tsuuanmi/system-provider-core'
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 import BrowserPool from '../src/index.ts'
-import { canRunBrowser as canRun, testChrome as chrome, fileDisplay } from './support.ts'
+import { canRunBrowser as canRun, testChrome as chrome, fileDisplay, scaled } from './support.ts'
 
 /** These tests exercise the patchright provider itself, so they use its concrete page and context types. */
 const pool = (ctx: Context): BrowserPool => ctx.browser as unknown as BrowserPool
@@ -32,7 +32,7 @@ class KillableDisplay extends Display {
   }
 
   private async start(): Promise<PreparedDisplay> {
-    const xvfb = await startXvfb({ executable: 'Xvfb', startupTimeoutMs: 5000 })
+    const xvfb = await startXvfb({ executable: 'Xvfb', startupTimeoutMs: scaled(5000) })
     const lost = new AbortController()
     void xvfb.exited.then(() => lost.abort(new ProviderError('session_broken', 'Xvfb exited')))
     this.xvfb = xvfb
@@ -103,7 +103,7 @@ describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
     await second.bringToFront()
     expect(await turn.page.evaluate(() => document.hasFocus())).toBe(true)
     await turn.close()
-  }, 60_000)
+  }, scaled(60_000))
 
   it('builds each turn in a fresh context from portable state and captures it back filtered (REQ-ACC-4)', async () => {
     const { ctx } = await boot()
@@ -135,7 +135,7 @@ describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
     await fresh.page.goto(`${origin}/`)
     expect(await fresh.page.evaluate(() => [document.cookie, localStorage.length])).toEqual(['', 0])
     await fresh.close()
-  }, 60_000)
+  }, scaled(60_000))
 
   it('keeps one browser per account and closes it after the idle timeout (REQ-ACC-7)', async () => {
     const { ctx } = await boot({ closeAfterMs: 300 })
@@ -147,8 +147,8 @@ describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
     await new Promise((resolve) => setTimeout(resolve, 500))
     expect(pool(ctx).openAccounts().sort()).toEqual(['acct-a', 'acct-b'])
     await Promise.all([a2.close(), b.close()])
-    await vi.waitFor(() => expect(pool(ctx).openAccounts()).toEqual([]), { timeout: 5000 })
-  }, 60_000)
+    await vi.waitFor(() => expect(pool(ctx).openAccounts()).toEqual([]), { timeout: scaled(5000) })
+  }, scaled(60_000))
 
   it('closes a turn context when its signal aborts', async () => {
     const { ctx } = await boot()
@@ -157,7 +157,7 @@ describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
     const closed = new Promise((resolve) => turn.context.once('close', resolve))
     controller.abort()
     await closed
-  }, 60_000)
+  }, scaled(60_000))
 
   it('closes an aborted turn\'s context only after its page attached: no rejection is left unhandled (roadmap P2, flaky under load)', async () => {
     const { ctx } = await boot()
@@ -180,7 +180,7 @@ describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
       process.off('unhandledRejection', observe)
     }
     expect(unhandled.map((r) => String((r as Error)?.message ?? r))).toEqual([])
-  }, 120_000)
+  }, scaled(120_000))
 
   it('honours an abort that arrives while Chrome is still launching', async () => {
     const { ctx } = await boot()
@@ -188,7 +188,7 @@ describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
     const opening = pool(ctx).openTurn('acct-late', { signal: controller.signal })
     setTimeout(() => controller.abort(new Error('lease lost')), 50)
     await expect(opening).rejects.toThrow(/lease lost/)
-  }, 60_000)
+  }, scaled(60_000))
 
   it('closes the browsers on a lost display and relaunches on the next display', async () => {
     const { ctx, display } = await boot()
@@ -201,7 +201,7 @@ describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
     await next.page.goto(`${origin}/`)
     expect(await next.page.evaluate(() => document.visibilityState)).toBe('visible')
     await next.close()
-  }, 60_000)
+  }, scaled(60_000))
 
   it('closes every browser on dispose', async () => {
     const { ctx, disposeBrowser } = await boot()
@@ -209,7 +209,7 @@ describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
     const browser = turn.context.browser()!
     await disposeBrowser()
     expect(browser.isConnected()).toBe(false)
-  }, 60_000)
+  }, scaled(60_000))
 })
 
 if (canRun) {

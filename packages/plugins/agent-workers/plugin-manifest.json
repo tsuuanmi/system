@@ -140,6 +140,10 @@
       "sensitive": false
     },
     {
+      "key": "stepTests",
+      "sensitive": false
+    },
+    {
       "key": "enforce",
       "sensitive": false
     },

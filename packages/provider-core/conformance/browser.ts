@@ -7,6 +7,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type {} from '../src/browser.ts'
 import type { Boot } from './display.ts'
+import { scaled } from './time.ts'
 
 /** The engine-neutral page operations the suite needs, supplied by the provider's test. */
 export interface PageProbe {
@@ -45,7 +46,7 @@ export function browserConformance(name: string, boot: Boot, probe: PageProbe): 
       } finally {
         await dispose()
       }
-    }, 60_000)
+    }, scaled(60_000))
 
     it('captures state for the requested origins only', async () => {
       const { ctx, dispose } = await boot()
@@ -62,7 +63,7 @@ export function browserConformance(name: string, boot: Boot, probe: PageProbe): 
       } finally {
         await dispose()
       }
-    }, 60_000)
+    }, scaled(60_000))
 
     it('opens profile turns as pages of one persistent context, kept across reopen, and refuses them while reserved (ADR-0030)', async () => {
       const { ctx, dispose } = await boot()
@@ -93,7 +94,7 @@ export function browserConformance(name: string, boot: Boot, probe: PageProbe): 
         await dispose()
         rmSync(dir, { recursive: true, force: true })
       }
-    }, 90_000)
+    }, scaled(90_000))
 
     it('keeps a session\'s profile page on close and hands it back; discard and discardTab close it for good (ADR-0030)', async () => {
       const { ctx, dispose } = await boot()
@@ -117,7 +118,7 @@ export function browserConformance(name: string, boot: Boot, probe: PageProbe): 
         await dispose()
         rmSync(dir, { recursive: true, force: true })
       }
-    }, 90_000)
+    }, scaled(90_000))
 
     it('names the executable it launches', async () => {
       const { ctx, dispose } = await boot()

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_KEPT_TABS } from '../src/profiles.ts'
-import { canRunBrowser } from './support.ts'
+import { canRunBrowser, scaled } from './support.ts'
 import { boot, capture, origin, pool, profileStack, signedInProfile } from './profile-stack.ts'
 
 describe.runIf(canRunBrowser)('pool(ctx) profile turns: their pacing, the browsers kept open, and kept tabs (PROP-0007, ADR-0030)', () => {
@@ -18,7 +18,7 @@ describe.runIf(canRunBrowser)('pool(ctx) profile turns: their pacing, the browse
     expect((await capture(ctx, dir)).result).toBe('signed in')
     // Used in place: the profile stays held for the account's next turn.
     expect(pool(ctx).openAccounts()).toEqual(['acct'])
-  }, 90_000)
+  }, scaled(90_000))
 
   it('spaces page opens across the accounts of one pace group (PROP-0007)', async () => {
     const ctx = await boot()
@@ -32,7 +32,7 @@ describe.runIf(canRunBrowser)('pool(ctx) profile turns: their pacing, the browse
     const second = await pool(ctx).openTurn('acct-b', { profile: { dir: b, gapMs: 0, pace } })
     expect(Date.now() - asked).toBeGreaterThanOrEqual(1500)
     await Promise.all([first.close(), second.close()])
-  }, 120_000)
+  }, scaled(120_000))
 
   it('keeps account browsers under maxBrowsers: the longest-idle one closes for a new one, and with all busy the new one waits (PROP-0007)', async () => {
     const ctx = await boot({ maxBrowsers: 2 })
@@ -54,7 +54,7 @@ describe.runIf(canRunBrowser)('pool(ctx) profile turns: their pacing, the browse
     const fourth = await waiting
     expect(pool(ctx).openAccounts().sort()).toEqual(['acct-a', 'acct-b'])
     await Promise.all([busy.close(), fourth.close()])
-  }, 180_000)
+  }, scaled(180_000))
 
   describe('kept tabs: a session\'s page between its turns (ADR-0030)', () => {
     it('keeps a session\'s page on close and hands it back, in front, with no new page and no pacing; discard closes it for good', async () => {
@@ -76,7 +76,7 @@ describe.runIf(canRunBrowser)('pool(ctx) profile turns: their pacing, the browse
       await again.discard!()
       expect(again.page.isClosed()).toBe(true)
       expect(pool(ctx).profileStates()).toEqual([{ account: 'acct', open: true, pages: 0, kept: 0, reserved: false }])
-    }, 90_000)
+    }, scaled(90_000))
 
     it('keeps at most MAX_KEPT_TABS per account, closing the least recently used; a session\'s end closes its tab', async () => {
       const ctx = await boot()
@@ -97,7 +97,7 @@ describe.runIf(canRunBrowser)('pool(ctx) profile turns: their pacing, the browse
       // A kept tab the browser closes on its own is forgotten.
       await pages[1]!.close()
       expect(pool(ctx).profileStates()[0]).toMatchObject({ kept: 2 })
-    }, 90_000)
+    }, scaled(90_000))
 
     it('never lets kept tabs refuse the operator: a reservation closes them with the context', async () => {
       const ctx = await boot()
@@ -111,6 +111,6 @@ describe.runIf(canRunBrowser)('pool(ctx) profile turns: their pacing, the browse
       const fresh = await pool(ctx).openTurn('acct', { profile: { dir, keep: 's1' } })
       expect(fresh.reused).toBe(false)
       await fresh.discard!()
-    }, 90_000)
+    }, scaled(90_000))
   })
 })
