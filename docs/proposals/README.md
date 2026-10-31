@@ -178,8 +178,18 @@ accepted/implemented -> superseded
   state of a coordination directory that holds `LEAD.md` alone; and 13 ranked tasks that start
   after the core loop runs clean. It changes no code.
 
+- [PROP-0021: Run worktrees share one node_modules through pnpm's global virtual store, with a single writer](0021-shared-node-modules-gvs.md),
+  **draft** (T358, the operator's choice of 2026-10-31; supersedes PROP-0020). One job writes the shared
+  `links/` (on a listed branch's lockfile change and at first use, confined, offline, from the store);
+  it is read-only to every step, check and setup. A run whose lockfile matches installs with the global
+  virtual store (about 4 MiB against 684 MiB); a run that changes its lockfile copies, as today, so no
+  run setup writes the shared directory. Switch `enforce.sharedNodeModules` (off, warn, on) with a copy
+  fallback on any failure; pnpm pinned, an upgrade re-runs the experiment rows. Disk at 6, 12 and 20 runs
+  (80 to 91 % saved), failure modes, INV and ADR implications, five tasks, the first the writer job, off.
+  It changes no code.
+
 - [PROP-0020: Run worktrees share one read-only node_modules per lockfile digest](0020-shared-node-modules.md),
-  **draft** (T355). `node_modules` is 683 MiB of a 710 MiB worktree, copied per run on an ext4 with no
+  **superseded** by PROP-0021 (T355). `node_modules` is 683 MiB of a 710 MiB worktree, copied per run on an ext4 with no
   reflink. Three options costed at 6, 12 and 20 runs: a read-only bind of one install keyed by the
   lockfile digest (recommended: 80 to 91 % saved, a run cannot alter it), pnpm's global virtual store
   (the experiment's second subject), and hardlinks within one master (rejected: one inode with every

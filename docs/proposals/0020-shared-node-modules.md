@@ -1,16 +1,21 @@
 ---
 id: PROP-0020
 type: proposal
-status: draft
+status: superseded
+superseded-by: PROP-0021
 owners: [operator]
 created: 2026-10-31
-summary: A run worktree holds its own 683 MiB copy of node_modules (96 % of a 710 MiB worktree, measured on 2026-10-30), because the setup installs with --package-import-method=copy, on ext4 with no reflink. This proposal compares three ways to stop copying it per run, with the disk each saves at 6, 12 and 20 runs, setup time, what a run that changes its dependencies does, what breaks, and the confinement and invariant cost of each, and recommends one. Recommended, option A: one install per key (lockfile digest, setup, platform) built once by the setup, published immutable, and bound read-only into every confinement at the same absolute path, so a run can never alter it; the worktree keeps only its symlink farm. Six tasks, a switch (off, warn, on) and a test on the test profile. Option B (pnpm's global virtual store) is the experiment's second candidate; option C (hardlinks within one master) is rejected, since the master would be one inode with every worktree. Nothing in this proposal changes code.
+summary: Superseded by PROP-0021 (2026-10-31, the operator's choice of pnpm's global virtual store with a single writer over option A). A run worktree holds its own 683 MiB copy of node_modules (96 % of a 710 MiB worktree, measured on 2026-10-30), because the setup installs with --package-import-method=copy, on ext4 with no reflink. This proposal compares three ways to stop copying it per run, with the disk each saves at 6, 12 and 20 runs, setup time, what a run that changes its dependencies does, what breaks, and the confinement and invariant cost of each, and recommends one. Recommended, option A: one install per key (lockfile digest, setup, platform) built once by the setup, published immutable, and bound read-only into every confinement at the same absolute path, so a run can never alter it; the worktree keeps only its symlink farm. Six tasks, a switch (off, warn, on) and a test on the test profile. Option B (pnpm's global virtual store) is the experiment's second candidate; option C (hardlinks within one master) is rejected, since the master would be one inode with every worktree. Nothing in this proposal changes code.
 evidence: [docs/research/measures-2026-10.md section 1 (T353), docs/research/resource-capacity.md 2.1 (T337), packages/plugins/agent-workers/src/setup.ts, packages/plugins/agent-workers/src/dependencies.ts, packages/agent-runtime-core/src/index.ts (confinedCommand), ADR-0058, ADR-0063, ADR-0079, PLAN.md 3.3, T355]
 related: [PROP-0019, ADR-0058, ADR-0063, ADR-0078, ADR-0079, INV-2, INV-5, INV-9, INV-13, INV-15]
 implementation: []
 ---
 
 # Proposal: Run worktrees share one read-only node_modules per lockfile digest
+
+> **Superseded by [PROP-0021](0021-shared-node-modules-gvs.md)** (2026-10-31): the operator chose
+> pnpm's global virtual store with a single writer over option A. The problem, measurements and
+> options analysis below stay as context; the recommendation does not.
 
 ## Problem
 
