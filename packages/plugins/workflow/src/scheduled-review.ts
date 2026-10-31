@@ -101,7 +101,7 @@ const REVIEW_PROMPT = [
   REVIEW_RUNS_NOTHING,
   'Grade each finding. "important": a real defect that exists in this code now, with its file and line as numbered above and the evidence of what fails and how that line shows it; one without a file, a line, and evidence is read as a nit. "nit": style, naming, wording, a small improvement; raise no more than the guide\'s nit cap. Never use "pre-existing": everything here already landed. A second reviewer verifies each important finding against the same code; only a confirmed one becomes a task.',
   'Name a finding\'s class: the failure of the guide it matches, or a short name for the kind of defect. Cite only files and lines shown above.',
-  'Reply with only a JSON object in a ```json block, naming the subject exactly as the Subject line gives it, with no more than the 20 most important findings:',
+  'Reply with only a JSON object in a ```json block, the last thing in your answer, naming the subject exactly as the Subject line gives it, with no more than the 20 most important findings:',
   '{"subject": "the Subject line, exactly", "verdict": "approve" or "changes-requested", "findings": [{"severity": "important" | "nit", "title": "...", "file": "path", "line": 12, "evidence": "what fails, and how that line shows it", "class": "the guide\'s failure, or a short name", "detail": "..."}]}',
 ].join('\n')
 
@@ -115,7 +115,7 @@ const VERIFY_PROMPT = [
   '## What to do',
   'Check each important finding against the code above: "confirm" when the defect is real, exists in this code now, and its evidence holds at the file and line it names; "reject" when the code does not show it, its evidence does not hold, or it is a matter of taste. Give the reason for each vote; a vote without one does not count.',
   REVIEW_RUNS_NOTHING,
-  'Reply with only a JSON object in a ```json block, naming the subject exactly as the Subject line gives it and voting on every important finding:',
+  'Reply with only a JSON object in a ```json block, the last thing in your answer, naming the subject exactly as the Subject line gives it and voting on every important finding:',
   '{"subject": "the Subject line, exactly", "votes": [{"finding": "f1", "vote": "confirm" | "reject", "reason": "why"}]}',
 ].join('\n')
 
@@ -128,11 +128,11 @@ const VERIFY_PROMPT = [
 export const SCHEDULED_REVIEW_NODES: NodeTemplate[] = [
   {
     nodeId: 'review:1', objective: 'Review the whole of one area of the repository at its tip, and report findings with file, line, and evidence', prompt: REVIEW_PROMPT,
-    capabilities: ['review', 'local-data'], tier: 'frontier', conversation: 'temporary', acceptance: 'acceptance.answer',
+    capabilities: ['review', 'local-data'], tier: 'frontier', conversation: 'temporary', acceptance: 'acceptance.answer', unbound: 'assessment',
   },
   {
     nodeId: 'verify:1', objective: 'Verify each important finding of review:1 against the same code, as a second reviewer of another family', prompt: VERIFY_PROMPT, dependsOn: ['review:1'],
-    capabilities: ['review', 'local-data'], tier: 'frontier', conversation: 'temporary', acceptance: 'acceptance.answer', differentFrom: ['review:1'], diversity: 'preferred',
+    capabilities: ['review', 'local-data'], tier: 'frontier', conversation: 'temporary', acceptance: 'acceptance.answer', differentFrom: ['review:1'], diversity: 'preferred', unbound: 'votes',
   },
 ]
 

@@ -644,7 +644,16 @@ binds to the new version. Mismatches fail the gate.
 For a local agent's change, the subject is the working tree's git subject,
 `git:<HEAD>:<hash of every change on top>`. The `assessment` is stored only when it
 names that subject and the tree is still it, as an exact-subject `gate` decision;
-otherwise the step fails as `stale_subject`. A tree that can no longer be captured
+otherwise the step fails as `stale_subject`. An answer that lacks its JSON is no stale subject:
+no JSON, no subject, no verdict, or no findings list (a verification step's: no JSON votes) is
+`assessment_missing`. The step is asked once, on its own session (a step with none, with its
+instructions again), for exactly the block it lacks, its schema, fenced and last; the first miss is
+an exact-subject `gate` decision that says `missing`. A second miss fails the step as
+`assessment_missing`; a verifier's second miss leaves its findings unverified, as before. A JSON
+that names another subject, or a tree that moved, stays `stale_subject`. A step marked `unbound`
+(the scheduled review's two reviewers, which read an area as text and whose caller reads their
+JSON: `assessment` or `votes`) binds to no subject and has no exact-subject gate, but its answer is
+checked for that JSON, and asked for once and failed as `assessment_missing` the same way. A tree that can no longer be captured
 (removed, or no longer a repository) fails the review step as `stale_subject` before it
 runs, with an exact-subject `gate` decision of its own: a review never runs unbound. A
 remediation fix's gate captures the tree again before it opens on an approval, and fails as

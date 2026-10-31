@@ -85,6 +85,8 @@ interface Script {
   holdReview?: boolean
   /** The reviewers the runtime offers (default {@link WORKERS}: two families). */
   workers?: typeof WORKERS
+  /** How many of each reviewer's first answers are prose with no JSON (T349b). */
+  prose?: { review?: number; verify?: number }
 }
 
 /** The first reviewer's answer to a prompt: its findings on the subject the prompt names. */
@@ -97,8 +99,14 @@ async function boot(dir: string, script: Script, scheduledReview: ScheduledRevie
   const workers = new ScriptedWorkers()
   workers.extra = script.workers ?? WORKERS
   let reported: Array<Record<string, unknown>> = []
+  const prose = { review: script.prose?.review ?? 0, verify: script.prose?.verify ?? 0 }
   workers.reply = (request: Rendered) => {
     const subject = /^Subject: (\S+)$/m.exec(request.prompt)?.[1]
+    const role = request.prompt.includes('## Verify these findings') ? 'verify' : 'review'
+    if (prose[role] > 0) {
+      prose[role]--
+      return { text: 'I read the area and found nothing I can put in a JSON block.' }
+    }
     if (request.prompt.includes('## Verify these findings')) {
       const votes = reported.flatMap((f, i) => (f.severity === 'important' ? [{ finding: `f${i + 1}`, vote: script.vote ?? 'confirm', reason: `scripted ${script.vote ?? 'confirm'}` }] : []))
       return { text: '```json\n' + JSON.stringify({ subject, votes }) + '\n```' }
@@ -244,6 +252,34 @@ describe('a scheduled review over a fixture area with one planted defect', () =>
     const [first, second] = ['review:1', 'verify:1'].map((id) => run.nodes.find((n) => n.nodeId === id)!)
     expect([first!.minTier, second!.minTier]).toEqual(['frontier', 'frontier'])
     expect(new Set([first!.worker, second!.worker]).size).toBe(2)
+  })
+
+  it('asks a reviewer whose answer has no JSON once more for it, and goes on when it comes (T349b)', async () => {
+    for (const who of ['review', 'verify'] as const) {
+      const repo = repository()
+      const { ctx, workers } = await boot(repo.dir, { findings: () => [finding('add() subtracts', 2)], prose: { [who]: 1 } })
+      const row = done(await ctx.workflow.scheduledReviewTick(DAY(0)))
+      expect(row).toMatchObject({ important: 1, confirmed: 1, filed: 1 })
+      // The step that missed ran twice, the second time asked for the JSON block it lacked, fenced and last; the other ran once.
+      expect(workers.started).toHaveLength(3)
+      const asked = workers.started.filter((s) => s.prompt.includes('Your answer cannot be read'))
+      expect(asked).toHaveLength(1)
+      expect(asked[0]!.prompt).toContain(who === 'review' ? 'the review has no JSON assessment' : 'the verification has no JSON votes')
+      expect(asked[0]!.prompt).toContain('the last thing in your answer')
+      expect(ctx.workflow.get(row.runId!)).toMatchObject({ status: 'completed' })
+    }
+  })
+
+  it('fails a reviewer that misses its JSON twice as assessment_missing, with nothing filed (T349b)', async () => {
+    for (const who of ['review', 'verify'] as const) {
+      const repo = repository()
+      const { ctx } = await boot(repo.dir, { findings: () => [finding('add() subtracts', 2)], prose: { [who]: 2 } })
+      const row = await ctx.workflow.scheduledReviewTick(DAY(0))
+      expect(row).toMatchObject({ state: 'failed', filed: 0 })
+      const run = ctx.workflow.get(row!.runId!)!
+      expect(run).toMatchObject({ status: 'failed', error: { kind: 'assessment_missing' } })
+      expect(await tasksOf(ctx)).toHaveLength(0)
+    }
   })
 
   it('files nothing the second reviewer rejected, nor one whose citation was not in the area it was shown', async () => {

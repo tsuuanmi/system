@@ -219,10 +219,11 @@ function reopenNode(e: Engine, node: NodeRow, decision: ArtifactRef, text: strin
 /**
  * A step whose evidence the gate refused, continued once on its own session (T284): in the caller's
  * transaction, under the run's lease, the node `READY` as a new attempt whose instructions are the
- * refusal's message alone, the next message of its session, under the gate's `decision`.
+ * refusal's message alone, the next message of its session, under the gate's `decision`. A step
+ * with no session of its own (`alone` false) is asked again with its instructions and the message after them.
  */
-export function continueWithMessage(e: Engine, node: NodeRow, decision: ArtifactRef, message: string, lease: () => Lease): void {
-  reopenNode(e, node, decision, message, lease, true)
+export function continueWithMessage(e: Engine, node: NodeRow, decision: ArtifactRef, message: string, lease: () => Lease, alone = true): void {
+  reopenNode(e, node, decision, message, lease, alone)
 }
 
 // --- a board task's run: the step waits on the request ---

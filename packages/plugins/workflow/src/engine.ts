@@ -22,7 +22,7 @@ import { heldNow, release } from './hold.ts'
 import { admissionInfrastructure, executionInfrastructure, quotaLoss, sourceGone } from './infrastructure.ts'
 import { admissionKind, assignmentOf, choiceHoldEnded, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForChoice, waitForLimit, waitForRetry } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
-import { cycleOf, missingSubject, remediate, reviewSubject, settleReview, subjectGate, verificationGate, verificationSubject, wordingOf } from './review.ts'
+import { assessmentMisses, unboundGate, cycleOf, missingSubject, remediate, reviewSubject, settleReview, subjectGate, verificationGate, verificationSubject, wordingOf } from './review.ts'
 import { riskAtAcceptance, riskOf, settleRisk, tierAtRisk } from './risk.ts'
 import { leaveSession, type Moved, sessionGaps } from './session-moves.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
@@ -609,7 +609,7 @@ export class Engine {
     // self-review (T267) is told the task's goal as the requested change, never the caller's input (the author's orders).
     const request = spec.selfReview !== undefined ? this.tasks.frame(run.run_id)?.goal ?? 'the task\'s goal, in the brief above' : run.input
     const found = spec.verifies ? verificationSubject(this, spec, nodes, run.input)
-      : spec.capabilities.includes('review') ? reviewSubject(this, results, request, (workspace, now) => cycleOf(this, run.run_id, spec, nodes, workspace, now)) : undefined
+      : spec.capabilities.includes('review') && !spec.unbound ? reviewSubject(this, results, request, (workspace, now) => cycleOf(this, run.run_id, spec, nodes, workspace, now)) : undefined
     if (found && 'missing' in found) {
       const decision = missingSubject(this, run, node, found.missing)
       const error: WorkflowError = { kind: 'stale_subject', disposition: 'NONE', message: `exact-subject gate: the agent's working tree ${found.missing} can no longer be captured` }
@@ -844,7 +844,8 @@ export class Engine {
             // another is admitted, in a conversation of its own, and says so (./single-family.ts, D89).
             // Once per step: after a fallback was admitted, at any escalation, the rule is never lifted again; the refusal stands.
             if (error instanceof AdmissionFailure && exclude && spec.diversity === 'preferred' && !spec.secondReview && !distinctAccounts) {
-              if (fallbackSpent(this, run.run_id, node)) throw error
+              // A step asked once more for the JSON it lacked (T349b) is no escalation: it runs again where its first answer ran.
+              if (fallbackSpent(this, run.run_id, node) && !assessmentMisses(this, run, node)) throw error
               admitted = await routing(restricted).catch(() => {
                 throw error
               })
@@ -1117,6 +1118,7 @@ export class Engine {
     const decisions = { decisions: JSON.stringify([...execution.decisions, ...routedDecisions(node, this)]) }
     const data = { executionId: execution.id, source: node.source, worker: node.worker, tier: node.served_tier, quotaClass: node.quota_class, accepted: acceptance.accepted }
     let gate: ReturnType<typeof verificationGate> | undefined
+    let lacking: ReturnType<typeof unboundGate>
     let unverified: ReturnType<TaskDossiers['evidenceGate']>
     // Whether the gate already refused this step's evidence once (T284): its second refusal fails the step.
     const refusedBefore = acceptance.accepted && spec.showsEvidence ? this.tasks.dossiers.refusals(run, node) > 0 : false
@@ -1138,8 +1140,26 @@ export class Engine {
         const error: WorkflowError = { kind: 'acceptance_rejected', disposition: 'NONE', message: `evidence_missing: evidence refused twice: ${unverified.message}` }
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: unverified!.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: unverified.decision, data: { ...data, kind: error.kind, disposition: error.disposition } })
+      } else if (acceptance.accepted && spec.unbound && (lacking = unboundGate(this, run, node, result, spec.unbound))) {
+        // A step bound to no subject, whose caller reads its JSON, is asked once for the JSON it lacks too (T349b).
+        if (assessmentMisses(this, run, node) === 1) {
+          continueWithMessage(this, node, lacking.decision, lacking.request, lease, Object.keys(spec.session).length > 0)
+          this.ctx.eventLog.append({ type: 'workflow.node.assessment-refused', runId: run.run_id, nodeId: node.node_id, decision: lacking.decision, data: { ...data, continued: true } })
+          return
+        }
+        const error: WorkflowError = { kind: 'assessment_missing', disposition: 'NONE', message: `assessment_missing: ${lacking.reason} (asked twice)` }
+        this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: lacking!.decision }), lease)
+        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: lacking.decision, data: { ...data, kind: error.kind, disposition: error.disposition } })
       } else if (acceptance.accepted && node.subject && !(gate = spec.verifies ? verificationGate(this, run, node, result, lease) : subjectGate(this, run, node, result)).passed) {
-        const error: WorkflowError = { kind: 'stale_subject', disposition: 'NONE', message: `exact-subject gate: ${gate.reason}` }
+        // An answer that lacks its JSON is asked for it once, on the step's own session (T349b); a second miss, or a subject that moved, fails the step.
+        if (gate.missing && assessmentMisses(this, run, node) === 1) {
+          continueWithMessage(this, node, gate.decision, gate.missing.request, lease, Object.keys(spec.session).length > 0)
+          this.ctx.eventLog.append({ type: 'workflow.node.assessment-refused', runId: run.run_id, nodeId: node.node_id, decision: gate.decision, data: { ...data, continued: true } })
+          return
+        }
+        const error: WorkflowError = gate.missing
+          ? { kind: 'assessment_missing', disposition: 'NONE', message: `assessment_missing: ${gate.reason} (asked twice)` }
+          : { kind: 'stale_subject', disposition: 'NONE', message: `exact-subject gate: ${gate.reason}` }
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: gate!.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: gate.decision, data: { ...data, kind: error.kind, disposition: error.disposition } })
       } else if (acceptance.accepted) {
