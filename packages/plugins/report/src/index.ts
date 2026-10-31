@@ -473,7 +473,9 @@ function registerTool(ctx: Context): void {
     if (typeof scoped.projectId !== 'string') return refused('invalid: name the project (projectId); only a lead token has one by default')
     try {
       const { digest, artifact } = await leadDigest(ctx, LEAD_READS(ctx), { projectId: scoped.projectId, ...(typeof scoped.day === 'string' ? { day: scoped.day } : {}) })
-      return { content: [{ type: 'text' as const, text: `${renderDigest(digest)}${artifact ? `\nStored: ${artifact}\n` : ''}` }], structuredContent: { ...digest } }
+      // A hold is flagged under the hours the lead inbox tells it as expiring (its `expiringHours`), the same N.
+      const expiringHours = (ctx.get('leadInbox' as never) as { expiringHours?: number } | undefined)?.expiringHours
+      return { content: [{ type: 'text' as const, text: `${renderDigest(digest, expiringHours)}${artifact ? `\nStored: ${artifact}\n` : ''}` }], structuredContent: { ...digest } }
     } catch (error) {
       return refused(error instanceof ReportError ? `${error.failure}: ${error.message}` : `lead_digest: ${(error as Error).message}`)
     }

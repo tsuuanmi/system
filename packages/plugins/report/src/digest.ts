@@ -188,11 +188,20 @@ export function buildDigest(s: DigestSources): Digest {
   }
 }
 
+/** The hours a hold has left as of the digest's time, flagged under `hours` (the lead inbox's `expiringHours`, default 4). */
+const EXPIRING_HOURS = 4
+function toExpiry(expiresAt: string, asOf: string, hours: number): string {
+  const left = (ms(expiresAt) - ms(asOf)) / 3_600_000
+  if (!Number.isFinite(left)) return ''
+  const shown = `${left < 0 ? 0 : Math.round(left * 10) / 10} h to expiry`
+  return ` (${shown}${left < hours ? '; EXPIRING SOON' : ''})`
+}
+
 const measure = (m: Read<number>): string => ('value' in m ? String(m.value) : `unknown (${m.unknown})`)
 const when = (at: string): string => at.slice(11, 16)
 
 /** The digest as one screen: what landed, what the lead decided, what waits, what failed, and the day's measures. */
-export function renderDigest(d: Digest): string {
+export function renderDigest(d: Digest, expiringHours = EXPIRING_HOURS): string {
   const lines = [`# Lead digest: project ${d.projectId}, ${d.day} (UTC)`, '', `Read ${d.asOf}.`]
   const section = (title: string, items: string[], none: string): void => {
     lines.push('', `## ${title}`)
@@ -200,7 +209,7 @@ export function renderDigest(d: Digest): string {
   }
   section(`Landed (${d.measures.landedBySystem})`, d.landed.map((l) => `- ${when(l.at)} ${l.taskId}${l.title ? ` ${l.title}` : ''}: run ${l.runId}${l.commit ? `, commit ${l.commit.slice(0, 12)}` : ''}`), 'nothing landed through System')
   section('The lead decided', d.decided.map((x) => `- ${when(x.at)} ${x.what}${x.option ? ` ${x.option}` : ''}${x.taskId ? ` on ${x.taskId}` : ''}${x.runId ? ` (run ${x.runId})` : ''}`), 'no decision of the lead recorded')
-  section('Waits on the operator', d.waiting.map((w) => `- ${w.kind} ${w.id}: ${w.title}; expires ${w.expiresAt}; read it: ${w.brief}${w.pendingChecks?.length ? `; checks pending: ${w.pendingChecks.join(', ')}` : ''}`), 'nothing waits on the operator')
+  section('Waits on the operator', d.waiting.map((w) => `- ${w.kind} ${w.id}: ${w.title}; expires ${w.expiresAt}${toExpiry(w.expiresAt, d.asOf, expiringHours)}; read it: ${w.brief}${w.pendingChecks?.length ? `; checks pending: ${w.pendingChecks.join(', ')}` : ''}`), 'nothing waits on the operator')
   section('Failed', d.failed.map((f) => `- ${when(f.at)} ${f.kind} ${f.status}${f.taskId ? ` of ${f.taskId}` : ''}${f.runId ? ` (run ${f.runId})` : ''}${f.filedTask ? `; filed as ${f.filedTask}` : ''}${f.reason ? `: ${f.reason}` : ''}`), 'nothing failed')
   if (d.byHand.length) section('On the branch with no landing decision', d.byHand.map((c) => `- ${when(c.at)} ${c.commit.slice(0, 12)} ${c.subject}`), '')
   const m = d.measures

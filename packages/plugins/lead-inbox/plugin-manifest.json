@@ -77,6 +77,14 @@
       "sensitive": false
     },
     {
+      "key": "expiringHours",
+      "sensitive": false
+    },
+    {
+      "key": "link",
+      "sensitive": false
+    },
+    {
       "key": "digestMinutes",
       "sensitive": false
     },

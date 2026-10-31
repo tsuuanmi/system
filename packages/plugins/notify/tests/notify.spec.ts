@@ -518,6 +518,6 @@ describe('the plugin, end to end', () => {
     // Every kind the notifier makes is one its record declares, in the same order (review.expiring since 1.1, dispatch.started since 1.2).
     const record = JSON.parse(readFileSync(new URL('../../../../schemas/notification.v1.json', import.meta.url), 'utf8')) as { properties: { kind: { enum: string[] } } }
     expect([...KINDS]).toEqual(record.properties.kind.enum)
-    expect(KINDS).toHaveLength(9)
+    expect(KINDS).toHaveLength(10)
   })
 })

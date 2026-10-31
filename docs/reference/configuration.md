@@ -314,9 +314,11 @@ No options.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `kinds` | ("result.held" \| "merge.held" \| "worker.question" \| "task.retries-spent" \| "task.landing-gave-up" \| "request.outside-rights" \| "request.stale" \| "quota.idle" \| "live-update.done" \| "live-update.failed" \| "task.landed" \| "task.digest")[] | `["result.held","merge.held","worker.question","task.retries-spent","task.landing-gave-up","request.outside-rights","request.stale","quota.idle","live-update.done","live-update.failed","task.landed","task.digest"]` | The kinds of notice made (default every kind) |
+| `kinds` | ("result.held" \| "merge.held" \| "worker.question" \| "task.retries-spent" \| "task.landing-gave-up" \| "request.outside-rights" \| "request.stale" \| "quota.idle" \| "live-update.done" \| "live-update.failed" \| "task.landed" \| "task.digest" \| "review.held" \| "review.expiring")[] | `["result.held","merge.held","worker.question","task.retries-spent","task.landing-gave-up","request.outside-rights","request.stale","quota.idle","live-update.done","live-update.failed","task.landed","task.digest","review.held","review.expiring"]` | The kinds of notice made (default every kind) |
 | `staleMinutes` | number (1…10080) | `10` | An open request of a project older than this is a request.stale notice, in minutes |
 | `idleMinutes` | number (1…10080) | `10` | Ready tasks waiting while Workers that could take them are free, past this many minutes, are a quota.idle notice |
+| `expiringHours` | number (1…168) | `4` | A result held for the operator is a review.expiring notice this many hours before its hold expires, once per hold |
+| `link` | string | `"http://127.0.0.1:47317/ui/"` | The operator page a hold's notice links to, without its token (an http or https URL) |
 | `digestMinutes` | number (1…10080) | `60` | The landings of this many minutes are batched into one task.digest notice |
 | `dedupMinutes` | number (1…1440) | `10` | At most one notice per project, subject, and kind in this many minutes |
 | `maxAgeMinutes` | number (1…10080) | `60` | An event older than this when read makes no notice (a host or row that was off), in minutes |
@@ -400,7 +402,10 @@ No options.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `kinds` | ("approval.opened" \| "approval.expiring" \| "run.user-action" \| "run.escalated" \| "run.waiting" \| "pool.limited" \| "worker.quarantined" \| "review.expiring" \| "dispatch.started")[] | `["approval.opened","approval.expiring","run.user-action","run.escalated","run.waiting","pool.limited","worker.quarantined","review.expiring","dispatch.started"]` | The kinds of notice sent: approval.opened, approval.expiring, run.user-action, run.escalated, run.waiting, pool.limited, worker.quarantined, review.expiring, dispatch.started |
+| `kinds` | ("approval.opened" \| "approval.expiring" \| "run.user-action" \| "run.escalated" \| "run.waiting" \| "pool.limited" \| "worker.quarantined" \| "review.expiring" \| "dispatch.started" \| "review.held")[] | `["approval.opened","approval.expiring","run.user-action","run.escalated","run.waiting","pool.limited","worker.quarantined","review.expiring","dispatch.started","review.held"]` | The kinds of notice sent: approval.opened, approval.expiring, run.user-action, run.escalated, run.waiting, pool.limited, worker.quarantined, review.expiring, dispatch.started |
+| `holds` | "off" \| "on" | `"off"` | on: results held for the operator are sent to the sinks as review.held and review.expiring, one batched message per sweep, at most holdsPerHour an hour; off: none is |
+| `holdsLeadHours` | number (1…168) | `4` | With holds on, a held result is told as expiring this many hours before its hold expires, once |
+| `holdsPerHour` | number (1…60) | `4` | With holds on, the batched hold messages sent in an hour, at most; what is over waits for the next hour |
 | `expiryLeadMinutes` | number (1…1440) | `60` | How long before an open approval request expires (and is denied), or a review held for the operator expires, it is notified again, in minutes |
 | `dedupMinutes` | number (1…1440) | `10` | At most one notice per subject and kind in this many minutes |
 | `maxQueue` | number (1…1000) | `50` | Notices waiting to be sent, at most; one more is dropped, logged, and shown in health |

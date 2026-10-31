@@ -2634,6 +2634,27 @@ and its required checks passed on it; every other one stops here, with the reaso
      row on, a notice comes `expiryLeadMinutes` before one expires
      ([get notified](#get-notified)).
 
+### Turn on the operator's notices of held results
+
+The project's lead inbox records `review.held` and `review.expiring` (4 hours before the hold
+expires, `expiringHours`) by itself and pushes to no sink beyond the project's own. To be told
+yourself, set one key in the `notify` row (it is `off` by default) and restart the daemon:
+
+```yaml
+notify:
+  holds: on          # off | on
+  holdsLeadHours: 4  # told this long before a hold expires, once
+  holdsPerHour: 4    # batched messages an hour, at most
+```
+
+One message per sweep lists every new hold and every expiring one, to the sinks the row already
+has (desktop; the webhook when you enabled it); with `holds` on, the per-task review reminder is
+folded into it. A message names each hold whole, the expiring first; when they do not all fit its
+text, it says how many more wait, and the next message names them. The notifier keeps the holds
+it reads while `holds` is off, and with it on it reconciles them with the board's on each poll, so
+turning it on tells the holds already open. The lead's digest flags the holds under the lead
+inbox's `expiringHours`. Try it on the test profile first (a fake sink), then on the live one (D108).
+
 ## Let System accept a branch's results
 
 By default you accept every result held for you. To have System accept a project's results that

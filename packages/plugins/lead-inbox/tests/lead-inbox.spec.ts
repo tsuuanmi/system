@@ -103,7 +103,7 @@ describe('each kind is made from its recorded event', () => {
     append(ctx, 'approvals.lead-refused', { projectId: 'alpha', requestId: 'apr_2', actionClass: 'deploy' })
     await inbox.pass()
     const alpha = inbox.unread('alpha')
-    expect(new Set(kinds(alpha))).toEqual(new Set(['result.held', 'worker.question', 'task.retries-spent', 'merge.held', 'task.landing-gave-up', 'request.outside-rights', 'live-update.done']))
+    expect(new Set(kinds(alpha))).toEqual(new Set(['result.held', 'review.held', 'worker.question', 'task.retries-spent', 'merge.held', 'task.landing-gave-up', 'request.outside-rights', 'live-update.done']))
     for (const n of alpha) {
       schemas.assert('lead-notice@1.0', n)
       expect(n.to).toBe('lead:alpha')
@@ -218,7 +218,8 @@ describe('a notice handled through its subject closes by itself', () => {
     append(ctx, 'workflow.task.question', { taskId: 'task-a2', questions: 1 })
     append(ctx, 'board.waiting', { taskId: 'task-a2', projectId: 'alpha', reason: 'retries-spent' })
     await inbox.pass()
-    expect(inbox.unread('alpha')).toHaveLength(3)
+    // The hold is told twice: result.held, and review.held (T357); both close when it ends.
+    expect(inbox.unread('alpha')).toHaveLength(4)
     append(ctx, 'board.review.ended', { taskId: 'task-a', projectId: 'alpha', state: 'done' })
     append(ctx, 'board.waiting.ended', { taskId: 'task-a2', projectId: 'alpha', state: 'ready' })
     await inbox.pass()

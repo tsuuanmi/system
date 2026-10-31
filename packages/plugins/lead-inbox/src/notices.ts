@@ -12,13 +12,16 @@ import type { SystemEvent } from '@tsuuanmi/system-ledger-core'
 /** The notice kinds (`lead-notice@1.0` `kind`). */
 export const KINDS = [
   'result.held', 'merge.held', 'worker.question', 'task.retries-spent', 'task.landing-gave-up', 'request.outside-rights', 'request.stale',
-  'quota.idle', 'live-update.done', 'live-update.failed', 'task.landed', 'task.digest',
+  'quota.idle', 'live-update.done', 'live-update.failed', 'task.landed', 'task.digest', 'review.held', 'review.expiring',
 ] as const
 export type Kind = (typeof KINDS)[number]
 
-/** `lead-notice@1.0`; the schema in `schemas/` is canonical. */
+/** The kinds `lead-notice@1.1` adds. */
+const KINDS_1_1: readonly Kind[] = ['review.held', 'review.expiring']
+
+/** `lead-notice@1.0`, `@1.1` for `review.held` and `review.expiring`; the schema in `schemas/` is canonical. */
 export interface LeadNotice {
-  schema: 'lead-notice@1.0'
+  schema: 'lead-notice@1.0' | 'lead-notice@1.1'
   id: string
   project: string
   to: string
@@ -221,12 +224,60 @@ function landing(event: SystemEvent, data: Record<string, unknown>): Reading {
   }
 }
 
+/** The operator page a hold's notice links to (the bundle's loopback /ui). */
+export const UI_LINK = 'http://127.0.0.1:47317/ui/'
+
+/** A review held for the operator, or its end, as `board.review.held` and `board.review.ended` record them. */
+export interface HoldReading {
+  held?: { taskId: string; project: string; expiresMs: number; checks: string[] }
+  ended?: string
+}
+
+/** Read one event for the holds it starts or ends; anything else, or an event not read whole, means nothing. */
+export function readHold(event: SystemEvent): HoldReading {
+  const data = event.data ?? {}
+  const taskId = id(data.taskId)
+  if (!taskId) return {}
+  if (event.type === 'board.review.ended') return { ended: taskId }
+  if (event.type !== 'board.review.held') return {}
+  const project = id(data.projectId)
+  const expiresAt = time(data.expiresAt)
+  if (!project || !expiresAt) return {}
+  const checks = (Array.isArray(data.pendingChecks) ? data.pendingChecks : []).map(word).filter((c): c is string => c !== undefined).slice(0, 8)
+  return { held: { taskId, project, expiresMs: Date.parse(expiresAt), checks } }
+}
+
+/**
+ * `review.held`: told as the hold starts: the task, until when, where to decide it, and why it is
+ * held, in that order, so a text cut at its bound keeps the task, the expiry, and the link whole
+ * (the link is at most 300 characters, an id 200, and the checks come last).
+ */
+export function heldDraft(hold: NonNullable<HoldReading['held']>, link: string): Draft {
+  return {
+    kind: 'review.held', subject: hold.taskId, project: hold.project, taskId: hold.taskId,
+    title: `Held for the operator: board task ${clip(hold.taskId, 60)}`,
+    text: `The result of board task ${hold.taskId} is held for the operator until ${new Date(hold.expiresMs).toISOString()}; unanswered by then, the review expires. Decide it at ${link} . Why held: ${hold.checks.length ? `checks not reported: ${hold.checks.join(', ')}` : 'a heavy-tier result'}.`,
+    act: taskAct(hold.taskId),
+  }
+}
+
+/** `review.expiring`: told once, `hours` before the hold expires. */
+export function expiringDraft(hold: { taskId: string; project: string; expiresMs: number }, now: number, link: string): Draft {
+  const minutes = Math.max(1, Math.round((hold.expiresMs - now) / 60_000))
+  return {
+    kind: 'review.expiring', subject: hold.taskId, project: hold.project, taskId: hold.taskId,
+    title: `A held result expires soon: board task ${clip(hold.taskId, 60)}`,
+    text: `The review of board task ${hold.taskId} expires at ${new Date(hold.expiresMs).toISOString()}, in about ${minutes} min; unanswered, the task waits for input (review-expired). Decide it at ${link}.`,
+    act: taskAct(hold.taskId),
+  }
+}
+
 /** The notice a draft becomes, addressed to a project's lead; undefined when its time is none. */
 export function makeNotice(draft: Draft, project: string, event: { seq: number; type: string; at: string }): LeadNotice | undefined {
   const at = time(event.at)
   if (!at) return undefined
   return {
-    schema: 'lead-notice@1.0', id: clip(`${project}:${draft.kind}:${draft.subject}:${event.seq}`, 300), project, to: `lead:${project}`, kind: draft.kind, subject: draft.subject, at,
+    schema: KINDS_1_1.includes(draft.kind) ? 'lead-notice@1.1' : 'lead-notice@1.0', id: clip(`${project}:${draft.kind}:${draft.subject}:${event.seq}`, 300), project, to: `lead:${project}`, kind: draft.kind, subject: draft.subject, at,
     event: { seq: event.seq, type: event.type }, title: clip(draft.title, 120), text: clip(draft.text, 1000), act: draft.act.slice(0, 4).map((line) => clip(line, 300)),
     ...(draft.taskId ? { taskId: draft.taskId } : {}), ...(draft.commit ? { commit: draft.commit } : {}), ...(draft.changed ? { changed: clip(draft.changed, 200) } : {}),
   }

@@ -6,7 +6,7 @@
   "type": "object",
   "required": ["schema", "id", "project", "to", "kind", "subject", "at", "event", "title", "text", "act"],
   "properties": {
-    "schema": { "const": "lead-notice@1.0" },
+    "schema": { "enum": ["lead-notice@1.0", "lead-notice@1.1"] },
     "id": {
       "description": "`<project>:<kind>:<subject>:<event seq>`: the same event never makes two notices of one kind for a project.",
       "type": "string", "maxLength": 300
@@ -14,8 +14,8 @@
     "project": { "description": "The board project the notice belongs to; a lead of another project never sees it.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "to": { "description": "The lead principal it is addressed to, `lead:<project>` (ADR-0076).", "type": "string", "pattern": "^lead:[A-Za-z0-9][A-Za-z0-9._-]{0,99}$" },
     "kind": {
-      "description": "result.held: a board task's result waits in review for a person (heavy tier, or a required check unknown); merge.held: a merge request of the project waits for a verdict; worker.question: a Worker asked a question instead of answering; task.retries-spent: a task's attempts are spent and it waits for input; task.landing-gave-up: a landing refused or gave up (a target that moved again after its rebases, a branch that cannot merge); request.outside-rights: a request the lead's token was refused on, which needs the operator; request.stale: an open request of the project is older than the configured minutes; quota.idle: ready tasks wait while Workers that could take them are free; live-update.done / live-update.failed: a live update ended; task.landed: one task landed, with its commit; task.digest: the landings of an interval, batched.",
-      "enum": ["result.held", "merge.held", "worker.question", "task.retries-spent", "task.landing-gave-up", "request.outside-rights", "request.stale", "quota.idle", "live-update.done", "live-update.failed", "task.landed", "task.digest"]
+      "description": "result.held: a board task's result waits in review for a person (heavy tier, or a required check unknown); merge.held: a merge request of the project waits for a verdict; worker.question: a Worker asked a question instead of answering; task.retries-spent: a task's attempts are spent and it waits for input; task.landing-gave-up: a landing refused or gave up (a target that moved again after its rebases, a branch that cannot merge); request.outside-rights: a request the lead's token was refused on, which needs the operator; request.stale: an open request of the project is older than the configured minutes; quota.idle: ready tasks wait while Workers that could take them are free; live-update.done / live-update.failed: a live update ended; task.landed: one task landed, with its commit; task.digest: the landings of an interval, batched; review.held (1.1): a result is held for the operator (the task, why, until when, the /ui link); review.expiring (1.1): a held result expires within the configured hours, told once per hold.",
+      "enum": ["result.held", "merge.held", "worker.question", "task.retries-spent", "task.landing-gave-up", "request.outside-rights", "request.stale", "quota.idle", "live-update.done", "live-update.failed", "task.landed", "task.digest", "review.held", "review.expiring"]
     },
     "subject": {
       "description": "What the notice is about, and what deduplication counts by (with the project and the kind): the task id, the request id, or, for a digest, `digest:<interval start>`.",
@@ -49,5 +49,11 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "enum": ["review.held", "review.expiring"] } }, "required": ["kind"] },
+      "then": { "description": "1.1 kinds are refused before 1.1.", "properties": { "schema": { "const": "lead-notice@1.1" } } }
+    }
+  ],
   "additionalProperties": false
 }

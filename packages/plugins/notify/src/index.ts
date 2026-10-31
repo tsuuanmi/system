@@ -17,7 +17,7 @@ import type { SystemEvent } from '@tsuuanmi/system-ledger-core'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
-import { KINDS, type Kind, type Notice, type ReadOptions, readEvent, type Reminder, reminderNotice } from './notices.ts'
+import { holdsNotice, KINDS, type Kind, type Notice, type ReadOptions, readEvent, readHold, type Reminder, reminderNotice } from './notices.ts'
 import { DESKTOP_COMMAND, DesktopSink, onPath, type Sink, WebhookSink, webhookProblem } from './sinks.ts'
 
 export { desktopBody, KINDS, type Kind, type Notice, readEvent, type Reminder, reminderNotice } from './notices.ts'
@@ -51,6 +51,12 @@ export interface Config {
   maxAgeMinutes?: number
   /** The operator page each notice links to, without its token (default the bundle's loopback /ui). */
   link?: string
+  /** `on`: results held for the operator are sent as `review.held` and `review.expiring`, one batched message per sweep (default off). */
+  holds?: 'off' | 'on'
+  /** A held result is told as expiring this many hours before its hold expires (default 4). */
+  holdsLeadHours?: number
+  /** Batched hold messages sent at most this many per hour; what is over waits for the next hour (default 4). */
+  holdsPerHour?: number
   /** Desktop notifications through notify-send (default true). */
   desktop?: boolean
   /** The webhook: off unless enabled; its URL is read from the credential reference, never from here. */
@@ -58,12 +64,15 @@ export interface Config {
 }
 
 export const DEFAULTS = {
-  expiryLeadMinutes: 60, dedupMinutes: 10, maxQueue: 50, pollSeconds: 15, timeoutSeconds: 10, maxAgeMinutes: 60,
+  holdsLeadHours: 4, holdsPerHour: 4, expiryLeadMinutes: 60, dedupMinutes: 10, maxQueue: 50, pollSeconds: 15, timeoutSeconds: 10, maxAgeMinutes: 60,
   link: 'http://127.0.0.1:47317/ui/', credential: 'SYSTEM_NOTIFY_WEBHOOK_URL',
 } as const
 
 export const Config: z<Config> = z.object({
   kinds: z.array(z.union([...KINDS])).default([...KINDS]).description('The kinds of notice sent: approval.opened, approval.expiring, run.user-action, run.escalated, run.waiting, pool.limited, worker.quarantined, review.expiring, dispatch.started'),
+  holds: z.union(['off', 'on']).default('off').description('on: results held for the operator are sent to the sinks as review.held and review.expiring, one batched message per sweep, at most holdsPerHour an hour; off: none is'),
+  holdsLeadHours: z.natural().min(1).max(168).default(DEFAULTS.holdsLeadHours).description('With holds on, a held result is told as expiring this many hours before its hold expires, once'),
+  holdsPerHour: z.natural().min(1).max(60).default(DEFAULTS.holdsPerHour).description('With holds on, the batched hold messages sent in an hour, at most; what is over waits for the next hour'),
   expiryLeadMinutes: z.natural().min(1).max(1440).default(DEFAULTS.expiryLeadMinutes).description('How long before an open approval request expires (and is denied), or a review held for the operator expires, it is notified again, in minutes'),
   dedupMinutes: z.natural().min(1).max(1440).default(DEFAULTS.dedupMinutes).description('At most one notice per subject and kind in this many minutes'),
   maxQueue: z.natural().min(1).max(1000).default(DEFAULTS.maxQueue).description('Notices waiting to be sent, at most; one more is dropped, logged, and shown in health'),
@@ -102,17 +111,55 @@ const MIGRATIONS = [{
   CREATE INDEX notify_sent_at ON notify_sent (sent_ms);
   CREATE TABLE notify_reminders (request_id TEXT PRIMARY KEY, remind_ms INTEGER NOT NULL, expires_ms INTEGER NOT NULL, reminder TEXT NOT NULL);
   CREATE INDEX notify_reminders_due ON notify_reminders (remind_ms);`,
+}, {
+  version: 2,
+  sql: `CREATE TABLE notify_holds (task_id TEXT PRIMARY KEY, project TEXT, expires_ms INTEGER NOT NULL, since_ms INTEGER NOT NULL, told INTEGER NOT NULL DEFAULT 0, expiring INTEGER NOT NULL DEFAULT 0);
+  CREATE TABLE notify_hold_batches (sent_ms INTEGER NOT NULL);`,
 }]
 
 const schemas = new SchemaRegistry()
 
+/** Holds one batch reads at most (INV-9); past them, the rest are counted and wait for the next. */
+const HOLDS_READ = 1000
+
+/** A result held for the operator now, as the board shows it. */
+export interface HeldNow { taskId: string; projectId: string; expiresMs: number }
+
+/** What the notifier asks of the rest of the host, replaceable by a test. */
+export interface Sources {
+  /** Every result held for the operator now (the board's tasks in review, waiting on operator-review); undefined when it cannot be read whole. */
+  holds(): Promise<HeldNow[] | undefined>
+}
+
+/** The holds the board shows now, read through the optional board row; undefined without it, or past {@link HOLDS_READ}. */
+export function boardHolds(ctx: Context): Sources['holds'] {
+  return async () => {
+    type Task = { taskId: string; projectId: string; state: string; waiting?: { reason: string; expiresAt?: string } }
+    const board = ctx.get('board' as never) as { projects?: () => Promise<Array<{ projectId: string; state: string }>>; tasks?: (filter: { projectId: string; states: string[] }) => Promise<Task[]> } | undefined
+    if (!board?.projects || !board.tasks) return undefined
+    const out: HeldNow[] = []
+    for (const project of (await board.projects()).filter((p) => p.state !== 'closed')) {
+      for (const t of await board.tasks({ projectId: project.projectId, states: ['review'] })) {
+        const expiresMs = t.waiting?.reason === 'operator-review' && t.waiting.expiresAt ? Date.parse(t.waiting.expiresAt) : Number.NaN
+        if (Number.isFinite(expiresMs)) out.push({ taskId: t.taskId, projectId: t.projectId, expiresMs })
+        if (out.length > HOLDS_READ) return undefined
+      }
+    }
+    return out
+  }
+}
+
 /** The notifier of one plugin instance: its passes over the log, its queue, and its sinks. */
 export class Notifier {
+  readonly sources: Sources
   private readonly kinds: ReadonlySet<Kind>
   private readonly read: ReadOptions
   private readonly dedupMs: number
   private readonly maxAgeMs: number
   private readonly maxQueue: number
+  private readonly holds: boolean
+  private readonly holdsLeadMs: number
+  private readonly holdsPerHour: number
   private readonly queue: Notice[] = []
   private readonly abort = new AbortController()
   private passing = false
@@ -126,12 +173,59 @@ export class Notifier {
     this.dedupMs = (config.dedupMinutes ?? DEFAULTS.dedupMinutes) * 60_000
     this.maxAgeMs = (config.maxAgeMinutes ?? DEFAULTS.maxAgeMinutes) * 60_000
     this.maxQueue = config.maxQueue ?? DEFAULTS.maxQueue
+    this.holds = config.holds === 'on'
+    this.holdsLeadMs = (config.holdsLeadHours ?? DEFAULTS.holdsLeadHours) * 3_600_000
+    this.holdsPerHour = config.holdsPerHour ?? DEFAULTS.holdsPerHour
+    this.sources = { holds: boardHolds(ctx) }
     ctx.store.migrate('notify', MIGRATIONS)
   }
 
   /** Notices waiting to be sent. */
   get pending(): number {
     return this.queue.length
+  }
+
+  /** Replace what the notifier asks of the host (tests, or a host that reads it another way). */
+  use(sources: Partial<Sources>): void {
+    Object.assign(this.sources, sources)
+  }
+
+  /**
+   * With holds on, reconcile the holds kept with the ones the board shows now (T357): a hold the
+   * event log did not tell this notifier (held before the upgrade, or while it was off) is kept and
+   * so told; one the board no longer holds, and that was kept before this read began, is forgotten.
+   * Nothing is sent here; the next pass does. A board that cannot be read changes nothing.
+   */
+  async sweep(now: number = Date.now()): Promise<void> {
+    if (this.disposed || !this.holds) return
+    let holds: HeldNow[] | undefined
+    try {
+      holds = await this.sources.holds()
+    } catch (error) {
+      this.ctx.logger.warn(`notify: the holds could not be read from the board this time: ${(error as Error).message}`)
+    }
+    if (!holds || this.disposed) return
+    try {
+      this.ctx.store.transaction((db) => {
+        const shown = new Set(holds.map((h) => h.taskId))
+        db.prepare(`DELETE FROM notify_holds WHERE since_ms < ? AND task_id NOT IN (${holds.map(() => '?').join(', ') || "''"})`).run(now, ...shown)
+        for (const h of holds) if (h.expiresMs > now) this.keepHold(h.taskId, h.projectId, h.expiresMs, now)
+      })
+    } catch (error) {
+      this.ctx.logger.warn(`notify: the holds could not be reconciled this time: ${(error as Error).message}`)
+    }
+  }
+
+  /** Keep a hold; a known one with the same expiry stays as it is, one held again (another expiry) is due again. */
+  private keepHold(taskId: string, projectId: string | null, expiresMs: number, now: number): void {
+    const db = this.ctx.store.db
+    const known = db.prepare('SELECT expires_ms FROM notify_holds WHERE task_id = ?').get(taskId) as { expires_ms: number } | undefined
+    if (known?.expires_ms === expiresMs) return
+    if (!known && (db.prepare('SELECT COUNT(*) AS n FROM notify_holds').get() as { n: number }).n >= MAX_REMINDERS) {
+      this.ctx.logger.warn(`notify: ${MAX_REMINDERS} holds are kept already; the hold of ${taskId} is not told`)
+      return
+    }
+    db.prepare('INSERT INTO notify_holds (task_id, project, expires_ms, since_ms) VALUES (?, ?, ?, ?) ON CONFLICT (task_id) DO UPDATE SET project = excluded.project, expires_ms = excluded.expires_ms, since_ms = excluded.since_ms, told = 0, expiring = 0').run(taskId, projectId, expiresMs, now)
   }
 
   /**
@@ -166,7 +260,8 @@ export class Notifier {
         for (const row of due) {
           db.prepare('DELETE FROM notify_reminders WHERE request_id = ?').run(row.request_id)
           const reminder = JSON.parse(row.reminder) as Reminder
-          if (row.expires_ms > now && this.kinds.has(reminder.review ? 'review.expiring' : 'approval.expiring')) {
+          // With holds on, a review's expiry is told in the batched hold message instead.
+          if (row.expires_ms > now && !(reminder.review && this.holds) && this.kinds.has(reminder.review ? 'review.expiring' : 'approval.expiring')) {
             const notice = reminderNotice(reminder, now, this.read)
             if (notice) made.push(notice)
           }
@@ -174,7 +269,12 @@ export class Notifier {
         // Bounded (INV-9): claims past their window, and reminders past their request's expiry, go.
         db.prepare('DELETE FROM notify_sent WHERE sent_ms <= ?').run(now - this.dedupMs)
         db.prepare('DELETE FROM notify_reminders WHERE expires_ms <= ?').run(now)
+        db.prepare('DELETE FROM notify_holds WHERE expires_ms <= ?').run(now)
         const queued: Notice[] = []
+        if (this.holds) {
+          const batch = this.holdsBatch(Math.max(cursor, 1), now, this.queue.length)
+          if (batch) queued.push(batch)
+        }
         for (const notice of made) {
           const claimed = db.prepare('SELECT sent_ms FROM notify_sent WHERE kind = ? AND subject = ?').get(notice.kind, notice.subject) as { sent_ms: number } | undefined
           if (claimed && claimed.sent_ms > now - this.dedupMs) continue
@@ -202,8 +302,47 @@ export class Notifier {
     return more
   }
 
+  /**
+   * The sweep's one hold message (T357), inside the pass's transaction: every hold not yet told, and
+   * every one within `holdsLeadHours` of its expiry not yet told as expiring (each once per hold), as
+   * one notice; none when nothing is due, the hour's budget is spent, or the queue is full. A hold that
+   * is left out stays due for the next sweep. Holds that expired are forgotten.
+   */
+  private holdsBatch(seq: number, now: number, queueLength: number): Notice | undefined {
+    const db = this.ctx.store.db
+    db.prepare('DELETE FROM notify_hold_batches WHERE sent_ms <= ?').run(now - 3_600_000)
+    const sent = (db.prepare('SELECT COUNT(*) AS n FROM notify_hold_batches').get() as { n: number }).n
+    if (sent >= this.holdsPerHour || queueLength >= this.maxQueue) return undefined
+    type Row = { task_id: string; project: string | null; expires_ms: number }
+    const line = (r: Row) => ({ taskId: r.task_id, projectId: r.project, expiresMs: r.expires_ms })
+    const count = (sql: string, ...args: number[]): number => (db.prepare(`SELECT COUNT(*) AS n FROM notify_holds WHERE ${sql}`).get(...args) as { n: number }).n
+    const rows = (sql: string, ...args: number[]): Row[] => db.prepare(`SELECT task_id, project, expires_ms FROM notify_holds WHERE ${sql} ORDER BY expires_ms, task_id LIMIT ?`).all(...args, HOLDS_READ) as Row[]
+    const NEW = 'told = 0'
+    const EXPIRING = 'expiring = 0 AND expires_ms - ? <= ?'
+    const onHeld = this.kinds.has('review.held')
+    const onExpiring = this.kinds.has('review.expiring')
+    const due = { expiring: onExpiring ? count(EXPIRING, this.holdsLeadMs, now) : 0, held: onHeld ? count(NEW) : 0 }
+    const message = holdsNotice(onExpiring ? rows(EXPIRING, this.holdsLeadMs, now).map(line) : [], onHeld ? rows(NEW).map(line) : [], due, seq, now, this.read)
+    if (!message) return undefined
+    try {
+      schemas.assert('notification@1.3', message.notice)
+    } catch (error) {
+      this.ctx.logger.warn(`notify: the hold notice is not a valid notification@1.3 and is not sent: ${(error as Error).message}`)
+      return undefined
+    }
+    // Only the holds the message names are told; the rest stay due for the next one.
+    for (const taskId of message.held) db.prepare('UPDATE notify_holds SET told = 1 WHERE task_id = ?').run(taskId)
+    for (const taskId of message.expiring) db.prepare('UPDATE notify_holds SET expiring = 1, told = 1 WHERE task_id = ?').run(taskId)
+    db.prepare('INSERT INTO notify_hold_batches (sent_ms) VALUES (?)').run(now)
+    return message.notice
+  }
+
   /** One event: a notice to make, a reminder to keep, or a request to forget. */
   private consume(event: SystemEvent, now: number, made: Notice[]): void {
+    // Holds are kept whether or not `holds` is on, so turning it on tells the ones held meanwhile.
+    const hold = readHold(event)
+    if (hold.ended) this.ctx.store.db.prepare('DELETE FROM notify_holds WHERE task_id = ?').run(hold.ended)
+    if (hold.held && hold.held.expiresMs > now) this.keepHold(hold.held.taskId, hold.held.projectId ?? null, hold.held.expiresMs, now)
     // Its own events, and every other plugin's it does not read, mean nothing here.
     const reading = readEvent(event, this.read)
     const db = this.ctx.store.db
@@ -300,9 +439,11 @@ export function apply(ctx: Context, config: Config = {}): void {
     const off = ctx.on('system/event', (event) => {
       if (!event.type.startsWith('notify.')) wake()
     })
-    const poll = setInterval(() => wake(), (config.pollSeconds ?? DEFAULTS.pollSeconds) * 1000)
+    // Each poll first reconciles the holds with the board (holds on), then passes over the log.
+    const sweep = (): void => { void notifier.sweep().finally(() => wake()) }
+    const poll = setInterval(sweep, (config.pollSeconds ?? DEFAULTS.pollSeconds) * 1000)
     poll.unref()
-    wake()
+    sweep()
     return () => {
       stopped = true
       off()

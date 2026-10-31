@@ -2,18 +2,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:notification:v1",
   "title": "Notification",
-  "description": "One out-of-band notice to the operator (the notify plugin, docs/design/notifications.md): what happened, which request, run, pool, or account it is about, and the exact commands to act, made from one recorded event only. 1.1 adds the kind `review.expiring`. 1.2 adds the kind `dispatch.started`. The body of the webhook's POST, and the text of a desktop notification. It names ids, classes, kinds, and times; it never carries a secret, a prompt, an answer, a request's summary, or a command a request would run.",
+  "description": "One out-of-band notice to the operator (the notify plugin, docs/design/notifications.md): what happened, which request, run, pool, or account it is about, and the exact commands to act, made from one recorded event only. 1.1 adds the kind `review.expiring`. 1.2 adds the kind `dispatch.started`. 1.3 adds the kind `review.held`. The body of the webhook's POST, and the text of a desktop notification. It names ids, classes, kinds, and times; it never carries a secret, a prompt, an answer, a request's summary, or a command a request would run.",
   "type": "object",
   "required": ["schema", "id", "kind", "subject", "at", "event", "title", "text", "act"],
   "properties": {
-    "schema": { "enum": ["notification@1.0", "notification@1.1", "notification@1.2"] },
+    "schema": { "enum": ["notification@1.0", "notification@1.1", "notification@1.2", "notification@1.3"] },
     "id": {
       "description": "`<kind>:<subject>:<event seq>`: the same event never makes two notices of one kind.",
       "type": "string", "maxLength": 300
     },
     "kind": {
-      "description": "approval.opened: a request was queued; approval.expiring: an open request expires within the configured lead time (unanswered, it is denied); run.user-action: a step or run failed with disposition USER_ACTION; run.escalated: a step was escalated to a higher tier after its result was rejected; run.waiting: a step waits for an assigned account's limit to reset (ADR-0052 wait); pool.limited: a resource pool closed at its limit; worker.quarantined: an agent account was quarantined, so its Workers take no work (PROP-0012 E); review.expiring (1.1): a board task's review held for the operator expires within the configured lead time (unanswered, the task waits for input, review-expired); dispatch.started (1.2): System started a ready board task's run by itself where the project's policy gives dispatch notify (PROP-0014 D2).",
-      "enum": ["approval.opened", "approval.expiring", "run.user-action", "run.escalated", "run.waiting", "pool.limited", "worker.quarantined", "review.expiring", "dispatch.started"]
+      "description": "approval.opened: a request was queued; approval.expiring: an open request expires within the configured lead time (unanswered, it is denied); run.user-action: a step or run failed with disposition USER_ACTION; run.escalated: a step was escalated to a higher tier after its result was rejected; run.waiting: a step waits for an assigned account's limit to reset (ADR-0052 wait); pool.limited: a resource pool closed at its limit; worker.quarantined: an agent account was quarantined, so its Workers take no work (PROP-0012 E); review.expiring (1.1): a board task's review held for the operator expires within the configured lead time (unanswered, the task waits for input, review-expired); dispatch.started (1.2): System started a ready board task's run by itself where the project's policy gives dispatch notify (PROP-0014 D2); review.held (1.3): results are held for the operator (the notify row's `holds` is on): one batched message per sweep lists every new hold, or, as review.expiring, the ones near their expiry.",
+      "enum": ["approval.opened", "approval.expiring", "run.user-action", "run.escalated", "run.waiting", "pool.limited", "worker.quarantined", "review.expiring", "dispatch.started", "review.held"]
     },
     "subject": {
       "description": "What the notice is about, and what deduplication counts by: the request id, the workflow run id, the pool id, the agent account id (`<provider>:slot-<n>` for a slot with no account id yet), or the board task id.",
@@ -48,11 +48,15 @@
   "allOf": [
     {
       "if": { "properties": { "kind": { "const": "review.expiring" } }, "required": ["kind"] },
-      "then": { "description": "1.1 kinds are refused before 1.1.", "properties": { "schema": { "enum": ["notification@1.1", "notification@1.2"] } } }
+      "then": { "description": "1.1 kinds are refused before 1.1.", "properties": { "schema": { "enum": ["notification@1.1", "notification@1.2", "notification@1.3"] } } }
     },
     {
       "if": { "properties": { "kind": { "const": "dispatch.started" } }, "required": ["kind"] },
-      "then": { "description": "1.2 kinds are refused before 1.2.", "properties": { "schema": { "const": "notification@1.2" } } }
+      "then": { "description": "1.2 kinds are refused before 1.2.", "properties": { "schema": { "enum": ["notification@1.2", "notification@1.3"] } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "review.held" } }, "required": ["kind"] },
+      "then": { "description": "1.3 kinds are refused before 1.3.", "properties": { "schema": { "const": "notification@1.3" } } }
     }
   ],
   "additionalProperties": false

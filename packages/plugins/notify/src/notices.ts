@@ -9,12 +9,12 @@
 import type { SystemEvent } from '@tsuuanmi/system-ledger-core'
 
 /** The notice kinds, in the order the design names them (`notification@1.x` `kind`; `review.expiring` since 1.1, `dispatch.started` since 1.2). */
-export const KINDS = ['approval.opened', 'approval.expiring', 'run.user-action', 'run.escalated', 'run.waiting', 'pool.limited', 'worker.quarantined', 'review.expiring', 'dispatch.started'] as const
+export const KINDS = ['approval.opened', 'approval.expiring', 'run.user-action', 'run.escalated', 'run.waiting', 'pool.limited', 'worker.quarantined', 'review.expiring', 'dispatch.started', 'review.held'] as const
 export type Kind = (typeof KINDS)[number]
 
-/** `notification@1.0`, `@1.1` for a `review.expiring` notice, `@1.2` for a `dispatch.started` one; the schema in `schemas/` is canonical. */
+/** `notification@1.0`, `@1.1` for a `review.expiring` notice, `@1.2` for a `dispatch.started` one, `@1.3` for a `review.held` one; the schema in `schemas/` is canonical. */
 export interface Notice {
-  schema: 'notification@1.0' | 'notification@1.1' | 'notification@1.2'
+  schema: 'notification@1.0' | 'notification@1.1' | 'notification@1.2' | 'notification@1.3'
   id: string
   kind: Kind
   subject: string
@@ -232,6 +232,76 @@ export function reminderNotice(reminder: Reminder, now: number, options: ReadOpt
   })
 }
 
+/** A result held for the operator, or its end (`board.review.held`, `board.review.ended`), for the batched hold notice. */
+interface HoldReading {
+  held?: { taskId: string; projectId?: string; expiresMs: number }
+  ended?: string
+}
+
+export function readHold(event: SystemEvent): HoldReading {
+  const data = event.data ?? {}
+  const taskId = id(data.taskId)
+  if (!taskId) return {}
+  if (event.type === 'board.review.ended') return { ended: taskId }
+  if (event.type !== 'board.review.held') return {}
+  const expiresAt = time(data.expiresAt)
+  if (!expiresAt) return {}
+  const projectId = id(data.projectId)
+  return { held: { taskId, ...(projectId ? { projectId } : {}), expiresMs: Date.parse(expiresAt) } }
+}
+
+/** One hold of a batch. */
+interface HoldLine { taskId: string; projectId?: string | null; expiresMs: number }
+
+/** A notice's text, at most (`notification@1.x` `text`): a hold message is built to fit it, never cut. */
+const TEXT_MAX = 1000
+
+/** The batched hold message, and the holds it names: only those are told; the rest stay due. */
+interface HoldsMessage {
+  notice: Notice
+  expiring: string[]
+  held: string[]
+}
+
+/**
+ * The one message of a sweep: the holds due, the expiring first (the soonest first), then the new
+ * ones, each line whole (task, project, until when). Lines are added while the text stays within
+ * {@link TEXT_MAX}; the holds that do not fit are counted in it ("N more ...") and are not named as
+ * told, so the next message lists them. `due` counts every hold due, listed or not. A `review.held`
+ * notice when it names a new hold, else `review.expiring`.
+ */
+export function holdsNotice(expiring: readonly HoldLine[], held: readonly HoldLine[], due: { expiring: number; held: number }, seq: number, now: number, options: ReadOptions): HoldsMessage | undefined {
+  const line = (h: HoldLine): string => `${h.taskId}${h.projectId ? ` (${h.projectId})` : ''} until ${new Date(h.expiresMs).toISOString()}`
+  const tail = ' Unanswered by its time, a review expires (review-expired).'
+  const more = (n: number): string => ` ${n} more wait: on /ui now, and in the next message.`
+  const budget = TEXT_MAX - tail.length - more(due.expiring + due.held).length
+  const listed: { expiring: HoldLine[]; held: HoldLine[] } = { expiring: [], held: [] }
+  const body = (): string => [
+    ...(listed.expiring.length ? [`Expiring soon: ${listed.expiring.map(line).join('; ')}.`] : []),
+    ...(listed.held.length ? [`Held for you: ${listed.held.map(line).join('; ')}.`] : []),
+  ].join(' ')
+  // The most urgent first; the first line that does not fit ends its sort, so none is listed out of turn.
+  for (const [sort, lines] of [['expiring', expiring], ['held', held]] as const) {
+    for (const h of lines) {
+      listed[sort].push(h)
+      if (body().length > budget) {
+        listed[sort].pop()
+        break
+      }
+    }
+  }
+  const count = listed.expiring.length + listed.held.length
+  if (!count) return undefined
+  const left = due.expiring + due.held - count
+  const first = (listed.expiring[0] ?? listed.held[0])!
+  const notice = make({ seq, type: 'board.review.held', at: new Date(now).toISOString() }, options, listed.held.length ? 'review.held' : 'review.expiring', 'holds', {
+    title: `${due.held} result(s) newly held for you, ${due.expiring} expiring soon`,
+    text: `${body()}${left > 0 ? more(left) : ''}${tail}`,
+    act: ['system ui', `MCP board_task {"taskId":"${first.taskId}"}`],
+  })
+  return notice ? { notice, expiring: listed.expiring.map((h) => h.taskId), held: listed.held.map((h) => h.taskId) } : undefined
+}
+
 /** The operator's channels for a verdict: the queue on `/ui`, or MCP. */
 const approvalActs = (requestId: string): string[] => ['system ui', `MCP approvals_get {"requestId":"${requestId}"}`, 'MCP approvals_decide']
 
@@ -239,7 +309,7 @@ function make(event: Pick<SystemEvent, 'seq' | 'type' | 'at'>, options: ReadOpti
   const at = time(event.at)
   if (!at) return undefined
   return {
-    schema: kind === 'dispatch.started' ? 'notification@1.2' : kind === 'review.expiring' ? 'notification@1.1' : 'notification@1.0', id: clip(`${kind}:${subject}:${event.seq}`, 300), kind, subject, at, event: { seq: event.seq, type: event.type },
+    schema: kind === 'review.held' ? 'notification@1.3' : kind === 'dispatch.started' ? 'notification@1.2' : kind === 'review.expiring' ? 'notification@1.1' : 'notification@1.0', id: clip(`${kind}:${subject}:${event.seq}`, 300), kind, subject, at, event: { seq: event.seq, type: event.type },
     title: clip(body.title, 120), text: clip(body.text, 1000), act: body.act.slice(0, 4).map((line) => clip(line, 300)),
     ...(options.link ? { link: options.link } : {}),
   }

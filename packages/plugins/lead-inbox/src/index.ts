@@ -18,7 +18,7 @@ import type {} from '@tsuuanmi/system-ledger-core'
 import { z as zod } from 'zod'
 import { type Brief, type BriefSources, buildBrief, renderBrief, UnknownProject } from './brief.ts'
 import { defaultSources } from './brief-sources.ts'
-import { type Closing, type Draft, KINDS, type Kind, type LeadNotice, makeNotice, readEvent, type Reading } from './notices.ts'
+import { type Closing, type Draft, expiringDraft, heldDraft, type HoldReading, KINDS, type Kind, type LeadNotice, makeNotice, readEvent, readHold, type Reading, UI_LINK } from './notices.ts'
 import { commandSink, DEFAULT_TIMEOUT_SECONDS, fileSink, type Sink, type SinkConfig, sinkProblems, waitSink } from './sinks.ts'
 
 export { KINDS, type Kind, type LeadNotice, readEvent } from './notices.ts'
@@ -58,6 +58,10 @@ export interface Config {
   staleMinutes?: number
   /** Ready tasks waiting while Workers that could take them are free, past this many minutes, are `quota.idle` (default 10). */
   idleMinutes?: number
+  /** A result held for the operator is told as `review.expiring` this many hours before its hold expires (default 4). */
+  expiringHours?: number
+  /** The operator page a hold's notice links to (default the bundle's loopback /ui). */
+  link?: string
   /** The landings of an interval are one `task.digest` notice, per this many minutes (default 60). */
   digestMinutes?: number
   /** At most one notice per project, subject, and kind in this many minutes (default 10). */
@@ -79,7 +83,7 @@ export interface Config {
 }
 
 export const DEFAULTS = {
-  staleMinutes: 10, idleMinutes: 10, digestMinutes: 60, dedupMinutes: 10, maxAgeMinutes: 60, pollSeconds: 15, retainDays: 14, maxNotices: 1000, maxQueue: 200,
+  staleMinutes: 10, idleMinutes: 10, expiringHours: 4, digestMinutes: 60, dedupMinutes: 10, maxAgeMinutes: 60, pollSeconds: 15, retainDays: 14, maxNotices: 1000, maxQueue: 200,
 } as const
 
 const Sink: z<SinkConfig> = z.object({
@@ -93,6 +97,8 @@ export const Config: z<Config> = z.object({
   kinds: z.array(z.union([...KINDS])).default([...KINDS]).description('The kinds of notice made (default every kind)'),
   staleMinutes: z.natural().min(1).max(10_080).default(DEFAULTS.staleMinutes).description('An open request of a project older than this is a request.stale notice, in minutes'),
   idleMinutes: z.natural().min(1).max(10_080).default(DEFAULTS.idleMinutes).description('Ready tasks waiting while Workers that could take them are free, past this many minutes, are a quota.idle notice'),
+  expiringHours: z.natural().min(1).max(168).default(DEFAULTS.expiringHours).description('A result held for the operator is a review.expiring notice this many hours before its hold expires, once per hold'),
+  link: z.string().default(UI_LINK).description('The operator page a hold\'s notice links to, without its token (an http or https URL)'),
   digestMinutes: z.natural().min(1).max(10_080).default(DEFAULTS.digestMinutes).description('The landings of this many minutes are batched into one task.digest notice'),
   dedupMinutes: z.natural().min(1).max(1440).default(DEFAULTS.dedupMinutes).description('At most one notice per project, subject, and kind in this many minutes'),
   maxAgeMinutes: z.natural().min(1).max(10_080).default(DEFAULTS.maxAgeMinutes).description('An event older than this when read makes no notice (a host or row that was off), in minutes'),
@@ -108,6 +114,15 @@ export const Config: z<Config> = z.object({
 export function configProblems(config: Config): string[] {
   const problems: string[] = []
   if (!(config.kinds ?? KINDS).length) problems.push('kinds is empty: turn the lead-inbox row off instead')
+  const link = config.link ?? UI_LINK
+  try {
+    const url = new URL(link)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') problems.push('link must be an http or https URL')
+    if (url.hash || url.username || url.password) problems.push('link must carry no fragment, user, or password: the token stays out of notices')
+    if (link.length > 300) problems.push('link is longer than 300 characters')
+  } catch {
+    problems.push(`link is not a URL: ${link.slice(0, 100)}`)
+  }
   for (const [project, row] of Object.entries(config.projects ?? {})) problems.push(...sinkProblems(project, row.sinks ?? [], config.coordinationDir))
   return problems
 }
@@ -122,6 +137,9 @@ const MIGRATIONS = [{
   CREATE TABLE lead_requests (request_id TEXT PRIMARY KEY, project TEXT NOT NULL, created_ms INTEGER NOT NULL, noted INTEGER NOT NULL DEFAULT 0);
   CREATE TABLE lead_idle (task_id TEXT PRIMARY KEY, project TEXT NOT NULL, since_ms INTEGER NOT NULL, noted INTEGER NOT NULL DEFAULT 0);
   CREATE TABLE lead_digests (project TEXT PRIMARY KEY, at_ms INTEGER NOT NULL);`,
+}, {
+  version: 2,
+  sql: 'CREATE TABLE lead_holds (task_id TEXT PRIMARY KEY, project TEXT NOT NULL, expires_ms INTEGER NOT NULL, since_ms INTEGER NOT NULL, noted INTEGER NOT NULL DEFAULT 0);',
 }]
 
 const schemas = new SchemaRegistry()
@@ -134,7 +152,15 @@ export interface Sources {
   projects(): Promise<string[]>
   /** Ready tasks that a Worker free now could take (capacity now, `ready` with a likely Worker); undefined when it cannot be read. */
   idle(): Promise<Array<{ projectId: string; taskId: string }> | undefined>
+  /** Every result held for the operator now (tasks in review, waiting on operator-review); undefined when it cannot be read whole. */
+  holds(): Promise<HeldNow[] | undefined>
 }
+
+/** A result held for the operator now, as the board shows it. */
+export interface HeldNow { taskId: string; projectId: string; expiresMs: number; checks: string[] }
+
+/** Holds one reconciliation reads at most (INV-9); past them, it changes nothing. */
+const HOLDS_READ = 1000
 
 export interface Stats {
   unread: number
@@ -162,6 +188,10 @@ export class LeadInbox extends Service {
   private readonly maxAgeMs: number
   private readonly staleMs: number
   private readonly idleMs: number
+  /** How many hours before its hold expires a held result is `review.expiring` (`expiringHours`); the lead digest flags holds under it. */
+  readonly expiringHours: number
+  private readonly expiringMs: number
+  private readonly link: string
   private readonly digestMs: number
   private readonly retainMs: number
   private readonly maxNotices: number
@@ -185,6 +215,9 @@ export class LeadInbox extends Service {
     this.maxAgeMs = (config.maxAgeMinutes ?? DEFAULTS.maxAgeMinutes) * 60_000
     this.staleMs = (config.staleMinutes ?? DEFAULTS.staleMinutes) * 60_000
     this.idleMs = (config.idleMinutes ?? DEFAULTS.idleMinutes) * 60_000
+    this.expiringHours = config.expiringHours ?? DEFAULTS.expiringHours
+    this.expiringMs = this.expiringHours * 3_600_000
+    this.link = config.link ?? UI_LINK
     this.digestMs = (config.digestMinutes ?? DEFAULTS.digestMinutes) * 60_000
     this.retainMs = (config.retainDays ?? DEFAULTS.retainDays) * 86_400_000
     this.maxNotices = config.maxNotices ?? DEFAULTS.maxNotices
@@ -215,6 +248,20 @@ export class LeadInbox extends Service {
         const ready = (await readCapacity(services, { scope: 'client' })).ready
         if (!('value' in ready)) return undefined
         return ready.value.items.filter((t) => 'value' in t.likely && t.likely.value !== null).map((t) => ({ projectId: t.projectId, taskId: t.taskId }))
+      },
+      holds: async () => {
+        type Task = { taskId: string; projectId: string; waiting?: { reason: string; expiresAt?: string; pendingChecks?: string[] } }
+        const board = ctx.get('board' as never) as { projects?: () => Promise<Array<{ projectId: string; state: string }>>; tasks?: (filter: { projectId: string; states: string[] }) => Promise<Task[]> } | undefined
+        if (!board?.projects || !board.tasks) return undefined
+        const out: HeldNow[] = []
+        for (const project of (await board.projects()).filter((p) => p.state !== 'closed')) {
+          for (const t of await board.tasks({ projectId: project.projectId, states: ['review'] })) {
+            const expiresMs = t.waiting?.reason === 'operator-review' && t.waiting.expiresAt ? Date.parse(t.waiting.expiresAt) : Number.NaN
+            if (Number.isFinite(expiresMs)) out.push({ taskId: t.taskId, projectId: t.projectId, expiresMs, checks: [...(t.waiting?.pendingChecks ?? [])] })
+            if (out.length > HOLDS_READ) return undefined
+          }
+        }
+        return out
       },
     }
     ctx.store.migrate('lead-inbox', MIGRATIONS)
@@ -305,10 +352,13 @@ export class LeadInbox extends Service {
       const start = this.cursor()
       let cursor = start
       const read: Array<{ event: SystemEvent; reading: Reading }> = []
+      const holds: Array<{ event: SystemEvent; hold: HoldReading }> = []
       for (let page = 0; page < PAGES_PER_PASS; page++) {
         const events = this.ctx.eventLog.query({ afterSeq: cursor, limit: PAGE })
         for (const event of events) {
           if (event.type.startsWith('lead-inbox.')) continue
+          const hold = readHold(event)
+          if (hold.held || hold.ended) holds.push({ event, hold })
           const reading = readEvent(event)
           if (reading.drafts.length || reading.closes.length || reading.opened || reading.resolved) read.push({ event, reading })
         }
@@ -336,6 +386,14 @@ export class LeadInbox extends Service {
             for (const project of to[i]!) this.insert(draft, project, { seq: event.seq, type: event.type, at: event.at }, now, made, true)
           }
         }
+        for (const { event, hold } of holds) {
+          if (hold.ended) {
+            db.prepare('DELETE FROM lead_holds WHERE task_id = ?').run(hold.ended)
+            this.closeNotices({ kinds: ['review.held', 'review.expiring'], subject: hold.ended }, now)
+          }
+          // A hold the sweep already kept from the board (the same expiry) is told once, not again.
+          if (hold.held && this.keepHold(hold.held, now)) this.insert(heldDraft(hold.held, this.link), hold.held.project, { seq: event.seq, type: event.type, at: event.at }, now, made, true)
+        }
         if (cursor !== start) db.prepare('INSERT INTO lead_cursor (id, seq) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET seq = excluded.seq').run(cursor)
         this.prune(now)
         this.ctx.store.afterCommit(() => this.committed(made))
@@ -360,6 +418,12 @@ export class LeadInbox extends Service {
    */
   async sweep(now: number = Date.now()): Promise<void> {
     if (this.disposed) return
+    let holds: HeldNow[] | undefined
+    try {
+      holds = (this.kinds.has('review.held') || this.kinds.has('review.expiring')) ? await this.sources.holds() : undefined
+    } catch (error) {
+      this.ctx.logger.warn(`lead-inbox: the holds could not be read from the board this time: ${(error as Error).message}`)
+    }
     let idle: Array<{ projectId: string; taskId: string }> | undefined
     try {
       idle = this.kinds.has('quota.idle') ? await this.sources.idle() : undefined
@@ -380,6 +444,28 @@ export class LeadInbox extends Service {
             text: `Request ${row.request_id} of project ${row.project} has been open for more than ${Math.round(this.staleMs / 60_000)} minutes.`,
             act: [`MCP approvals_get {"requestId":"${row.request_id}"}`, 'MCP approvals_decide', 'system ui'],
           }, row.project, event, now, made, false)
+        }
+        // The holds reconciled with the board's (T357): one the event log did not tell (held before the
+        // upgrade, or missed) is kept and told; one the board no longer holds, kept before this read, is
+        // forgotten and its notices closed. A board that cannot be read changes nothing.
+        if (holds) {
+          const shown = new Set(holds.map((h) => h.taskId))
+          const gone = (db.prepare('SELECT task_id FROM lead_holds WHERE since_ms < ?').all(now) as Array<{ task_id: string }>).filter((r) => !shown.has(r.task_id))
+          for (const { task_id } of gone) {
+            db.prepare('DELETE FROM lead_holds WHERE task_id = ?').run(task_id)
+            this.closeNotices({ kinds: ['review.held', 'review.expiring'], subject: task_id }, now)
+          }
+          for (const h of holds) {
+            const held = { taskId: h.taskId, project: h.projectId, expiresMs: h.expiresMs, checks: h.checks }
+            if (this.keepHold(held, now)) this.insert(heldDraft(held, this.link), h.projectId, event, now, made, false)
+          }
+        }
+        // A held result's expiry: told once, `expiringHours` before it; a hold that has expired is forgotten.
+        db.prepare('DELETE FROM lead_holds WHERE expires_ms <= ?').run(now)
+        const expiring = db.prepare('SELECT task_id, project, expires_ms FROM lead_holds WHERE noted = 0 AND expires_ms - ? <= ? ORDER BY expires_ms LIMIT 100').all(this.expiringMs, now) as Array<{ task_id: string; project: string; expires_ms: number }>
+        for (const row of expiring) {
+          db.prepare('UPDATE lead_holds SET noted = 1 WHERE task_id = ?').run(row.task_id)
+          this.insert(expiringDraft({ taskId: row.task_id, project: row.project, expiresMs: row.expires_ms }, now, this.link), row.project, event, now, made, false)
         }
         if (idle) {
           const seen = new Set(idle.map((t) => t.taskId))
@@ -480,6 +566,23 @@ export class LeadInbox extends Service {
     if (Number(changes) !== 1) return
     db.prepare('INSERT INTO lead_claims (project, kind, subject, claimed_ms) VALUES (?, ?, ?, ?) ON CONFLICT (project, kind, subject) DO UPDATE SET claimed_ms = excluded.claimed_ms').run(notice.project, notice.kind, notice.subject, now)
     made.push(notice)
+  }
+
+  /**
+   * Keep a hold until it expires; true when it is new to the inbox (or held again with another
+   * expiry), so its `review.held` is told; false for one kept already, expired, or past the bound.
+   */
+  private keepHold(hold: { taskId: string; project: string; expiresMs: number }, now: number): boolean {
+    if (hold.expiresMs <= now) return false
+    const db = this.ctx.store.db
+    const known = db.prepare('SELECT expires_ms FROM lead_holds WHERE task_id = ?').get(hold.taskId) as { expires_ms: number } | undefined
+    if (known?.expires_ms === hold.expiresMs) return false
+    if (!known && (db.prepare('SELECT COUNT(*) AS n FROM lead_holds').get() as { n: number }).n >= MAX_OPEN) {
+      this.ctx.logger.warn(`lead-inbox: ${MAX_OPEN} holds are kept already; the hold of ${hold.taskId} is not watched for its expiry`)
+      return false
+    }
+    db.prepare('INSERT INTO lead_holds (task_id, project, expires_ms, since_ms) VALUES (?, ?, ?, ?) ON CONFLICT (task_id) DO UPDATE SET project = excluded.project, expires_ms = excluded.expires_ms, since_ms = excluded.since_ms, noted = 0').run(hold.taskId, hold.project, hold.expiresMs, now)
+    return true
   }
 
   /** Close the unread notices a decided request or a moved task ends. */
