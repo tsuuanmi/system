@@ -27,6 +27,7 @@ decisions, architecture, or design.
 | [production-readiness-2026-10-28.md](production-readiness-2026-10-28.md) | what System should change next to be production-ready, ranked by value over cost, from the incidents of 2026-10-26..28, ahead of the DNA pilot | 2026-10-28 |
 | [resource-capacity.md](resource-capacity.md) | the System's disk, RAM and CPU footprint per run and per step, the levers (node_modules, worktree retention, check concurrency, backups, events), and a capacity model for 6 to 20 runs at once | 2026-10-28 |
 | [model-routing.md](model-routing.md) | cost and value of each algorithm-development step by tier and Worker family, the cause of the fix rate, an A/B design for self-review, ranked recommendations; the per-step store pull it still needs | 2026-10-28 |
+| [shared-node-modules-experiment.md](shared-node-modules-experiment.md) | PROP-0020 task 1: what an agent sandbox can measure about a shared read-only `node_modules` (shims and `.modules.yaml` paths read; installs blocked by pnpm's store lock; the host commands that remain) | 2026-10-31 |
 
 Each analysis ends with **Adopted** and **Not adopted** lists. Once its findings
 are fully promoted, an analysis may be pruned, because git history keeps it.
