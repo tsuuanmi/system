@@ -96,3 +96,27 @@ reads that as unchanged under A. No other writer is recorded; this note does not
 
 Scratch only, in the git-ignored `.dsh-home/t356` of this worktree (scripts, outputs, a few GB of scratch
 trees); nothing in the tree except this note and its router row.
+
+## 6. Host results (the lead, 2026-10-31)
+
+Run by the lead on the host, on a full copy of the pnpm store (3.9 GB), of pnpm's metadata cache and of corepack's
+cache, with a `git archive` of dev as the tree, so nothing outside the scratch directory was written. Offline,
+pnpm 12.9.1.
+
+| Row | Command (scratch) | Result |
+|---|---|---|
+| baseline | `pnpm install --frozen-lockfile --offline --store-dir=<copy>/v11 --package-import-method=copy` | exit 0, 1.5 s; `node_modules` 684 MiB, `.pnpm` 31 449 files, 3 350 symlinks |
+| `cp -al` of `.pnpm` | | 1.3 s |
+| 2 | the same install again with `node_modules/.pnpm` read-only (`chmod -R a-w`) | exit 0, 135 ms: an install over a complete read-only `.pnpm` writes nothing |
+| 2b | a second tree with `--virtual-store-dir=<first tree's read-only .pnpm>` | exit 1: a foreign read-only virtual store dir is refused |
+| 1 | `--config.enable-global-virtual-store=true`, first tree | exit 0, 1.3 s; the tree's `node_modules` is 4.1 MiB; the store gains `links/` (664 MiB) |
+| 1b | the same, a second tree, with `links/` read-only | exit 0, 0.9 s; 4.1 MiB |
+
+Not measured: the writers during `pnpm check` (the archived tree has no `.git` and no build, so the check failed
+before running); A's bind of a master `.pnpm` at the same absolute path inside bubblewrap.
+
+What it settles for PROP-0020: B works offline on pnpm 12.9.1 and reads a read-only `links/` once it holds the
+lockfile's packages (4.1 MiB per worktree against 684 MiB); its concern that every setup writes the shared
+directory stands for a lockfile that adds packages. A's in-place read-only install works; its cross-tree variant
+through `--virtual-store-dir` does not, so A needs the bind at the same path (untested). The choice between A and B
+is the operator's (PROP-0020: a change of recommendation is a new proposal).
