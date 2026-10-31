@@ -11,18 +11,29 @@
  * the dossier); a pre-existing finding proposes a follow-up board task, linked and never blocking.
  */
 import type { Lease } from '@tsuuanmi/system-board-core'
-import { captureGitSubject, changeBetween, changeSince, clampText, CLEAN_VERSION, type GitSubject, subjectId } from '@tsuuanmi/system-libs'
+import { captureGitSubject, changeBetween, changeSince, clampText, CLEAN_VERSION, extractJson, type GitSubject, subjectId } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { fixCommits } from './fix-sessions.ts'
 import { append } from './growth.ts'
 import {
   type Assessment, blocks, type Finding, findingKey, growthPrefix, parseAssessment, parseVotes, pendingImportant, type PriorFinding, remediationPrompt,
-  type ResolvedNode, type ReviewCycle, subjectBlock, summaryOf, verificationBlock,
+  jsonRequest, type ResolvedNode, type ReviewCycle, subjectBlock, summaryOf, verificationBlock,
 } from './spec.ts'
 import type { NodeRecord, NodeRow, RunRow } from './types.ts'
 
-export type SubjectGate = { passed: true; decision: ArtifactRef; assessment: Assessment; ref: ArtifactRef; subject: string } | { passed: false; decision: ArtifactRef; reason: string }
+/**
+ * A failed gate is `missing` when the answer lacks its JSON (or a verdict, or votes): the step is asked
+ * for it once (`request`); else the subject is stale, as the gate says (T349b).
+ */
+export type SubjectGate = { passed: true; decision: ArtifactRef; assessment: Assessment; ref: ArtifactRef; subject: string }
+  | { passed: false; decision: ArtifactRef; reason: string; missing?: { request: string } }
+
+/** How many times a step's answer already missed its JSON: its exact-subject `gate` decisions that say so. */
+export function assessmentMisses(e: Engine, run: RunRow, node: NodeRow): number {
+  return e.ctx.artifacts.list({ kind: 'decision', decisionType: 'gate', runId: run.run_id, nodeId: node.node_id, outcome: 'fail', limit: 1000 })
+    .filter((a) => (a.body as { outcome?: { detail?: { missing?: boolean } } }).outcome?.detail?.missing === true).length
+}
 
 /** The rule of a verification step's votes, and of a pre-existing finding's follow-up task. */
 export const VERIFICATION_RULE = 'workflow.verification'
@@ -246,7 +257,7 @@ function putAssessment(e: Engine, run: RunRow, node: NodeRow, subject: GitSubjec
 }
 
 /** The exact-subject `gate` decision on a review step: whether its assessment binds to the current subject. */
-function recordGate(e: Engine, run: RunRow, node: NodeRow, expected: string, inputs: ArtifactRef[], reason: string | undefined, assessment: ArtifactRef | undefined, verdict: string): ArtifactRef {
+function recordGate(e: Engine, run: RunRow, node: NodeRow, expected: string, inputs: ArtifactRef[], reason: string | undefined, assessment: ArtifactRef | undefined, verdict: string, missing = false): ArtifactRef {
   return e.ctx.artifacts.recordDecision({
     decisionType: 'gate',
     question: `Does the review at node ${node.node_id} of run ${run.run_id} bind to the current subject ${expected}?`,
@@ -256,9 +267,24 @@ function recordGate(e: Engine, run: RunRow, node: NodeRow, expected: string, inp
       { option: 'fail', selected: !!reason, reasons: reason ? [reason] : [`not fail: the review parses, names ${expected}, and the working tree has not changed since`] },
     ],
     decider: { type: 'policy', id: 'workflow.exact-subject', version: '1' },
-    outcome: { option: reason ? 'fail' : 'pass', detail: { subject: expected, ...(assessment ? { assessment } : {}) } },
+    outcome: { option: reason ? 'fail' : 'pass', detail: { subject: expected, ...(assessment ? { assessment } : {}), ...(missing ? { missing: true } : {}) } },
     deterministic: true,
   }, { ...PRODUCER, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
+}
+
+/**
+ * The gate of an `unbound` step (T349b): its answer carries the JSON its caller reads (an assessment,
+ * or a verifier's votes), else it is asked for it once; undefined when it does. A miss is a `gate`
+ * decision that says `missing`, which {@link assessmentMisses} counts.
+ */
+export function unboundGate(e: Engine, run: RunRow, node: NodeRow, result: ArtifactRef, reads: 'assessment' | 'votes'): { decision: ArtifactRef; reason: string; request: string } | undefined {
+  const text = e.resultText(result)
+  const parsed = reads === 'assessment' ? parseAssessment(text) : undefined
+  const v = reads === 'votes' ? extractJson(text) as { votes?: unknown } | undefined : undefined
+  const problem = parsed ? (parsed.ok ? undefined : parsed.reason) : !v ? 'the verification has no JSON votes' : !Array.isArray(v.votes) ? 'the verification has no votes list' : undefined
+  if (!problem) return undefined
+  const decision = recordGate(e, run, node, 'the area it is given', [result], problem, undefined, '', true)
+  return { decision, reason: problem, request: jsonRequest(problem, 'the Subject line, exactly', reads === 'votes' ? 'f1' : undefined) }
 }
 
 /**
@@ -274,13 +300,16 @@ export function subjectGate(e: Engine, run: RunRow, node: NodeRow, result: Artif
   const answered = priorFindings(e, spec, e.nodeRows(run.run_id)).filter((p) => p.state === 'answered')
   const parsed = parseAssessment(e.resultText(result), answered)
   const now = captureGitSubject(bound.workspace)
-  const reason = !parsed.ok ? parsed.reason
-    : parsed.assessment.subject !== expected ? `the review names ${parsed.assessment.subject}, not the subject it was given (${expected})`
-      : !now ? `${bound.workspace} is no longer a git working tree`
-        : subjectId(now.subject) !== expected ? `the working tree changed during the review (now ${subjectId(now.subject)})` : undefined
+  // The tree first (T349b): a tree that moved is a stale subject whatever the answer holds, so an answer without its JSON never masks it.
+  const stale = !now ? `${bound.workspace} is no longer a git working tree`
+    : subjectId(now.subject) !== expected ? `the working tree changed during the review (now ${subjectId(now.subject)})` : undefined
+  const missing = !stale && !parsed.ok
+  const reason = stale ?? (!parsed.ok ? parsed.reason
+    : parsed.assessment.subject !== expected ? `the review names ${parsed.assessment.subject}, not the subject it was given (${expected})` : undefined)
   const assessment = parsed.ok && !reason ? putAssessment(e, run, node, bound.subject, parsed.assessment, [result], node.worker) : undefined
-  const decision = recordGate(e, run, node, expected, [result], reason, assessment, parsed.ok ? parsed.assessment.verdict : '')
-  return reason || !parsed.ok ? { passed: false, decision, reason: reason ?? '' } : { passed: true, decision, assessment: parsed.assessment, ref: assessment!, subject: expected }
+  const decision = recordGate(e, run, node, expected, [result], reason, assessment, parsed.ok ? parsed.assessment.verdict : '', missing)
+  if (missing && !parsed.ok) return { passed: false, decision, reason: reason!, missing: { request: jsonRequest(parsed.reason, expected) } }
+  return reason || !parsed.ok ? { passed: false, decision, reason: reason! } : { passed: true, decision, assessment: parsed.assessment, ref: assessment!, subject: expected }
 }
 
 /**
@@ -307,7 +336,12 @@ export function verificationGate(e: Engine, run: RunRow, node: NodeRow, result: 
     return { passed: false, decision, reason }
   }
   const ids = reviewed!.findings.filter(pendingImportant).map((f) => f.id!)
-  const { votes, problem } = parseVotes(e.resultText(result), expected, ids)
+  const { votes, problem, missing } = parseVotes(e.resultText(result), expected, ids)
+  // A verifier whose answer has no JSON votes is asked once for them (T349b); its second miss leaves the findings unverified, as before.
+  if (missing && ids.length && !assessmentMisses(e, run, node)) {
+    const decision = recordGate(e, run, node, expected, [result], problem!, undefined, '', true)
+    return { passed: false, decision, reason: problem!, missing: { request: jsonRequest(problem!, expected, ids[0]) } }
+  }
   const findings = reviewed!.findings.map((f): Finding => (votes[f.id ?? ''] ? { ...f, verification: { ...votes[f.id!]!, node: node.node_id, ...(node.worker ? { worker: node.worker } : {}) } } : f))
   const verdict = findings.some(blocks) ? 'changes-requested' : 'approve'
   const assessment: Assessment = { subject: expected, verdict, findings, ...(reviewed!.said ? { said: reviewed!.said } : {}), ...(reviewed!.approach ? { approach: reviewed!.approach } : {}) }

@@ -435,7 +435,7 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
       return dir
     }
     /** The developer fixes calc.py; the reviewer answers with an assessment naming `subjectOf(prompt)`. */
-    const develop = async (review: (prompt: string, workspace: string) => string) => {
+    const develop = async (review: (prompt: string, workspace: string) => string, verifier: (prompt: string) => string = (prompt) => verify(prompt)) => {
       const ws = gitRepo()
       const agent = new ScriptedAgent({
         sandboxes: ['read-only', 'workspace-write'],
@@ -447,7 +447,7 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
             return 'done'
           }
           // The second reviewer confirms each important finding it is given (ADR-0075).
-          if (spec.prompt.includes('## Verify these findings')) return verify(spec.prompt)
+          if (spec.prompt.includes('## Verify these findings')) return verifier(spec.prompt)
           return review(spec.prompt, ws)
         },
       })
@@ -556,6 +556,45 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
       expect(done.error!.message).toMatch(/not the subject it was given/)
     })
 
+    it('asks a review whose answer has no JSON assessment once more for it, and passes when the JSON comes (T349b)', async () => {
+      let asked = 0
+      const { ctx, agent, done } = await develop((prompt) => (++asked === 1 ? 'The change looks fine to me.' : assessment(subjectOf(prompt))))
+      expect(done.status).toBe('completed')
+      const reviews = agent.runs.filter((r) => r.sandbox === 'read-only' && !r.prompt.includes('## Verify these findings'))
+      expect(reviews).toHaveLength(2)
+      expect(reviews[1]!.prompt).toContain('the review has no JSON assessment')
+      expect(reviews[1]!.prompt).toContain('"verdict": "approve" or "changes-requested"')
+      expect(ctx.artifacts.list({ kind: 'assessment' })).toHaveLength(1)
+    })
+
+    it('fails the step as assessment_missing, never stale_subject, when the answer misses its JSON twice (T349b)', async () => {
+      const { done } = await develop(() => 'No JSON here, only prose.')
+      expect(done).toMatchObject({ status: 'failed', error: { kind: 'assessment_missing' } })
+      expect(done.error!.message).toMatch(/the review has no JSON assessment/)
+    })
+
+    it('asks for the verdict a JSON without one lacks, and fails twice-missed as assessment_missing (T349b)', async () => {
+      const { done } = await develop((prompt) => '```json\n' + JSON.stringify({ subject: subjectOf(prompt), findings: [] }) + '\n```')
+      expect(done).toMatchObject({ status: 'failed', error: { kind: 'assessment_missing' } })
+      expect(done.error!.message).toMatch(/no verdict/)
+    })
+
+    it('asks a verifier whose answer has no JSON votes once more for them; its second miss leaves the finding unverified, as before (T349b)', async () => {
+      // The review raises one important finding; its verifier answers prose once, then votes.
+      let asked = 0
+      const once = await develop((prompt) => (asked > 0 ? assessment(subjectOf(prompt)) : changes(subjectOf(prompt))), (prompt) => (++asked === 1 ? 'I looked and agree.' : verify(prompt)))
+      expect(once.done.error).toBeUndefined()
+      expect(once.done.status).toBe('completed')
+      const verifiers = once.agent.runs.filter((r) => r.prompt.includes('## Verify these findings'))
+      expect(verifiers).toHaveLength(2)
+      expect(verifiers[1]!.prompt).toContain('the verification has no JSON votes')
+      expect(verifiers[1]!.prompt).toContain('"votes": [{"finding": "f1"')
+      // A verifier that never votes is asked once, then leaves the finding unverified: it never blocks, and the step is no failure.
+      const never = await develop((prompt) => changes(subjectOf(prompt)), () => 'No votes.')
+      expect(never.done.status).toBe('completed')
+      expect(never.agent.runs.filter((r) => r.prompt.includes('## Verify these findings'))).toHaveLength(2)
+    })
+
     it('fails the gate when the working tree changes during the review (INV-5)', async () => {
       const { done } = await develop((prompt, ws) => {
         writeFileSync(join(ws, 'calc.py'), 'def add(a, b):\n    return b + a\n')
@@ -563,6 +602,16 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
       })
       expect(done).toMatchObject({ status: 'failed', error: { kind: 'stale_subject' } })
       expect(done.error!.message).toMatch(/changed during the review/)
+    })
+
+    it('fails as stale_subject, never asking again, when the tree moved and the answer also has no JSON (T349b)', async () => {
+      const { agent, done } = await develop((_prompt, ws) => {
+        writeFileSync(join(ws, 'calc.py'), 'def add(a, b):\n    return b + a\n')
+        return 'No JSON here, only prose.'
+      })
+      expect(done).toMatchObject({ status: 'failed', error: { kind: 'stale_subject' } })
+      expect(done.error!.message).toMatch(/changed during the review/)
+      expect(agent.runs.filter((r) => r.prompt.includes('Your answer cannot be read'))).toHaveLength(0)
     })
   })
 

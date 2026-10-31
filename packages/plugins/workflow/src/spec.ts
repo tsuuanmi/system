@@ -104,6 +104,13 @@ export interface NodeTemplate {
    * that continues the author's session, answered before the next review starts.
    */
   selfReview?: string
+  /**
+   * On a step that reads the work it is given as text, not a change in a working tree (the scheduled
+   * review's two reviewers, T349b): the engine binds it to no git subject, so it gets no assessment
+   * block and no exact-subject gate. Its caller reads the JSON it answers (`assessment`: a review's, `votes`:
+   * a verifier's): an answer without it is asked once for it, and a second miss fails the step as `assessment_missing`.
+   */
+  unbound?: 'assessment' | 'votes'
 }
 
 /** What a variant may change of a node: what it needs, what kind of work it is, where it runs, and how it is judged. */
@@ -976,7 +983,24 @@ export function subjectBlock(id: string, workspace: string, head: string, diff: 
     `Requested change: ${request}`,
     ...change,
     'Reply with only a JSON object in a ```json block, naming the subject exactly:',
-    `{"subject": "${id}", "verdict": "approve" or "changes-requested", "findings": [{"severity": "important" | "nit" | "pre-existing", "title": "...", "file": "path", "line": 12, "evidence": "what fails, and how that line shows it", "class": "the kind of defect", "detail": "..."}]${approach}}`,
+    assessmentShape(id, approach),
+  ].join('\n')
+}
+
+/** The JSON an assessment is, as a review is told it. */
+const assessmentShape = (id: string, approach = ''): string =>
+  `{"subject": "${id}", "verdict": "approve" or "changes-requested", "findings": [{"severity": "important" | "nit" | "pre-existing", "title": "...", "file": "path", "line": 12, "evidence": "what fails, and how that line shows it", "class": "the kind of defect", "detail": "..."}]${approach}}`
+
+/**
+ * What a step whose answer missed its JSON is asked once (T349b): what was missing, and exactly the
+ * block it lacks, fenced and last. A verification step passes the first finding's id (its votes);
+ * a review gets the assessment.
+ */
+export function jsonRequest(problem: string, id: string, votesOn?: string): string {
+  return [
+    `Your answer cannot be read: ${problem}.`,
+    'Reply again with only the JSON object it lacks, in a ```json block, the last thing in your answer, naming the subject exactly:',
+    votesOn ? `{"subject": "${id}", "votes": [{"finding": "${votesOn}", "vote": "confirm" | "reject", "reason": "why"}]}` : assessmentShape(id),
   ].join('\n')
 }
 
@@ -1047,7 +1071,7 @@ export function verificationBlock(id: string, workspace: string, head: string, d
     ...findings.map((f) => `${findingLine(f)}${f.detail ? `: ${f.detail}` : ''}`),
     `The change relative to commit ${head}, verbatim:`,
     ...diffBlock(diff),
-    'Reply with only a JSON object in a ```json block, naming the subject exactly and voting on every finding:',
+    'Reply with only a JSON object in a ```json block, the last thing in your answer, naming the subject exactly and voting on every finding:',
     `{"subject": "${id}", "votes": [{"finding": "${findings[0]?.id ?? 'f1'}", "vote": "confirm" | "reject", "reason": "why"}]}`,
   ].join('\n')
 }
@@ -1057,10 +1081,12 @@ export function verificationBlock(id: string, workspace: string, head: string, d
  * non-empty reason, or an answer that names another subject or carries no votes, gets `none` (it stays
  * unverified, and never blocks).
  */
-export function parseVotes(answer: string, subject: string, ids: readonly string[]): { votes: Record<string, { vote: Verification['vote']; reason: string }>; problem?: string } {
+export function parseVotes(answer: string, subject: string, ids: readonly string[]): { votes: Record<string, { vote: Verification['vote']; reason: string }>; problem?: string; missing?: true } {
   const v = extractJson(answer) as { subject?: unknown; votes?: unknown } | undefined
   const problem = !v ? 'the verification has no JSON votes' : v.subject !== subject ? `the verification names ${String(v.subject).slice(0, 200)}, not the subject it was given (${subject})`
     : !Array.isArray(v.votes) ? 'the verification has no votes list' : undefined
+  // An answer without its JSON votes lacks them; one naming another subject does not (T349b).
+  const missing = !v || (v.subject === subject && !Array.isArray(v.votes))
   const given = new Map<string, { vote: Verification['vote']; reason: string }>()
   if (!problem) {
     for (const item of v!.votes as Array<Record<string, unknown>>) {
@@ -1072,7 +1098,7 @@ export function parseVotes(answer: string, subject: string, ids: readonly string
     }
   }
   const votes = Object.fromEntries(ids.map((id) => [id, given.get(id) ?? { vote: 'none' as const, reason: problem ?? 'the verifier gave no vote on it' }]))
-  return { votes, ...(problem ? { problem } : {}) }
+  return { votes, ...(problem ? { problem } : {}), ...(missing ? { missing: true as const } : {}) }
 }
 
 /**
