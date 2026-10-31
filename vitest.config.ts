@@ -1,17 +1,12 @@
-import { availableParallelism } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 import { BaseSequencer, type TestSpecification } from 'vitest/node'
+import { scaled } from './packages/provider-core/conformance/time.ts'
 import { BrowserSkips } from './scripts/browser-skips.ts'
 import { durationKey, order, readDurations } from './scripts/test-durations.ts'
+import { testWorkers } from './scripts/test-workers.ts'
 
 const src = (path: string): string => fileURLToPath(new URL(path, import.meta.url))
-
-/** The worker count an acceptance check gives its run (SYSTEM_CHECK_MAX_WORKERS, a positive integer); undefined when none. */
-function checkWorkers(): number | undefined {
-  const given = Number(process.env.SYSTEM_CHECK_MAX_WORKERS)
-  return Number.isInteger(given) && given >= 1 ? given : undefined
-}
 
 /**
  * Starts the test files by the committed duration table (scripts/test-durations.ts): the files it
@@ -98,15 +93,17 @@ export default defineConfig({
     // Browser tests skipped where no browser can run are counted and said at the end, and to a check (T247).
     reporters: ['default', new BrowserSkips()],
     // Setup starts real displays and browsers: on a loaded 4-vCPU CI runner that can pass the
-    // 10 s default, which fails a whole suite before any of its tests runs.
-    hookTimeout: 60_000,
+    // 10 s default, which fails a whole suite before any of its tests runs. Scaled by
+    // SYSTEM_TEST_TIME_FACTOR (T348), as the Xvfb and Chrome start-up bounds those hooks wait on are.
+    hookTimeout: scaled(60_000),
     // At most 32 files at once (vitest's own default is one per CPU but one). On a 256-CPU host that
     // was 255: every file, its imports served by the one main process, its stores and processes at
     // once, and in-process tests of 1 to 2 s passed their 5 s bound (two copies of the suite: 9
     // failures, none capped, in the same 3.6 minutes). A 4-vCPU runner keeps its 3.
-    // An acceptance check (agent-workers, T292) sets SYSTEM_CHECK_MAX_WORKERS: its share of the host's
-    // cores, so that the checks the host runs at once, each with that many workers, fit its cores.
-    maxWorkers: checkWorkers() ?? Math.max(1, Math.min(32, availableParallelism() - 1)),
+    // An acceptance check (agent-workers, T292) sets SYSTEM_CHECK_MAX_WORKERS and a writing step its own
+    // test runs' SYSTEM_TEST_MAX_WORKERS (T348): a share of the host's cores, so that the runs the host
+    // runs at once, each with that many workers, fit its cores (scripts/test-workers.ts).
+    maxWorkers: testWorkers(),
     // Longest first by scripts/test-durations.json (`pnpm gen:test-durations`), cache or none.
     sequence: { sequencer: DurationSequencer },
   },

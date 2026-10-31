@@ -66,7 +66,7 @@ import z from '@deepseek-ai/schemastery'
 import {
   type AgentHome, type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ModelUsage, type ProbeOptions,
   type RunMetering, type RunResult, type RunSpec, type RunObserver, type RuntimeEvidence, type SandboxMode, type TokenUsage, type ToolGate, type ToolResultSink, askToolGate, childEnvironment, confinedCommand, tailOf,
-  agentHome, agentShellEnvironment, HOST_TOOLS_SERVER, homeProblem, WEB_RUN_TOOLS, hostToolsProblem, hostToolsServer, identityHmac, maskEmail, observe, proveConfinement, homeSocketDirectories, readHomeJson, SOCKET_ROOTS, socketCovers, socketDirectories, toolSandboxAllowances, withMetering, withRunReport, writableUnixSockets,
+  agentHome, agentShellEnvironment, HOST_TOOLS_SERVER, homeProblem, WEB_RUN_TOOLS, hostToolsProblem, hostToolsServer, identityHmac, maskEmail, observe, proveConfinement, homeSocketDirectories, readHomeJson, SOCKET_ROOTS, socketCovers, socketDirectories, toolSandboxAllowances, withMetering, withRunReport, withTestWorkers, writableUnixSockets,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
@@ -348,7 +348,7 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     const homeReadOnly = [shellHome, ...shell.startup]
     const plain = this.reporting(this.confinement(home, writes
       ? { writable: [home, spec.workspace, ...shell.writable], readOnly: homeReadOnly }
-      : { writable: [home, ...shell.writable], readOnly: [spec.workspace, ...homeReadOnly] }), writes ? spec.reportFile : undefined)
+      : { writable: [home, ...shell.writable], readOnly: [spec.workspace, ...homeReadOnly] }), writes ? spec.reportFile : undefined, writes ? spec.testWorkers : undefined)
     const env = this.environment(home, shellHome)
     let confinement = plain
     let unixSockets = false
@@ -685,10 +685,10 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     })
   }
 
-  /** `confinement` with a writing run's report file (T265), checked as a run's confinement is. */
-  private reporting(confinement: Confinement, reportFile: string | undefined): Confinement {
+  /** `confinement` with a writing run's report file (T265) and test-worker budget (T348), checked as a run's confinement is. */
+  private reporting(confinement: Confinement, reportFile: string | undefined, testWorkers: number | undefined): Confinement {
     try {
-      const reporting = withRunReport(confinement, reportFile)
+      const reporting = withTestWorkers(withRunReport(confinement, reportFile), testWorkers)
       confinedCommand('true', [], reporting)
       return reporting
     } catch (error) {

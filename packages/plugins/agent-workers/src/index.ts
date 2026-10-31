@@ -68,6 +68,7 @@ import {
 } from './roles.ts'
 import { researchProblem, withResearchDefaults } from './research.ts'
 import { type WebProof, WebProbes } from './web-probe.ts'
+import { stepWorkers } from './check-queue.ts'
 import { CHECKS_MIGRATION, DEFAULT_MAX_CONCURRENT_CHECKS, RunChecks } from './checks.ts'
 import { type RunReport, type RunReported, runReport } from './run-report.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
@@ -257,6 +258,12 @@ export interface Config {
    * (default the host's cores shared among `maxConcurrent`).
    */
   checks?: { maxConcurrent?: number; maxWorkers?: number }
+  /**
+   * The share of the host a writing step's own test runs take (T348): `coreBudget` cores (default half
+   * the host's) shared among `runs` runs testing at once (default 6; set it to the dispatch's
+   * `maxRunning`), each run's commands told the result as `SYSTEM_TEST_MAX_WORKERS`.
+   */
+  stepTests?: { coreBudget?: number; runs?: number }
   /**
    * The start mode of the gate-like mechanisms this source owns (ADR-0078; the plugin host's live
    * override wins). `lockfileVerification` (unset: `warn`, the mechanism's start mode, T333): `on`
@@ -477,6 +484,15 @@ function readBoundsOf(bounds: Partial<WorkspaceReadBounds> | undefined): Workspa
   }
 }
 
+/** The test workers of each writing step (T348): `stepTests.coreBudget` 1 to 1024 and `runs` 1 to 64 when given; `config_error` otherwise (INV-9). */
+function stepWorkersOf(stepTests: Config['stepTests']): number {
+  for (const [name, max] of [['coreBudget', 1024], ['runs', 64]] as const) {
+    const value = stepTests?.[name]
+    if (value !== undefined && (!Number.isInteger(value) || value < 1 || value > max)) throw new ProviderError('config_error', `agent Workers: stepTests.${name} is 1 to ${max}`)
+  }
+  return stepWorkers(stepTests ?? {})
+}
+
 /** The checks' bounds (T292): `maxConcurrent` 1 to 32 and `maxWorkers` 1 to 256 when given; `config_error` otherwise (INV-9). */
 function checkBoundsOf(checks: Config['checks']): { maxConcurrent?: number; maxWorkers?: number } {
   const bounded = (name: 'maxConcurrent' | 'maxWorkers', max: number): number | undefined => {
@@ -502,6 +518,7 @@ export function checkConfig(config: Partial<Config> = {}): string[] {
     loadSetups(config.worktreeSetup, [...workers.values()].filter((w) => w.worktreePerRun).map((w) => w.workspace))
     readBoundsOf(config.workspaceReads)
     checkBoundsOf(config.checks)
+    stepWorkersOf(config.stepTests)
     return []
   } catch (error) {
     return [(error as Error).message]
@@ -619,6 +636,10 @@ export class AgentWorkers extends Service {
       maxConcurrent: z.natural().min(1).max(32).default(2).description('How many acceptance check runs the host runs at once, across every workflow run; the rest wait their turn, in order, and never fail for the wait (T292)'),
       maxWorkers: z.natural().min(1).max(256).description('The test workers each check run gets (the vitest config reads SYSTEM_CHECK_MAX_WORKERS); default the host\'s cores less one, shared among maxConcurrent checks, at most 32 each (T292)'),
     }).description('The load acceptance checks put on the host (T292)'),
+    stepTests: z.object({
+      coreBudget: z.natural().min(1).max(1024).description('The cores of the host a writing step\'s own test runs may use together, default half the host\'s (T348)'),
+      runs: z.natural().min(1).max(64).description('How many runs test at once, default 6: set it to the dispatch\'s maxRunning; each run\'s commands get coreBudget / runs test workers (SYSTEM_TEST_MAX_WORKERS), 1 to 32 (T348)'),
+    }).description('The share of the host a writing step\'s own test runs take (T348)'),
     enforce: z.object({
       diskFloor: z.union(['off', 'warn', 'on']).description('The disk floor (default warn, the mechanism\'s start mode, T345): on cuts no new worktree while the worktrees\' filesystem has less than diskFloorGb free, and dispatch starts none; warn records the refusal it would make and refuses nothing; off does not look'),
       lockfileVerification: z.union(['off', 'warn', 'on']).description('The supply-chain verification of a new lockfile (default warn, the mechanism\'s start mode): on opens one approval request per lockfile digest and runs the verification once on the host\'s network when approved; warn records the request it would open and opens none; off does not look (T333)'),
@@ -681,6 +702,8 @@ export class AgentWorkers extends Service {
   private sweeping: Promise<SweepOutcome> | undefined
   /** The workspace reads server's bounds every run is given (T200b), checked at load. */
   private readonly readBounds: WorkspaceReadBounds
+  /** The test workers each writing run's own test runs get (T348). */
+  private readonly testWorkers: number
 
   constructor(ctx: Context, private readonly config: Config = { workers: [] }) {
     super(ctx, 'agentWorkers')
@@ -706,6 +729,7 @@ export class AgentWorkers extends Service {
     this.runChecks = new RunChecks(ctx, this.worktrees, this.setups, join(worktreeRoot, '.setup'), { setups: this.worktreeSetups, hostStopped: this.stopped.signal, ...checkBoundsOf(config.checks) })
     if (config.accountHomes !== undefined && !isAbsolute(config.accountHomes)) throw new ProviderError('config_error', 'agent Workers: accountHomes must be an absolute path')
     this.readBounds = readBoundsOf(config.workspaceReads)
+    this.testWorkers = stepWorkersOf(config.stepTests)
     const slots = new Map<string, number>()
     for (const entry of providers) {
       if (entry.slots === undefined) continue
@@ -1207,15 +1231,17 @@ export class AgentWorkers extends Service {
   private rowOf(plan: MigrationPlan): Record<string, unknown> {
     const { workers: _, providers: __, roles: ___, assignments: ____, ...settings } = this.config
     // A setting at its default (an empty worktreeSetup among them) is left out.
-    const { workspaceReads, checks, enforce, ...rest } = settings
+    const { workspaceReads, checks, stepTests, enforce, ...rest } = settings
     const kept = Object.fromEntries(Object.entries(rest).filter(([key, value]) => value !== undefined && value !== SETTING_DEFAULTS[key] && !(Array.isArray(value) && !value.length)))
     // So is each workspace reads bound at its default, and the setting when all are (T200b).
     const reads = Object.fromEntries(Object.entries(workspaceReads ?? {}).filter(([name, value]) => value !== WORKSPACE_READ_BOUNDS[name as keyof WorkspaceReadBounds]?.default))
     // And each checks bound at its default (or unset), and the setting when all are (T292).
     const bounds = Object.fromEntries(Object.entries(checks ?? {}).filter(([name, value]) => value !== undefined && !(name === 'maxConcurrent' && value === DEFAULT_MAX_CONCURRENT_CHECKS)))
+    // And the step tests' share the row set, and the setting when it set none (T348).
+    const share = Object.fromEntries(Object.entries(stepTests ?? {}).filter(([, value]) => value !== undefined))
     // And the enforce modes the row set (none when it set none, the mechanism's start mode then).
     const modes = Object.fromEntries(Object.entries(enforce ?? {}).filter(([, value]) => value !== undefined))
-    return { ...kept, ...(Object.keys(modes).length ? { enforce: modes } : {}), ...(Object.keys(reads).length ? { workspaceReads: reads } : {}), ...(Object.keys(bounds).length ? { checks: bounds } : {}), providers: plan.providers, roles: plan.roles, assignments: plan.assignments }
+    return { ...kept, ...(Object.keys(modes).length ? { enforce: modes } : {}), ...(Object.keys(reads).length ? { workspaceReads: reads } : {}), ...(Object.keys(bounds).length ? { checks: bounds } : {}), ...(Object.keys(share).length ? { stepTests: share } : {}), providers: plan.providers, roles: plan.roles, assignments: plan.assignments }
   }
 
   /** The ledger a metered Worker's runs go through, or undefined for a Worker with no pool. */
@@ -2639,6 +2665,8 @@ export class AgentWorkers extends Service {
       // A runtime that gives its agent the workspace reads server bounds it so (T200b); one that gives none ignores it.
       workspaceReads: this.readBounds,
       ...(hostTools.length ? { hostTools } : {}),
+      // A writing run's own test runs take a share of the host, not every core of it (T348).
+      ...(worker.sandbox === 'workspace-write' ? { testWorkers: this.testWorkers } : {}),
       toolGate: gate.gate,
       // The commands a writing step's Worker ran, with the exit code and output tail its runtime reports, are recorded by the System itself (T284).
       ...(dossier && worker.sandbox === 'workspace-write' ? { onToolResult: commandRecorder(this.ctx, dossier.dossiers, dossier.caller) } : {}),

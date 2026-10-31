@@ -6,10 +6,29 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Browser, computeExecutablePath } from '@puppeteer/browsers'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, type RunnerTask, vi } from 'vitest'
 import { BROWSER_SKIP as REPORTED } from '../../../../scripts/browser-skips.ts'
 import { CHROME_LOCK } from '../src/index.ts'
-import { BROWSER_LEFT_OUT, BROWSER_SKIP, browserTestsLeftOut, browserUnavailable, chromeCannotStart, findTestChrome, startFailure, testChrome } from './support.ts'
+import { BROWSER_LEFT_OUT, BROWSER_SKIP, browserTestsLeftOut, browserUnavailable, chromeCannotStart, findTestChrome, headlessIt, startFailure, testChrome } from './support.ts'
+
+// A browser test as headlessIt registers it (web-ui's), under a factor of 3, and never run (T348).
+describe.skip('a headless browser test, registered under SYSTEM_TEST_TIME_FACTOR=3', () => {
+  const before = process.env.SYSTEM_TEST_TIME_FACTOR
+  process.env.SYSTEM_TEST_TIME_FACTOR = '3'
+  try {
+    headlessIt('factor probe', async () => undefined, 60_000)
+  } finally {
+    if (before === undefined) delete process.env.SYSTEM_TEST_TIME_FACTOR
+    else process.env.SYSTEM_TEST_TIME_FACTOR = before
+  }
+})
+
+describe('a browser spec\'s bound scales with the factor (T348)', () => {
+  it('registers a headless browser test with its timeout times the factor', ({ task }) => {
+    const probe = task.file.tasks.flatMap((t: RunnerTask) => ('tasks' in t ? t.tasks : [t])).find((t) => t.name === 'factor probe')
+    expect((probe as RunnerTask & { timeout: number } | undefined)?.timeout).toBe(180_000)
+  })
+})
 
 describe('a browser test that cannot run says why (T247)', () => {
   it('names a missing Chrome, and a missing Xvfb only for a headed test, in the words the run\'s report counts', () => {

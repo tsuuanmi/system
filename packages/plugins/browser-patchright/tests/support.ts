@@ -14,6 +14,10 @@ import { type Browser, chromium, type LaunchOptions } from 'patchright-core'
 import { afterAll, beforeAll, it, type TestContext } from 'vitest'
 import { managedChromePath } from '../src/chrome.ts'
 import { CHROME_ARGS, IGNORED_DEFAULT_ARGS, discoverChrome } from '../src/index.ts'
+import { scaled } from '../../../provider-core/conformance/time.ts'
+
+// The browser-stack waits scale by SYSTEM_TEST_TIME_FACTOR (T348), as every package's real-Xvfb tests do.
+export { scaled, timeFactor } from '../../../provider-core/conformance/time.ts'
 
 /** The account's own home, from the password database: `HOME` is a Worker's private home inside its confinement. */
 function accountHome(): string | undefined {
@@ -121,7 +125,7 @@ export function chromeCannotStart(chrome: string, run: typeof spawnSync = spawnS
   const dir = mkdtempSync(join(tmpdir(), 'system-chrome-probe-'))
   try {
     const result = run(chrome, ['--headless', '--no-sandbox', '--disable-gpu', '--no-first-run', `--user-data-dir=${join(dir, 'profile')}`, '--dump-dom', 'about:blank'], {
-      env: { ...processEnv(), ...chromeDirs(dir) }, encoding: 'utf8', timeout: 60_000, stdio: ['ignore', 'ignore', 'pipe'],
+      env: { ...processEnv(), ...chromeDirs(dir) }, encoding: 'utf8', timeout: scaled(60_000), stdio: ['ignore', 'ignore', 'pipe'],
     })
     return result.status === 0 ? undefined : `Chrome cannot start here (${startFailure({ status: result.status, signal: result.signal, stderr: String(result.stderr ?? ''), ...(result.error ? { error: result.error } : {}) })})`
   } finally {
@@ -179,12 +183,12 @@ export function headlessIt(name: string, fn: (context: TestContext) => Promise<v
     const why = browserUnavailable({ headless: true })
     if (why === BROWSER_LEFT_OUT || (why && !REQUIRE_BROWSER)) context.skip(why)
     await fn(context)
-  }, timeout)
+  }, timeout === undefined ? undefined : scaled(timeout))
 }
 
 /** One headed Chrome on its own Xvfb for a whole suite. */
 export async function launchTestBrowser(): Promise<{ browser: Browser; close(): Promise<void> }> {
-  const xvfb: XvfbHandle = await startXvfb({ executable: 'Xvfb', startupTimeoutMs: 5000 })
+  const xvfb: XvfbHandle = await startXvfb({ executable: 'Xvfb', startupTimeoutMs: scaled(5000) })
   const browser = await chromium.launch({
     executablePath: testChrome!, headless: false, env: { ...process.env, DISPLAY: xvfb.display, XAUTHORITY: xvfb.authority },
     ignoreDefaultArgs: IGNORED_DEFAULT_ARGS, args: [...CHROME_ARGS, '--window-size=1920,1080'],
@@ -210,7 +214,7 @@ export function fileDisplay(): new (ctx: Context) => Display {
   let generation = 0
   const start = (): Promise<Shared> => (starting ??= (async () => {
     // As long as the other real-Xvfb tests allow: a loaded host can take more than display-virtual's 5 s.
-    const xvfb = await startXvfb({ executable: 'Xvfb', startupTimeoutMs: 15_000 })
+    const xvfb = await startXvfb({ executable: 'Xvfb', startupTimeoutMs: scaled(15_000) })
     const exited = new AbortController()
     void xvfb.exited.then(() => exited.abort(new ProviderError('session_broken', `Xvfb ${xvfb.display} exited`)))
     shared = { xvfb, generation: ++generation, lost: exited.signal }

@@ -2,7 +2,7 @@ import { OWNED_PROFILE_SWITCH } from '@tsuuanmi/system-provider-core'
 import { chromium } from 'patchright-core'
 import { describe, expect, it } from 'vitest'
 import { profileUsers } from '../src/profiles.ts'
-import { canRunBrowser, testChrome } from './support.ts'
+import { canRunBrowser, scaled, testChrome } from './support.ts'
 import { boot, gone, origin, pool, profileStack, reads, running, signedInProfile, squatter } from './profile-stack.ts'
 
 describe.runIf(canRunBrowser)('pool(ctx) profile turns: a browser left on the login profile, and who stops it (ADR-0030)', () => {
@@ -17,7 +17,7 @@ describe.runIf(canRunBrowser)('pool(ctx) profile turns: a browser left on the lo
     await turn.page.goto(`${origin}/`)
     expect(await reads(turn.page)).toBe('signed in')
     await turn.close()
-  }, 90_000)
+  }, scaled(90_000))
 
   it('stops a real Chrome system left on the profile, and never one it did not start', async () => {
     const ctx = await boot()
@@ -40,7 +40,7 @@ describe.runIf(canRunBrowser)('pool(ctx) profile turns: a browser left on the lo
     }
     const again = await pool(ctx).openTurn('acct', { profile: { dir } })
     await again.close()
-  }, 120_000)
+  }, scaled(120_000))
 
   it('never stops a browser system did not start: it blocks the account until it closes, and health shows it', async () => {
     const ctx = await boot()
@@ -56,7 +56,7 @@ describe.runIf(canRunBrowser)('pool(ctx) profile turns: a browser left on the lo
     expect(pool(ctx).profileStates()).toEqual([])
     const turn = await pool(ctx).openTurn('acct', { profile: { dir } })
     await turn.close()
-  }, 90_000)
+  }, scaled(90_000))
 
   it('waits for a closed profile\'s browser to exit, and stops one that will not before the profile counts as free', async () => {
     const ctx = await boot()
@@ -68,7 +68,7 @@ describe.runIf(canRunBrowser)('pool(ctx) profile turns: a browser left on the lo
     await pool(ctx).close('acct')
     await gone(wedged)
     expect(pool(ctx).profileStates()).toEqual([])
-  }, 90_000)
+  }, scaled(90_000))
 
   it('ends a turn whose page close the browser never confirms within the bound, freeing its page; the tab closes with its context (INV-9, CI 2026-10-24)', async () => {
     const ctx = await boot()
@@ -84,5 +84,5 @@ describe.runIf(canRunBrowser)('pool(ctx) profile turns: a browser left on the lo
     await pool(ctx).close('acct')
     expect(turn.page.isClosed()).toBe(true)
     expect(profileUsers(dir)).toEqual([])
-  }, 90_000)
+  }, scaled(90_000))
 })

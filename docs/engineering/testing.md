@@ -216,6 +216,31 @@ absence of automation leaks are properties of the real browser.
   `SYSTEM_REQUIRE_BROWSER=1`, so a missing browser **fails** the run instead of
   skipping silently.
 
+### A loaded host (T348)
+
+A run's own tests take a bounded share of the host, and the browser and real-Xvfb specs tolerate a
+loaded one.
+
+- **Workers.** `vitest.config.ts` sets `maxWorkers` by `testWorkers()`
+  ([`scripts/test-workers.ts`](../../scripts/test-workers.ts)): the host's cores less one, at most 32,
+  or the budget the environment gives, the smaller of `SYSTEM_TEST_MAX_WORKERS` and
+  `SYSTEM_CHECK_MAX_WORKERS` when both are set. An acceptance check gets the second (`checks.maxWorkers`,
+  T292). A writing step's own `pnpm test:affected` or `test:related` gets the first: agent-workers
+  puts it in the run's confinement (`RunSpec.testWorkers`, `withTestWorkers`), with the value
+  `stepTests.coreBudget / stepTests.runs` (default half the host's cores shared among 6 runs, 1 to 32;
+  set `runs` to the dispatch's `maxRunning`; see the [configuration reference](../reference/configuration.md)).
+  A value that is not a positive integer is ignored. Run it by hand the same way:
+  `SYSTEM_TEST_MAX_WORKERS=4 pnpm test:related <files>`.
+- **Time.** `SYSTEM_TEST_TIME_FACTOR` (a number from 1 to 20, default 1) multiplies the waits for
+  the browser stack in the browser and real-Xvfb specs: a test's timeout, an Xvfb start-up bound, a
+  `waitFor` timeout, through `scaled(ms)` in
+  [`provider-core/conformance/time.ts`](../../packages/provider-core/conformance/time.ts). The
+  browser-patchright specs, `display-virtual`'s real-Xvfb specs, and the display, browser, and
+  deletion conformance suites use it. It scales a wait only, never an assertion: a bound a test
+  asserts on (`expect(elapsed).toBeLessThan(10_000)`) is the product's own and is not loosened, and a
+  fake Xvfb's start-up bound that a test expects to time out stays as it is. On a shared host at a
+  load of thousands, set it to 3 or more.
+
 ### Real-browser tests in a Worker's confinement
 
 The web UI's browser tests run a **headless** Chrome: they need Chrome, not Xvfb, and they run

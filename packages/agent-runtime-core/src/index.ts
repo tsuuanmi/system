@@ -479,6 +479,11 @@ export interface RunSpec {
    * once the run ended. A `read-only` run, which runs no command, ignores it.
    */
   reportFile?: string | undefined
+  /**
+   * The test workers a writing run's own test runs may use (T348, {@link TEST_WORKERS_VARIABLE}): its
+   * share of the host. A `read-only` run, which runs no command, ignores it.
+   */
+  testWorkers?: number | undefined
 }
 
 /**
@@ -528,6 +533,20 @@ export function withRunReport(confinement: Confinement, reportFile: string | und
   if (reportFile === undefined) return confinement
   if (!isAbsolute(reportFile) || !lstatSync(reportFile, { throwIfNoEntry: false })?.isFile()) throw new Error(`the run's report file ${reportFile} is not an absolute path to a regular file`)
   return { ...confinement, writable: [...confinement.writable, reportFile], env: { ...confinement.env, [RUN_REPORT_VARIABLE]: reportFile } }
+}
+
+/** The variable that names a writing run's test-worker budget to its commands; the repository's vitest config reads it (T348). */
+export const TEST_WORKERS_VARIABLE = 'SYSTEM_TEST_MAX_WORKERS'
+
+/**
+ * The confinement of a writing run with its test-worker budget (T348), named in {@link TEST_WORKERS_VARIABLE}:
+ * the test runs its agent starts share the host with the runs beside it. `confinement` itself when the run has none.
+ * Throws when the budget is not a positive integer.
+ */
+export function withTestWorkers(confinement: Confinement, workers: number | undefined): Confinement {
+  if (workers === undefined) return confinement
+  if (!Number.isInteger(workers) || workers < 1) throw new Error(`the run's test-worker budget ${workers} is not a positive integer`)
+  return { ...confinement, env: { ...confinement.env, [TEST_WORKERS_VARIABLE]: String(workers) } }
 }
 
 /**

@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ProviderDriver } from '../src/driver.ts'
 import { ProviderError } from '../src/errors.ts'
+import { scaled } from './time.ts'
 
 /** Which scenario a site is opened for, so a harness can set its site and driver up as that one needs. */
 export type DeletionScenario = 'delete' | 'inspect' | 'history-row' | 'network' | 'unopened'
@@ -51,7 +52,7 @@ export function deletionScenarios<Page>(harness: DeletionHarness<Page>): void {
       // Again, as a retry after a crash would: the site shows it is gone, and nothing is clicked.
       expect(await driver.deleteConversation(await newPage(), doomed.binding!)).toBe('gone')
       expect(driver.deletes).toEqual(harness.deletes)
-    }, 60_000)
+    }, scaled(60_000))
 
     it('inspects a conversation\'s own menu without choosing anything: outlines, never text', async () => {
       const { page, driver, fake } = await harness.open('inspect', { answer: 'secret answer text' })
@@ -62,7 +63,7 @@ export function deletionScenarios<Page>(harness: DeletionHarness<Page>): void {
       expect(JSON.stringify(outlines[1])).toMatch(/"role":"menuitem"/)
       expect(fake.deleted.size).toBe(0)
       expect(fake.conversations.has(turn.binding!)).toBe(true)
-    }, 60_000)
+    }, scaled(60_000))
 
     it('never deletes another chat through a history row: with no menu button in its own pane, nothing is clicked', async () => {
       const { page, newPage, driver, fake } = await harness.open('history-row', { answer: 'x', paneMenu: false })
@@ -72,7 +73,7 @@ export function deletionScenarios<Page>(harness: DeletionHarness<Page>): void {
       expect(fake.deleteRequests).toEqual([])
       expect(fake.conversations.has(other.binding!)).toBe(true)
       expect(fake.conversations.has(doomed.binding!)).toBe(true)
-    }, 60_000)
+    }, scaled(60_000))
 
     it('stops a deletion that names another chat at the network, after its confirm is marked, and never clicks again once confirmed', async () => {
       const { page, newPage, driver, fake } = await harness.open('network', { answer: 'x' })
@@ -88,13 +89,13 @@ export function deletionScenarios<Page>(harness: DeletionHarness<Page>): void {
       fake.options.dialogTarget = ''
       await expect(driver.deleteConversation(await newPage(), doomed.binding!, { confirmed: true })).rejects.toMatchObject({ kind: 'session_broken', message: expect.stringMatching(/not clicked again/) })
       expect(fake.deleteRequests).toEqual([])
-    }, 90_000)
+    }, scaled(90_000))
 
     it('deletes nothing when the conversation does not open as itself', async () => {
       const { page, driver, fake } = await harness.open('unopened', {})
       await expect(driver.deleteConversation(page, harness.unknown)).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/nothing was deleted/) })
       await expect(driver.deleteConversation(page, 'not-an-id')).rejects.toMatchObject({ kind: 'invalid_input' })
       expect(fake.deleted.size).toBe(0)
-    }, 60_000)
+    }, scaled(60_000))
   })
 }
