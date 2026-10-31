@@ -387,7 +387,7 @@ describe('the operator\'s runtime switches (contract 1.2, ADR-0078)', () => {
     const { ctx, restart } = await boot({ workflowConfig: { enforce: { reviewGuides: 'off' } } })
     const modes = () => Object.fromEntries(ctx.pluginHost.enforcement!().map((s) => [s.mechanism, s.mode]))
     // The owning row's configured mode is the one in force while no override is set.
-    expect(modes()).toEqual({ 'evidence-gate': 'on', 'handbook-bound': 'on', 'review-guides': 'off', 'red-on-base': 'on', 'lockfile-verification': 'warn', 'lead-rights': 'on' })
+    expect(modes()).toEqual({ 'evidence-gate': 'on', 'handbook-bound': 'on', 'review-guides': 'off', 'red-on-base': 'on', 'lockfile-verification': 'warn', 'disk-floor': 'warn', 'lead-rights': 'on' })
     expect(ctx.pluginHost.enforced!('evidence-gate')).toBeUndefined()
     const set = ctx.pluginHost.setEnforce!('evidence-gate', 'warn', 'refusing good steps')
     expect(set).toMatchObject({ mechanism: 'evidence-gate', mode: 'warn', configured: 'on', override: { mode: 'warn', reason: 'refusing good steps' } })

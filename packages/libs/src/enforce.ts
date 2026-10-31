@@ -50,6 +50,10 @@ export const MECHANISMS: readonly Mechanism[] = [
     what: 'the supply-chain verification of a new lockfile that a result\'s setup lacks offline (T333, D112): on opens one approval request per lockfile digest and runs the verification once on the host\'s network, none of the result\'s code run, when approved; warn records the request it would open and opens none; off does not look',
   },
   {
+    id: 'disk-floor', row: 'agent-workers', key: 'diskFloor', modes: ['off', 'warn', 'on'], start: 'warn',
+    what: 'the disk floor (T345, docs/research/resource-capacity.md): on cuts no new worktree, so no run starts, and dispatch says why, while the worktrees\' filesystem has less free space than diskFloorGb; warn records the refusal it would make and refuses nothing; off does not look; it starts in warn',
+  },
+  {
     id: 'lead-rights', row: 'approvals', modes: ['on'],
     what: 'the lead\'s closed list of rights (ADR-0076): every refusal is a bound of authority, so it is only on (INV-6); to stop a lead deciding, revoke its token (system lead-token revoke)',
   },

@@ -186,6 +186,14 @@ class WorktreeError extends Error {
   override readonly name = 'WorktreeError'
 }
 
+/**
+ * No new worktree is cut now: the worktrees' filesystem is under the disk floor (T345). A passing host
+ * condition, never the run's own failure: its start waits for room (`overloaded`), and is not counted.
+ */
+export class DiskFloorError extends Error {
+  override readonly name = 'DiskFloorError'
+}
+
 /** What a failed git said, as one line: its stderr without hints, else `fallback`. */
 const said = (stderr: string, fallback: string): string => stderr.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('hint:')).join(' ') || fallback
 
@@ -601,12 +609,15 @@ export class Worktrees {
   /**
    * `root` is where worktrees go: `<root>/<repository key>/<runId>`. `regeneration` names, for a
    * repository (real path) and a worktree's stored setup hash, the files a landing may regenerate on a
-   * conflict and how (./regenerate.ts, T166); none, and every conflict refuses the merge.
+   * conflict and how (./regenerate.ts, T166); none, and every conflict refuses the merge. `diskFloor`
+   * says why no new worktree may be cut now (the disk floor, T345), or nothing: asked before every cut
+   * ({@link acquire} of a new one, a carry's cut), never for a worktree a run has already.
    */
   constructor(
     private readonly ctx: Pick<Context, 'store' | 'artifacts' | 'logger'>,
     private readonly root: string,
     private readonly regeneration?: (repository: string, setupHash: string | null) => Regeneration | undefined,
+    private readonly diskFloor?: () => string | undefined,
   ) {}
 
   /**
@@ -700,6 +711,9 @@ export class Worktrees {
         await this.verify(row)
         return row.path
       }
+      // A new checkout is cut: not under the disk floor (T345).
+      const low = this.diskFloor?.()
+      if (low) throw new DiskFloorError(low)
       let path = row?.path
       if (!path) {
         mkdirSync(this.root, { recursive: true, mode: 0o700 })
@@ -1011,7 +1025,68 @@ export class Worktrees {
     const row = this.ctx.store.db.prepare('SELECT * FROM agent_worktrees WHERE workflow_run_id = ? AND path = ?').get(step.runId, step.workspace) as WorktreeRow | undefined
     if (!row) return undefined
     return this.exclusive(row.repository, () => (step.step === 'commit' ? this.commitAccepted(row, step) : step.step === 'record' ? this.record(row, step)
-      : step.step === 'merge' ? this.merge(row, step) : this.rebase(row, step)))
+      : step.step === 'release' ? this.releaseLanded(row) : step.step === 'merge' ? this.merge(row, step) : this.rebase(row, step)))
+  }
+
+  /**
+   * Remove the worktree of a run whose landing ended merged, or with nothing to land (T345): nothing needs
+   * it after, and its branch stays (a continued run gets its worktree back from it). Only while it is
+   * intact, nothing holds it (no agent run of its workflow run is unfinished or not known to be gone, no
+   * check on a tip uses it), and it holds nothing uncommitted: anything else stays for the retention, and
+   * the answer says why. Recorded as a `retention` decision on its row (INV-13), then removed, never forced.
+   */
+  private async releaseLanded(row: WorktreeRow): Promise<Landed> {
+    const refused = (cause: LandRefusal, reason: string): Landed => ({ outcome: 'refused', cause, reason })
+    if (row.removed_at !== null || !existsSync(row.path)) return refused('gone', `the worktree ${row.path} was removed already`)
+    if (this.used(row) || !this.ctx.store.db.prepare(`SELECT 1 FROM agent_worktrees w WHERE repository = ? AND workflow_run_id = ? AND ${FREE}`).get(row.repository, row.workflow_run_id, null)) {
+      return refused('busy', `an agent run or a check still holds the worktree ${row.path}: it stays for the retention`)
+    }
+    try {
+      await this.verify(row)
+      if (halfCarried(row)) return refused('failed', `the worktree ${row.path} was cut for work it never got: it stays for the retention`)
+      if ((await git(row.path, [`--git-dir=${row.gitdir}`, `--work-tree=${row.path}`, 'status', '--porcelain', '--untracked-files=all'])).trim()) {
+        return refused('dirty', `the worktree ${row.path} holds changes not committed after the landing: it stays for the retention, which commits them on ${row.branch}`)
+      }
+      // Decided once: a removal that fails is retried by the retention under the same decision.
+      const decision = row.decision ?? this.ctx.artifacts.recordDecision({
+        schema: 'decision@1.3', decisionType: 'retention', question: `Is the worktree ${row.path} of workflow run ${row.workflow_run_id} removed now its landing has ended?`, inputs: [],
+        candidates: [
+          { option: 'remove', selected: true, reasons: [`the landing of ${row.workflow_run_id} ended merged, or with nothing to land, and the worktree is clean: its work is on ${row.branch}, which stays, so nothing needs the worktree`] },
+          { option: 'keep', selected: false, reasons: ['not keep: a landed run is never retried, and a worktree holds a full checkout of the host\'s disk (T345)'] },
+        ],
+        decider: { type: 'rule', id: 'agent-workers.worktree-release', version: '1' },
+        outcome: { option: 'remove', detail: { runId: row.workflow_run_id, repository: row.repository, path: row.path, branch: row.branch } },
+        deterministic: true,
+      }, { producer: { type: 'system', ref: 'agent-workers' }, runId: row.workflow_run_id }).id
+      this.ctx.store.transaction((db) => {
+        db.prepare('UPDATE agent_worktrees SET decision = ? WHERE repository = ? AND workflow_run_id = ?').run(decision, row.repository, row.workflow_run_id)
+      })
+      await this.retire(row)
+      this.ctx.store.transaction((db) => {
+        db.prepare('UPDATE agent_worktrees SET removed_at = ?, failure = NULL, failed_at = NULL WHERE repository = ? AND workflow_run_id = ?').run(new Date().toISOString(), row.repository, row.workflow_run_id)
+      })
+      this.ctx.logger.info(`agent Workers: removed the worktree ${row.path} of run ${row.workflow_run_id} once its landing ended (decision ${decision}); the branch ${row.branch} stays`)
+      return { outcome: 'released', repository: row.repository, branch: row.branch, path: row.path, decision }
+    } catch (error) {
+      return refused('failed', `the worktree ${row.path} stays for the retention: ${(error as Error).message.slice(0, 300)}`)
+    }
+  }
+
+  /**
+   * A commit step asked again once the worktree is gone (released after its landing, or retired): done when
+   * the branch's tip is the system's landing commit of `accepted`, read from the branch (INV-4); else undefined.
+   */
+  private async committedOnBranch(row: WorktreeRow, accepted: string): Promise<Landed | undefined> {
+    const tip = (await git(row.repository, ['rev-parse', '--verify', '--quiet', `refs/heads/${row.branch}^{commit}`]).catch(() => '')).trim()
+    if (!tip) return undefined
+    const [author, ...message] = (await git(row.repository, ['log', '-1', '--format=%an <%ae>%n%B', tip])).split('\n')
+    if (author !== `${SYSTEM_AUTHOR.name} <${SYSTEM_AUTHOR.email}>` || !message.includes(`${SUBJECT_TRAILER}: ${accepted}`)) return undefined
+    const base = await this.baseOf(row.repository)
+    if ('problem' in base) return { outcome: 'refused', cause: 'base-moved', reason: base.problem }
+    const contained = await this.contains(row.repository, base.sha, tip)
+    const stat = contained ? '' : await this.statOf(row.repository, base.sha, tip)
+    const fork = contained ? '' : (await git(row.repository, ['merge-base', tip, base.sha]).catch(() => '')).trim()
+    return { outcome: 'committed', repository: row.repository, branch: row.branch, head: tip, committed: false, base, contained, stat, ...(fork ? { fork } : {}) }
   }
 
   /**
@@ -1400,6 +1475,10 @@ export class Worktrees {
       path = join(realpathSync(this.root), repositoryKey(repository), step.runId)
       ensurePrivateDir(dirname(path))
       if (lstatSync(path, { throwIfNoEntry: false })) return refuse('exists', `${path} exists and is not the worktree of run ${step.runId}; nothing was changed`)
+      // A new checkout is cut for the carried work: not under the disk floor (T345), before anything changes.
+      // A passing condition: refused `no-room`, so the engine asks again once there is room, while the earlier tree is kept.
+      const low = this.diskFloor?.()
+      if (low) return refuse('no-room', low)
     }
     const inside = (args: string[]): Promise<string> => git(from.path, [`--git-dir=${from.gitdir}`, `--work-tree=${from.path}`, ...args])
     await this.clearSystem(from, inside)
@@ -1535,7 +1614,11 @@ export class Worktrees {
   /** Commit the worktree's changes on its branch, while it is still exactly the accepted subject. */
   private async commitAccepted(row: WorktreeRow, step: Extract<LandStep, { step: 'commit' }>): Promise<Landed> {
     const accepted = subjectId({ type: 'git-head', ...step.subject })
-    if (row.removed_at !== null || !existsSync(row.path)) return { outcome: 'refused', cause: 'gone', reason: `the worktree ${row.path} was removed (its branch ${row.branch} keeps what the retention committed), so the accepted tree ${accepted} can no longer be checked` }
+    if (row.removed_at !== null || !existsSync(row.path)) {
+      // Removed after its landing committed it (T345): the branch holds the landing commit, so the step is done (INV-4).
+      const done = await this.committedOnBranch(row, accepted).catch(() => undefined)
+      return done ?? { outcome: 'refused', cause: 'gone', reason: `the worktree ${row.path} was removed (its branch ${row.branch} keeps what the retention committed), so the accepted tree ${accepted} can no longer be checked` }
+    }
     if (!this.ctx.store.db.prepare(`SELECT 1 FROM agent_worktrees w WHERE repository = ? AND workflow_run_id = ? AND ${FREE}`).get(row.repository, row.workflow_run_id, null)) {
       return { outcome: 'refused', cause: 'busy', reason: `an agent run of workflow run ${row.workflow_run_id} is unfinished or not known to be gone, so it may still write ${row.path} (INV-15)` }
     }

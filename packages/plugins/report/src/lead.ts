@@ -11,7 +11,7 @@ import type { ApprovalRequest } from '@tsuuanmi/system-approvals-core'
 import type { BoardTask } from '@tsuuanmi/system-board-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { type BranchCommit, buildDigest, type DailyCheckRead, dayPeriod, DIGEST_SCHEMA, type Digest, type LeadDecision, type Read } from './digest.ts'
-import { buildHealth, type DispatchRead, type EnforceRead, type Health, type LandingQueueRead, type LiveUpdateRead, type PoolRead, SINK_WINDOW_HOURS, type SinkRead, type WorkerRead, type WorktreesRead } from './health.ts'
+import { buildHealth, type DiskRead, type DispatchRead, type EnforceRead, type Health, type LandingQueueRead, type LiveUpdateRead, type PoolRead, SINK_WINDOW_HOURS, type SinkRead, type WorkerRead, type WorktreesRead } from './health.ts'
 import { MAX_RUNS_READ } from './metrics.ts'
 import { type PolicyDrift, policyDrift } from './policy-drift.ts'
 import { LIVENESS_EVENTS, ReportError, type Recorded, runsOf, within } from './report.ts'
@@ -232,12 +232,10 @@ export async function leadHealth(ctx: Context, reads: LeadReads, input: { projec
     return { depth: open.length, ...(oldest ? { oldestAt: oldest } : {}) }
   })
 
-  const agents = ctx.get('agentWorkers' as never) as { runWorktrees?: () => Promise<{ total: number; worktrees: Array<{ runId: string; state: string; changes: string }> }> } | undefined
-  const worktrees: Read<WorktreesRead> = agents?.runWorktrees ? await attempt(async () => {
-    const listing = await agents.runWorktrees!()
-    if (listing.total > listing.worktrees.length) throw new Error(`${listing.total} worktrees, only the oldest ${listing.worktrees.length} read`)
-    return { total: listing.total, inUse: listing.worktrees.filter((w) => w.state === 'in-use').length, held: listing.worktrees.filter((w) => w.state === 'held').length, uncommitted: listing.worktrees.filter((w) => w.changes === 'uncommitted' || w.changes === 'not-intact').length }
-  }) : missing('the agent Workers')
+  const agents = ctx.get('agentWorkers' as never) as { worktreeCounts?: () => Promise<WorktreesRead>; diskStatus?: () => DiskRead } | undefined
+  // Every worktree is counted, past the listing's 100 (T345): the source counts them all, or says it could not.
+  const worktrees: Read<WorktreesRead> = agents?.worktreeCounts ? await attempt(() => agents.worktreeCounts!()) : missing('the agent Workers')
+  const disk: Read<DiskRead> = agents?.diskStatus ? await attempt(() => agents.diskStatus!()) : missing('the agent Workers')
 
   const host = ctx.get('pluginHost' as never) as { enforcement?: () => Array<{ mechanism: string; mode: string }> } | undefined
   const enforcement: Read<EnforceRead[]> = host?.enforcement ? await attempt(() => host.enforcement!().map((m) => ({ mechanism: m.mechanism, mode: m.mode }))) : missing('the plugin host')
@@ -254,6 +252,6 @@ export async function leadHealth(ctx: Context, reads: LeadReads, input: { projec
 
   return buildHealth({
     projectId, asOf: now.toISOString(), dispatch, workers, pools, notifySinks: lastPerSink('notify.delivery', false), leadSinks: lastPerSink('lead-inbox.delivery', true),
-    liveUpdate, landingQueue, worktrees, enforcement, policies,
+    liveUpdate, landingQueue, worktrees, disk, enforcement, policies,
   })
 }

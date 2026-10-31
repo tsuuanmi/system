@@ -248,6 +248,11 @@ export interface TaskCarry {
   /** Once carried: the commit the worktree starts at, and what a move of the repository's HEAD since the earlier tree did (T271). */
   base?: string
   rebase?: { outcome: 'rebased' | 'conflict'; from: string; onto: string; files?: string[] }
+  /**
+   * While `due`: when the source first had no room to cut the run's worktree (T345). The wait is
+   * bounded from here by `maxLimitWaitHours` (INV-9), kept on the row so a restart keeps the bound.
+   */
+  roomSince?: string
   cause?: string
   reason?: string
   at: string
@@ -681,6 +686,8 @@ export interface Config {
   /**
    * Hours a node refused only for assigned accounts' limits may wait for their reset, in all from
    * its first wait (default 24; 0 never waits); past it, it fails `quota_exhausted` (ADR-0052, INV-9).
+   * It bounds too a board task's run waiting for room on the host's disk to carry its previous
+   * attempt's work (T345, `TaskCarry.roomSince`): past it, the run starts fresh.
    */
   maxLimitWaitHours?: number
   /** Approve a high-confidence plan by policy (`by: policy`) instead of waiting for the operator (default false). */

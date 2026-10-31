@@ -689,9 +689,12 @@ export class TaskRuns {
     return this.carried(runId)
   }
 
-  /** Before the run's first step: the work the previous attempt left is carried into its worktree, or not (./carries.ts); then it goes. */
-  private async carried(runId: string): Promise<'go'> {
-    await this.carries.settle(runId)
+  /**
+   * Before the run's first step: the work the previous attempt left is carried into its worktree, or not
+   * (./carries.ts); then it goes. It waits while the host has no room to cut the worktree (T345).
+   */
+  private async carried(runId: string): Promise<'go' | 'wait'> {
+    if ((await this.carries.settle(runId)) === 'wait') return 'wait'
     // An answered question continues its attempt (T291): decided once the carry settled, before any step runs.
     this.continueAsked(runId)
     return 'go'

@@ -1190,7 +1190,9 @@ guesses.
   `reruns`, `redDev`, `incidents`. A measure no source could give is `{ unknown }`, never 0 (INV-2).
   A finished day is stored once and read back as it was. Example:
   [`lead-digest.day.json`](../../schemas/examples/lead-digest.day.json). `mcp-report@1.7` adds the
-  `lead_digest` and `lead_health` tools' inputs and the health table's output.
+  `lead_digest` and `lead_health` tools' inputs and the health table's output. `mcp-report@1.8`
+  adds the state `failed` to the health table's rows and its state (the disk row under its floor,
+  T345); a 1.7 reader that does not know it must read it as worse than `degraded`.
 
 ### `check-run`
 

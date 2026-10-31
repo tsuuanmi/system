@@ -28,6 +28,7 @@ const COMMIT = 'a'.repeat(40)
 const MERGE = 'b'.repeat(40)
 const HAND = 'c'.repeat(40)
 const schemas = new SchemaRegistry()
+const GB = 1024 ** 3
 
 const task = (taskId: string, over: Partial<BoardTask> = {}): BoardTask => ({
   schema: 'board-task@1.3', taskId, projectId: 'p1', title: `title of ${taskId}`, goal: 'g', acceptance: [], dependsOn: [], actionClass: 'workspace-write', state: 'done',
@@ -106,6 +107,7 @@ describe('the health table (PROP-0019 2.10)', () => {
     pools: { value: [{ pool: 'plan', available: true, usedPercentage: 40 }] },
     notifySinks: { value: [{ sink: 'file', at: at('11:00'), outcome: 'sent' }] }, leadSinks: { value: [{ sink: 'wait', at: at('11:00'), outcome: 'sent' }] },
     liveUpdate: { value: undefined }, landingQueue: { value: { depth: 0 } }, worktrees: { value: { total: 3, inUse: 1, held: 0, uncommitted: 0 } },
+    disk: { value: { mode: 'on', floorBytes: 10 * GB, worktrees: { path: '/w', freeBytes: 50 * GB, totalBytes: 100 * GB }, store: { path: '/s', freeBytes: 60 * GB, totalBytes: 100 * GB } } },
     enforcement: { value: [{ mechanism: 'evidence-gate', mode: 'on' }] }, policies: { value: [] },
   }
   const state = (h: Report.Health, id: string): string => h.rows.find((r) => r.id === id)!.state
@@ -113,7 +115,22 @@ describe('the health table (PROP-0019 2.10)', () => {
   it('is ok when every source reads well', () => {
     const health = Report.buildHealth(ok)
     expect(health.state).toBe('ok')
-    expect(health.rows.map((r) => r.id)).toEqual(['dispatch', 'workers', 'quota', 'notify-sinks', 'lead-sinks', 'live-update', 'landing-queue', 'worktrees', 'enforce:evidence-gate', 'policy'])
+    expect(health.rows.map((r) => r.id)).toEqual(['dispatch', 'workers', 'quota', 'notify-sinks', 'lead-sinks', 'live-update', 'landing-queue', 'worktrees', 'disk', 'enforce:evidence-gate', 'policy'])
+  })
+
+  it('shows the disk of the worktrees and the store: ok with room, degraded under 20 % free, failed under the floor, unknown when it cannot be read (T345)', () => {
+    const disk = (worktrees: number, store = 60): HealthSources['disk'] => ({ value: { mode: 'on', floorBytes: 10 * GB, worktrees: { path: '/w', freeBytes: worktrees * GB, totalBytes: 100 * GB }, store: { path: '/s', freeBytes: store * GB, totalBytes: 100 * GB } } })
+    const row = (health: Report.Health) => health.rows.find((r) => r.id === 'disk')!
+    expect(row(Report.buildHealth(ok))).toMatchObject({ state: 'ok', reason: 'worktrees 50.0 GB free of 100.0 GB (50 %); store 60.0 GB free of 100.0 GB (60 %); floor 10.0 GB (disk-floor on)' })
+    expect(row(Report.buildHealth({ ...ok, disk: disk(19) }))).toMatchObject({ state: 'degraded', reason: expect.stringContaining('the worktrees filesystem has under 20 % free') })
+    expect(row(Report.buildHealth({ ...ok, disk: disk(50, 15) }))).toMatchObject({ state: 'degraded', reason: expect.stringContaining('the store filesystem has under 20 % free') })
+    const failed = Report.buildHealth({ ...ok, disk: disk(9) })
+    expect(row(failed)).toMatchObject({ state: 'failed', reason: expect.stringContaining('the worktrees filesystem is under the floor of 10.0 GB (disk-floor on)') })
+    expect(failed.state).toBe('failed')
+    // Failed outranks degraded elsewhere; the floor is the configured one, whatever the mode.
+    expect(Report.buildHealth({ ...ok, disk: disk(9), workers: { value: [] } }).state).toBe('failed')
+    expect(row(Report.buildHealth({ ...ok, disk: { value: { mode: 'off', floorBytes: 10 * GB, worktrees: { path: '/w', freeBytes: 9 * GB, totalBytes: 100 * GB } } } }))).toMatchObject({ state: 'unknown', reason: 'not read: the space of the store filesystem could not be read' })
+    expect(row(Report.buildHealth({ ...ok, disk: { unknown: 'the agent Workers are not loaded' } }))).toMatchObject({ state: 'unknown', reason: 'not read: the agent Workers are not loaded' })
   })
 
   it('makes a Worker the fixture marks unavailable a degraded row, with its reason', () => {
@@ -136,7 +153,7 @@ describe('the health table (PROP-0019 2.10)', () => {
     })
     expect(health.rows.map((r) => [r.id, r.state])).toEqual([
       ['dispatch', 'degraded'], ['workers', 'degraded'], ['quota', 'degraded'], ['notify-sinks', 'degraded'], ['lead-sinks', 'ok'], ['live-update', 'degraded'],
-      ['landing-queue', 'degraded'], ['worktrees', 'degraded'], ['enforce:handbook-bound', 'degraded'], ['enforce:review-guides', 'degraded'], ['policy', 'ok'],
+      ['landing-queue', 'degraded'], ['worktrees', 'degraded'], ['disk', 'ok'], ['enforce:handbook-bound', 'degraded'], ['enforce:review-guides', 'degraded'], ['policy', 'ok'],
     ])
   })
 
@@ -218,14 +235,34 @@ describe('lead_digest and lead_health over the real core', () => {
     expect(ctx.artifacts.list({ kind: 'report', limit: 100 }).filter((e) => e.bodySchema === 'lead-digest@1.0')).toHaveLength(1)
   })
 
+  it('reads the disk row and the worktrees (beyond 100) from the agent Workers: the table shows the disk, failed under its floor (T345)', async () => {
+    const ctx = await boot()
+    let freeGb = 50
+    await ctx.plugin({ name: 'agent-workers-stub', apply: (c: { provide: (key: string, value: unknown) => void }) => c.provide('agentWorkers', {
+      worktreeCounts: async () => ({ total: 150, inUse: 2, held: 0, uncommitted: 0 }),
+      diskStatus: () => ({ mode: 'warn', floorBytes: 10 * GB, worktrees: { path: '/w', freeBytes: freeGb * GB, totalBytes: 100 * GB }, store: { path: '/s', freeBytes: 70 * GB, totalBytes: 100 * GB } }),
+    }) } as never, {} as never)
+    const rows = async () => (await call(ctx, 'lead_health', {}, 'p1')).structured!['rows'] as Array<{ id: string; state: string; reason: string }>
+    expect((await rows()).filter((r) => ['worktrees', 'disk'].includes(r.id)).map((r) => [r.id, r.state, r.reason])).toEqual([
+      ['worktrees', 'ok', '150 kept, 2 in use, none held'],
+      ['disk', 'ok', 'worktrees 50.0 GB free of 100.0 GB (50 %); store 70.0 GB free of 100.0 GB (70 %); floor 10.0 GB (disk-floor warn)'],
+    ])
+    freeGb = 5
+    const low = await call(ctx, 'lead_health', {}, 'p1')
+    expect(() => schemas.assertDef('mcp-report@1.8', 'lead-health-output', low.structured)).not.toThrow()
+    expect((low.structured!['rows'] as Array<{ id: string; state: string }>).find((r) => r.id === 'disk')).toMatchObject({ state: 'failed' })
+    expect(low.structured!['state']).toBe('failed')
+    expect(low.text).toContain('# Health: project p1: failed')
+  })
+
   it('reads a health table whose every unmounted source is unknown, so none is ok', async () => {
     const ctx = await boot()
     const health = await call(ctx, 'lead_health', {}, 'p1')
     expect(health.isError).toBe(false)
-    expect(() => schemas.assertDef('mcp-report@1.7', 'lead-health-output', health.structured)).not.toThrow()
+    expect(() => schemas.assertDef('mcp-report@1.8', 'lead-health-output', health.structured)).not.toThrow()
     const rows = health.structured!['rows'] as Array<{ id: string; state: string; reason: string }>
     // The engine, Workers, plugin host, and agent Workers are not mounted here: each is unknown with its reason; the ledger has no pool.
-    expect(rows.filter((r) => ['dispatch', 'workers', 'worktrees', 'enforce'].includes(r.id)).map((r) => [r.id, r.state])).toEqual([['dispatch', 'unknown'], ['workers', 'unknown'], ['worktrees', 'unknown'], ['enforce', 'unknown']])
+    expect(rows.filter((r) => ['dispatch', 'workers', 'worktrees', 'disk', 'enforce'].includes(r.id)).map((r) => [r.id, r.state])).toEqual([['dispatch', 'unknown'], ['workers', 'unknown'], ['worktrees', 'unknown'], ['disk', 'unknown'], ['enforce', 'unknown']])
     expect(rows.find((r) => r.id === 'dispatch')!.reason).toBe('not read: the workflow engine is not loaded')
     expect(health.structured!['state']).toBe('unknown')
     expect(health.text).toContain('# Health: project p1: unknown')
