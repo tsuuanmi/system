@@ -39,7 +39,7 @@ function brief(markers: string) {
 before(async () => {
   assert.equal(system(['init']).status, 0)
   // JSON is YAML: the bundle's accounts as they are, each running the fake CLI.
-  writeFileSync(join(home, 'profiles', 'system', 'cordis.patch.yml'), `- id: agents\n  config: ${JSON.stringify({ accounts: accounts.map((a) => ({ ...a, command: fakeAgent })) })}\n`)
+  writeFileSync(join(home, 'profiles', 'system', 'cordis.patch.yml'), `- id: agents\n  config: ${JSON.stringify({ $patch: 'replace', accounts: accounts.map((a) => ({ ...a, command: fakeAgent })) })}\n`)
   mkdirSync(join(home, 'system', 'codex', 'default'), { recursive: true })
   writeFileSync(join(home, 'system', 'codex', 'default', 'auth.json'), '{}')
   // The Host reads its credentials when it starts: store the token, then start it again.
@@ -114,7 +114,7 @@ test('the two proposals overlap in time: both are dispatched before either is ob
 
 test('without a Codex account the Work is refused before any Worker runs: no same-provider substitute', { timeout: 120_000 }, async () => {
   const noCodex = join(home, 'no-codex.yml')
-  writeFileSync(noCodex, `- id: agents\n  config: ${JSON.stringify({ accounts: accounts.filter((a) => a.runtime !== 'codex').map((a) => ({ ...a, command: fakeAgent })) })}\n`)
+  writeFileSync(noCodex, `- id: agents\n  config: ${JSON.stringify({ $patch: 'replace', accounts: accounts.filter((a) => a.runtime !== 'codex').map((a) => ({ ...a, command: fakeAgent })) })}\n`)
   const before = system(['work', 'list']).stdout.trim().split('\n').filter(Boolean).length
   const input = brief('FAKE:outputs')
   await cli.start({ args: ['--patch', noCodex] })
@@ -160,6 +160,8 @@ test('after the Host is killed mid-step, four runs asked for at once dispatch th
   // Kill only once the agent is inside idea-b: it creates the marker when it starts to hang.
   for (let i = 0; i < 300 && !existsSync(marker); i++) await new Promise((r) => setTimeout(r, 100))
   assert.ok(existsSync(marker), 'idea-b started')
+  // idea-a runs beside it on the other Account: the kill comes once it is recorded, so only idea-b is lost.
+  for (let i = 0; i < 300 && !show(workId).events.some((e) => e.type === 'observed' && e.stepId === 'idea-a'); i++) await new Promise((r) => setTimeout(r, 100))
   process.kill(await cli.pid(), 'SIGKILL')
   assert.notEqual((await submit.done).status, 0, 'the killed Host did not finish the Work')
   // The hanging agent outlived the Host, so its attempt keeps the Account's slot: stop it, as an operator would.

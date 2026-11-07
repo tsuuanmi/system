@@ -22,6 +22,16 @@ in [pnpm-workspace.yaml](../pnpm-workspace.yaml)) on every install.
   when it differs, and then atomically. The test that a boot leaves the file
   untouched was red before. Drop the patch when DSH does the same.
 
+- `@deepseek-ai__dsh-app-boot@0.2.2-rc.1.patch` — a profile patch entry's
+  `config` replaced the bundle's whole, so changing one agent account meant
+  sending every account again, and a mistake registered none. It is now
+  merged (`mergeConfig`): objects as JSON Merge Patch (RFC 7386), lists of
+  objects keyed by `ref` or `id` item by item, as Kubernetes' strategic merge
+  patch (`$patch: delete`, `$patch: replace`). Other fields of an entry
+  (`disabled`, `name`) are still set whole. Tests:
+  `packages/bundle/tests/patch-merge.test.ts`, red before. Keep it until DSH
+  merges config itself (to raise in DSH's Discussions).
+
 ## Overrides
 
 Transitive dependencies pinned by DSH at a vulnerable version are raised with

@@ -12,6 +12,7 @@ allowBuilds:
   pnpm: false
 # Dependency fixes and why: patches/README.md.
 patchedDependencies:
+  '@deepseek-ai/dsh-app-boot@0.2.2-rc.1': patches/@deepseek-ai__dsh-app-boot@0.2.2-rc.1.patch
   '@deepseek-ai/dsh-storage-sqlite@0.2.2-rc.1': patches/@deepseek-ai__dsh-storage-sqlite@0.2.2-rc.1.patch
   '@deepseek-ai/dsh@0.2.2-rc.1': patches/@deepseek-ai__dsh@0.2.2-rc.1.patch
 # Transitive security fixes, scoped to the vulnerable ranges: patches/README.md.

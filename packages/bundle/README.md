@@ -29,6 +29,12 @@ line here, to `ROWS` in [`packages/app/src/doctor.ts`](../app/src/doctor.ts)
 when it provides a service, and to `EXPECTED_ROWS` in the
 [smoke test](../../tests/smoke.test.ts).
 
+## Changing a row's config
+
+An entry of the profile's own patch with `config` merges into this bundle's
+config of that row instead of replacing it, accounts by `ref`
+([runbook](../../docs/operations/runbook.md#changing-the-profiles-config)).
+
 ## Disabling a row
 
 Rows are disabled in the profile's own patch, `$DSH_HOME/profiles/system/cordis.patch.yml`,

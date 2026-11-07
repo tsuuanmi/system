@@ -43,6 +43,7 @@ async function github(...args: string[]): Promise<{ url: string; state: () => Pr
 function profile(apiUrl: string, mergeInto = '[]') {
   writeFileSync(join(home, 'profiles', 'system', 'cordis.patch.yml'), `- id: agents
   config:
+    $patch: replace
     accounts:
       - ref: claude-code/default
         runtime: claude-code

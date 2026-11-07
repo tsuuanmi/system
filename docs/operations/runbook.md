@@ -134,6 +134,32 @@ interrupts the attempts, as any stop does. After a build that is still
 half-written the new Host may fail to start: build again, then
 `systemctl --user restart system`.
 
+## Changing the profile's config
+
+An entry of the profile's own patch (`$DSH_HOME/profiles/system/cordis.patch.yml`,
+or a `--patch` file) changes the bundle's `config` of that row instead of
+replacing it (milestone B; [patches](../../patches/README.md)): objects merge
+as JSON Merge Patch (RFC 7386, `null` removes a key), and a list of objects
+with a `ref` (or `id`) merges item by item on it, as Kubernetes' strategic
+merge patch does. So one account is changed, added or removed alone:
+
+```yaml
+- id: agents
+  config:
+    accounts:
+      - ref: codex/default                # change: only what is named
+        capabilities: [code-write, brainstorm.idea-b, research]
+      - ref: chatgpt-web/second           # add
+        runtime: chatgpt-web
+        capabilities: [research]
+      - ref: claude-code/default          # remove
+        $patch: delete
+```
+
+A list of names (such as `capabilities`) is replaced whole. `$patch: replace`
+in the `config` takes it whole, as the overlay used to. `system workers` shows
+the accounts that result.
+
 ## Attempts at once, and held slots
 
 Each Account (an `agents` account such as `claude-code/default`) runs one
@@ -168,8 +194,8 @@ A Worker that runs a step in the operator's signed-in ChatGPT web session
 ([PROP-0005](../proposals/PROP-0005-chatgpt-website-worker.md); options in the
 [agents README](../../packages/agents/README.md#the-chatgpt-web-runtime)). It is
 **not enabled by default**: add it to the profile's `agents` row (for example in
-`$DSH_HOME/profiles/system/cordis.patch.yml`, replacing `accounts` with the
-bundle's accounts plus this one), then restart the Host:
+`$DSH_HOME/profiles/system/cordis.patch.yml`; it is added to the bundle's
+accounts, see above), then restart the Host:
 
 ```yaml
 - ref: chatgpt-web/default

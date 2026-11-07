@@ -53,6 +53,7 @@ before(async () => {
   assert.equal(system(['init']).status, 0)
   writeFileSync(join(home, 'profiles', 'system', 'cordis.patch.yml'), `- id: agents
   config:
+    $patch: replace
     accounts:
       - ref: claude-code/default
         runtime: claude-code
