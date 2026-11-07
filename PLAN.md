@@ -353,7 +353,12 @@ written first.
   The agent worker's own per-account queue is gone (the Host's slots replace
   it); each attempt's CLI writes a pid file first, which is what lets a later
   Host confirm a lost attempt's process gone.
-- [ ] Self-restart on new code (D): the Host notices new code on disk, stops dispatching, lets running attempts finish and exits 75; the unit and `system host --supervise` restart it, the thin client retries the swap, and Works held at the gate continue (host.md "Upgrading on new code (D)").
+- [x] Self-restart on new code (D): the Host notices new code on disk, stops dispatching, lets running attempts finish and exits 75; the unit and `system host --supervise` restart it, the thin client retries the swap, and Works held at the gate continue (host.md "Upgrading on new code (D)"). Evidence: `packages/host/tests/upgrade.test.ts`
+  ("on new code a supervised Host starts nothing new, finishes its attempt, exits 75, and the next Host
+  serves the new version and runs what was queued", "a client built from the new code upgrades an idle
+  Host at once"), `packages/work/tests/upgrade.test.ts` (drain, held, resume),
+  `packages/app/tests/service.test.ts` ("the supervisor runs the Host again after exit 75") and
+  `packages/app/tests/remote.test.ts` (a follow reconnects across the swap).
 - [x] Gate R1 (checked 2026-11-07, each item against a test that exists):
   - [x] every existing smoke behaviour passes through the Host: every file of
     `tests/` drives `bin/system` through `systemCli` (`test-support/cli.ts`),
@@ -637,6 +642,16 @@ HOME=<fresh> CI=1`, the machine at a load average of about 270):
   It is measured again on a quiet machine once OC is on `dev`, and the row
   above corrected; a unit check still over 1 minute is then a defect of the
   next milestone (operator, 2026-11-07). The merge does not wait for it.
+  **Measured again (2026-11-08).** The load never fell below about 400 that
+  night, so F (`1adb430`) and `dev` (`6d92315`) were measured the same way
+  at the same load, with CPU time beside wall time (`/usr/bin/time`, `env -i`,
+  fresh HOME). Unit: F 40 s (34 CPU-s), `dev` 178 s (122 CPU-s); `dev`
+  without the three headed-browser test files of WW (`chatgpt`,
+  `remote-login`, `driver`) 20 s (31 CPU-s), those three alone 181 s
+  (99 CPU-s). Smoke: F 75 s, `dev` 85 s (354 and 386 CPU-s); install, build
+  and typecheck 56 s and 55 s. So the overrun is WW's browser tests, not
+  OC or CQ, and it ends when `web-workers` moves them to `test:web` (the
+  rule above); no defect is carried into the next milestone.
 - **One flaky test, outside OC:** `packages/agents/tests/chatgpt.test.ts`
   "a page that is neither signed in nor signed out" failed once in the full
   run (Chrome did not start within its 1.5 s launch timeout under load) and
@@ -697,11 +712,20 @@ Website-Worker-specific. Acceptance in PROP-0007.
 
 After OC and WW are on `dev`, so it does not compete with them for code:
 
-- [ ] A System Work (Sonnet) reads `packages/work/src` and
-  `packages/artifacts/src` and proposes cuts, each with its line count and
-  what would stop working. First look: `controller.ts` (945 lines; its
-  effect and reconcile part, about 150, apart), `conversation.ts` (120, if
-  `conversation@1` is no longer used).
+- [x] A Sonnet agent read `packages/work/src` and `packages/artifacts/src`
+  at `dev` 6d92315 (3,420 lines) and proposed cuts; the Development session
+  checked them (2026-11-08). Without dropping a feature: about 35 lines
+  (`Host.interrupted`, used only by tests; the `Host` pass-throughs to the
+  controller; the `executor` and `usage` shapes written twice), about 75 with
+  header comments that restate ADRs. Every class method has a caller, and the
+  defaults kept for records written before M4 to M6 must stay (a stored record
+  would fail to open). Feature drops, approximate core lines each:
+  Goals, decisions and the Orchestrator caller (288); live progress and
+  stall notices (125; the attempt budget reads it); Sub-workflows (90; only
+  `software-engineering.yaml` uses one); the conversation intake (43; the
+  `conversation@1` kind stays, the ChatGPT Worker stores one per exchange).
+  Not cut: external effects, receipts, drain and hold (AGENTS.md invariants),
+  and settling lost attempts (`gone`, which the agent Worker implements).
 - [ ] The operator decides each: drop the feature, or keep it.
 - [ ] Each cut is its own pull request, with tests showing the rest behaves
   the same.
