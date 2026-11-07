@@ -166,6 +166,7 @@ overrides:
   '@modelcontextprotocol/client@>=2.0.0 <2.3.0': 2.3.0
   undici@>=8.0.0 <8.12.2: 8.12.2
   zod@<4.6.6: 4.6.6
+  fflate@>=0.8.0 <0.8.3: 0.8.3
 
 patchedDependencies:
   '@deepseek-ai/dsh-storage-sqlite@0.2.2-rc.1': 18fbd5991a9e93a432e0d5a971732daa603276e11ff20463d16d765792ec442e
@@ -4085,9 +4086,6 @@ packages:
   fetch-blob@3.2.0:
     resolution: {integrity: sha512-7yAQpD2UMJzLi1Dqv7qFYnPbaPx7ZfFK6PiIxQ4PfkGPyNyl2Ugx+a/umUonmKqjhM4DnfbMvdX6otXq83soQQ==}
     engines: {node: ^12.20 || >= 14.13}
-
-  fflate@0.8.2:
-    resolution: {integrity: sha512-cPJU47OaAoCbg0pBvzsgpTPhmhqI5eJjh/JIu8tPj5q+T7iLvW/JAYUqmE7KOB4R1ZyEhzBaIQpQpardBF5z8A==}
 
   fflate@0.8.3:
     resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
@@ -8684,7 +8682,7 @@ snapshots:
 
   '@deepseek-ai/libreoffice-kit@0.1.5':
     dependencies:
-      fflate: 0.8.2
+      fflate: 0.8.3
       fontkit: 2.0.4
       koffi: 3.1.1
       saxes: 6.0.0
@@ -9535,8 +9533,6 @@ snapshots:
     dependencies:
       node-domexception: 1.0.0
       web-streams-polyfill: 3.3.3
-
-  fflate@0.8.2: {}
 
   fflate@0.8.3: {}
 

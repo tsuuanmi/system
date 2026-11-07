@@ -36,5 +36,9 @@ the vulnerable range so a newer resolution is never downgraded.
   (Dependabot). The packages depend on 4.6.6 directly; DSH's own zod 4.4.3 would
   otherwise be a second copy, and `tsc` runs out of memory comparing the two
   versions' types in `domainTable(recordSchema)`.
+- `fflate` `>=0.8.0 <0.8.3` → `0.8.3` — `unzipSync` loops forever on a
+  malformed ZIP64 archive (GHSA-px8p-9vwx-vf98, moderate; `pnpm audit`, not yet
+  a Dependabot alert). It comes in through DSH's office skills, which the
+  `system` profile does not mount.
 
 Drop an override when DSH depends on a patched version itself.
